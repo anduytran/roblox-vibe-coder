@@ -1,0 +1,27 @@
+appId: dev.hangar.app
+productName: Hangar
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+# The Agent SDK launches a native Claude Code binary; it must live outside the asar archive.
+asarUnpack:
+  - node_modules/@anthropic-ai/**
+win:
+  target:
+    - nsis
+  # Set these to sign Windows builds before sharing them:
+  # certificateFile / certificatePassword (or CSC_LINK / CSC_KEY_PASSWORD env vars)
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  # Notarize before sharing: set APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+  notarize: false
+publish: null
