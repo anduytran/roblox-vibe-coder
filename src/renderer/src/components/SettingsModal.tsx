@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { attempt, setKey, setSettings, toast, useStore } from '../store'
-import { Button, Field, Modal } from './ui'
+import { Button, Field, Modal, Toggle } from './ui'
 
 const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 
@@ -14,6 +14,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [daily, setDaily] = useState(settings?.globalDailyBudgetUsd?.toString() ?? '')
   const [studioCmd, setStudioCmd] = useState(settings?.studioMcpCommand ?? '')
   const [studioArgs, setStudioArgs] = useState((settings?.studioMcpArgs ?? []).join(' '))
+  const [hideKey, setHideKey] = useState(settings?.hideKeyFromAgents ?? true)
 
   const saveKey = (): void => {
     void attempt(async () => {
@@ -32,7 +33,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         perRunBudgetUsd: parseFloat(perRun),
         globalDailyBudgetUsd: Number.isFinite(d) && d > 0 ? d : null,
         studioMcpCommand: studioCmd,
-        studioMcpArgs: studioArgs.trim() ? studioArgs.trim().split(/\s+/) : []
+        studioMcpArgs: studioArgs.trim() ? studioArgs.trim().split(/\s+/) : [],
+        hideKeyFromAgents: hideKey
       })
       setSettings(next)
       toast('Settings saved.')
@@ -88,7 +90,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             </Button>
           )}
         </div>
-        <p className="muted small">The key never reaches this window or any agent's context; it is only handed to the Claude engine process.</p>
+        <Toggle
+          checked={hideKey}
+          onChange={setHideKey}
+          label="Hide API key from agents (recommended)"
+          hint="Agents get a temporary token that only works through Hangar on this computer; Hangar adds the real key when talking to Anthropic. Turn off only if agents can't connect."
+        />
+        <p className="muted small">
+          The key is never sent to this window. {hideKey ? 'With hiding on, agents and the commands they run never see it.' : 'With hiding off, the Claude engine holds the key, so commands an agent runs could read it.'} Either way, use a dedicated key with a spending limit set in the Claude Console.
+        </p>
       </section>
 
       <section className="card">

@@ -3,10 +3,21 @@ import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import type { KeyStatus } from '@shared/ipc'
 
+/** On Linux, safeStorage can fall back to a fixed password ("basic_text"), which is not real protection. */
+function canEncrypt(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  if (process.platform === 'linux') {
+    const backend = (safeStorage as { getSelectedStorageBackend?: () => string }).getSelectedStorageBackend?.()
+    if (!backend || backend === 'basic_text' || backend === 'unknown') return false
+  }
+  return true
+}
+
 /**
  * Stores the Anthropic API key encrypted with the OS keychain (via Electron safeStorage:
  * DPAPI on Windows, Keychain on macOS). The key never leaves the main process: the
- * renderer only ever learns whether a key exists.
+ * renderer only ever learns whether a key exists. It is passed to the Claude engine process
+ * via its environment, so commands that process runs could read it.
  */
 export class SecretStore {
   /** Used when the OS cannot encrypt: kept in memory only, never written to disk. */
@@ -17,7 +28,7 @@ export class SecretStore {
   status(): KeyStatus {
     return {
       hasKey: this.memoryOnlyKey !== null || existsSync(this.file),
-      encryptionAvailable: safeStorage.isEncryptionAvailable()
+      encryptionAvailable: canEncrypt()
     }
   }
 
@@ -26,7 +37,7 @@ export class SecretStore {
     if (!/^sk-ant-[A-Za-z0-9_\-]{10,}$/.test(trimmed)) {
       throw new Error('That does not look like an Anthropic API key (it should start with "sk-ant-").')
     }
-    if (safeStorage.isEncryptionAvailable()) {
+    if (canEncrypt()) {
       mkdirSync(dirname(this.file), { recursive: true })
       writeFileSync(this.file, safeStorage.encryptString(trimmed), { mode: 0o600 })
       this.memoryOnlyKey = null

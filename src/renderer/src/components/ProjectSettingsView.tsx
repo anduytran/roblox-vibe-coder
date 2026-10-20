@@ -67,11 +67,11 @@ export function ProjectSettingsView({ project }: { project: Project }) {
           checked={s.autoApproveEdits}
           onChange={(v) => update({ settings: { autoApproveEdits: v } })}
           label="Auto-approve file edits inside this project"
-          hint="Edits outside the folder always ask. Review everything in the Changes tab before committing."
+          hint="Edits outside the folder, and to files that control how code runs (.git, .claude, .mcp.json, CLAUDE.md, .vscode, .github, package.json), always ask. Review everything in the Changes tab before committing."
         />
         <Field
           label="Shell commands that run without asking"
-          hint="One prefix per line. A command matches if it starts with the prefix. Chained or redirected commands (;, &&, |, >) always ask."
+          hint="One rule per line. A command runs without asking only if it matches a rule exactly. End a rule with “ *” to also allow plain file names after it (e.g. “selene *”) — never flags, quotes, variables, ~, chaining or redirection."
         >
           <textarea
             className="mono"

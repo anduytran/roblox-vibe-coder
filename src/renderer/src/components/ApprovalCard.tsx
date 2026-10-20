@@ -15,24 +15,31 @@ export function ApprovalCard({ request, onDecided }: { request: ApprovalRequest;
     }).finally(() => setBusy(false))
   }
 
-  const alwaysLabel = request.toolName === 'Bash' ? 'Always allow this command' : `Always allow ${request.toolName.replace(/^mcp__[^_]+__/, '')}`
+  const alwaysLabel = request.toolName === 'Bash' ? 'Always allow this exact command' : `Always allow ${request.toolName.replace(/^mcp__[^_]+__/, '')}`
+  const title = request.toolName === 'Project setup' ? 'Review project setup' : request.dangerous ? 'Careful: high-risk action' : 'Approval needed'
 
   return (
-    <div className={`approval ${request.outsideProject ? 'approval-danger' : ''}`}>
+    <div className={`approval ${request.dangerous ? 'approval-danger' : ''}`}>
       <div className="approval-head">
-        <strong>{request.outsideProject ? 'Outside the project folder' : 'Approval needed'}</strong>
+        <strong>{title}</strong>
         <span className="muted small">{request.reason}</span>
       </div>
+      {/* The full summary is always shown, never clipped, so nothing can hide below the fold. */}
       <pre className="approval-summary">{request.summary}</pre>
       <button className="link small" onClick={() => setShowInput(!showInput)}>
         {showInput ? 'Hide details' : 'Show full details'}
       </button>
-      {showInput && <pre className="approval-input">{request.inputJson}</pre>}
+      {showInput && (
+        <>
+          <pre className="approval-input">{request.inputJson}</pre>
+          {request.truncated && <span className="warn small">Details were too long to show in full. Deny if you are not sure.</span>}
+        </>
+      )}
       <div className="row gap-xs">
         <Button tone="primary" size="sm" disabled={busy} onClick={() => decide('allow')}>
           Allow once
         </Button>
-        {!request.outsideProject && (
+        {request.canAlwaysAllow && (
           <Button size="sm" disabled={busy} onClick={() => decide('always')} title="Saved in this project's settings; you can remove it there">
             {alwaysLabel}
           </Button>

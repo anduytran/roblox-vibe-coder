@@ -18,7 +18,10 @@ export interface ProjectSettings {
   robloxStudioMcp: boolean
   /** Let agents edit/write files inside the project folder without asking. */
   autoApproveEdits: boolean
-  /** Shell commands starting with one of these run without asking (e.g. "rojo build", "git status"). */
+  /**
+   * Shell command rules that run without asking. A command matches when its first words equal the
+   * rule and any extra words are plain relative paths (no flags, quotes, variables or chaining).
+   */
   allowedBashPrefixes: string[]
   /** Tools the user chose "Always allow" for (exact tool names, e.g. an MCP tool). */
   alwaysAllowTools: string[]
@@ -46,6 +49,8 @@ export interface AppSettings {
   /** Command used to launch Roblox Studio's MCP server. Empty = platform default. */
   studioMcpCommand: string
   studioMcpArgs: string[]
+  /** Give agents a session token through a local proxy instead of the real API key. */
+  hideKeyFromAgents: boolean
 }
 
 export type LogKind = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error' | 'result'
@@ -87,7 +92,12 @@ export interface ApprovalRequest {
   summary: string
   inputJson: string
   reason: string
-  outsideProject: boolean
+  /** Shown in red (outside the project, protected file, secrets, project setup). */
+  dangerous: boolean
+  /** Whether "Always allow" may be offered. */
+  canAlwaysAllow: boolean
+  /** True if the details were cut for display. */
+  truncated: boolean
   ts: number
 }
 

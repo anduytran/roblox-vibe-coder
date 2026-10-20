@@ -8,7 +8,7 @@ import { STUDIO_MCP_NAME } from './permissions'
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   robloxStudioMcp: true,
   autoApproveEdits: false,
-  allowedBashPrefixes: ['git status', 'git diff', 'git log', 'rojo build', 'selene', 'stylua --check'],
+  allowedBashPrefixes: ['git status', 'git status *', 'selene *', 'stylua --check *'],
   alwaysAllowTools: [],
   dailyBudgetUsd: null,
   model: null
@@ -97,20 +97,40 @@ export function defaultStudioMcp(platform: NodeJS.Platform, env: NodeJS.ProcessE
   return null
 }
 
-/** MCP servers for a project: its own .mcp.json plus Roblox Studio when enabled. */
-export function mcpServersFor(project: Project, app: AppSettings): Record<string, StdioServer> {
+/**
+ * Stdio servers declared in the project's .mcp.json. These launch programs, so the runner only
+ * uses them after the user approves the exact commands (see projectTrust.ts).
+ * A project may not claim the reserved Roblox Studio name, whose read-only tools are auto-allowed.
+ */
+export function projectMcpServers(projectPath: string): Record<string, StdioServer> {
+  const file = join(projectPath, '.mcp.json')
   const servers: Record<string, StdioServer> = {}
-  const file = join(project.path, '.mcp.json')
-  if (existsSync(file)) {
-    try {
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, StdioServer> }
-      for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
-        if (cfg && typeof cfg.command === 'string') servers[name] = cfg
+  if (!existsSync(file)) return servers
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, StdioServer> }
+    for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+      if (name.toLowerCase() === STUDIO_MCP_NAME.toLowerCase()) continue
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue
+      if (!cfg || typeof cfg.command !== 'string') continue
+      servers[name] = {
+        command: cfg.command,
+        ...(Array.isArray(cfg.args) ? { args: cfg.args.filter((a): a is string => typeof a === 'string') } : {}),
+        ...(cfg.env && typeof cfg.env === 'object' ? { env: Object.fromEntries(Object.entries(cfg.env).filter(([, v]) => typeof v === 'string')) } : {})
       }
-    } catch {
-      // An invalid .mcp.json is ignored; the agent still runs without those servers.
     }
+  } catch {
+    // An invalid .mcp.json is ignored; the agent still runs without those servers.
   }
+  return servers
+}
+
+/**
+ * MCP servers for a run: the already-reviewed project servers plus Roblox Studio when enabled.
+ * Taking the reviewed set (instead of re-reading .mcp.json) means a file changed after approval
+ * can't swap in a different command.
+ */
+export function mcpServersFor(project: Project, app: AppSettings, reviewed: Record<string, StdioServer> = {}): Record<string, StdioServer> {
+  const servers: Record<string, StdioServer> = { ...reviewed }
   if (project.settings.robloxStudioMcp) {
     const custom = app.studioMcpCommand.trim()
     const studio = custom ? { command: custom, args: app.studioMcpArgs } : defaultStudioMcp(process.platform, process.env)

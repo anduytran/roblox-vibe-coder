@@ -665,7 +665,9 @@ button {
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 260px;
+}
+.approval-input {
+  max-height: 320px;
   overflow: auto;
 }
 .queue {

@@ -48,29 +48,36 @@ npm run dist:win    # Windows installer (run on Windows)
 npm run dist:mac    # macOS .dmg (run on a Mac)
 ```
 
-Commit `package-lock.json` after the first install so the exact SDK version is pinned.
+The Agent SDK version is pinned exactly. Commit `package-lock.json` after the first install, and use `npm ci` for builds.
 
 ## Safety model
 
-Agents run with the project folder as their working directory, and every tool call that isn't clearly safe goes through Hangar's policy (`src/main/permissions.ts`):
+Hangar assumes an agent can be tricked by what it reads (Toolbox models, web pages, files in a cloned repo) and tries to make sure that a tricked agent still can't do damage without your click. It was audited against that threat model; see `SECURITY.md`.
+
+Every tool call that isn't clearly safe goes through Hangar's policy (`src/main/permissions.ts`):
 
 | Action | Default |
 | --- | --- |
 | Reading/searching inside the project | Allowed |
-| Read-only Roblox Studio tools (game tree, console output, screenshots) | Allowed |
+| Read-only Roblox Studio tools (game tree, console output, screenshots) | Allowed (only for the Studio server Hangar itself connects) |
 | Editing files inside the project | Asks (or auto-approve per project) |
-| Anything touching a path outside the project | Always asks, highlighted red, no "always allow" |
-| Shell commands | Ask, unless they start with an allowed prefix; chained/redirected commands (`;`, `&&`, `\|`, `>`, `$(`) always ask |
-| Web access, other MCP tools (e.g. `execute_luau`, `insert_asset`) | Ask |
+| Editing `.git/`, `.claude/`, `.mcp.json`, `CLAUDE.md`, `.vscode/`, `.github/`, `package.json` | Always asks, in red, never "always allow" |
+| Anything touching a path outside the project (including `~`, `$VAR`, `%VAR%`, network paths, outside Glob patterns) | Always asks, in red, never "always allow" |
+| Shell commands | Ask, unless they match an allow rule exactly (a rule ending in ` *` also allows plain relative file names after it). Flags, quotes, variables, `~`, globs, chaining and redirection are never auto-allowed. Defaults: `git status`, `selene *`, `stylua --check *` |
+| Commands that could print secrets (`env`, `printenv`, `$ANTHROPIC_API_KEY`, …) | Always ask, in red |
+| Web access | Asks every time (no "always allow") |
+| Other MCP tools (e.g. `execute_luau`, `insert_asset`) | Ask |
+
+Before any agent starts in a project, programs the folder would launch — MCP servers in `.mcp.json`, or repository git config that runs commands — are shown for approval. Any change to them asks again.
 
 Other protections:
 
-- The API key is encrypted with the OS keychain (Electron `safeStorage`) and only passed to the Claude engine process — never to the UI or agent context.
-- Only the project's own Claude settings are loaded (`settingSources: ['project']`), so global allow-rules in `~/.claude` can't widen permissions.
-- Renderer is sandboxed with context isolation, no Node access, a strict CSP, blocked navigation and new windows, and IPC that only accepts calls from the app's own page. No local network ports are opened.
-- Git runs with argument arrays (no shell), and file operations are checked to stay inside the project, including through symlinks.
-
-Treat content agents read (Toolbox models, web pages, tool output) as untrusted — prompt injection is why risky actions require your click.
+- No Claude settings files are loaded (`settingSources: []`): not your global ones, and not a repository's `.claude/settings.json`, whose hooks or allow-rules could otherwise run commands or skip approvals. Hangar adds `CLAUDE.md` and the roles itself.
+- Agents get a minimal environment (PATH, home and temp folders, locale) plus the API key; other tokens in your environment never reach them.
+- Every git process (Hangar's and the agents') runs with fsmonitor, hooks, pagers and commit signing forced off. Hangar refuses to run git at all in a repo whose config defines filters, textconv, external diff or similar.
+- The API key is encrypted with the OS keychain and never sent to the UI. By default agents never see it: each run gets a short-lived token for a local proxy that adds the real key (Settings → Hide API key from agents). Use a dedicated key with a spending limit set in the Claude Console.
+- Running agents reserve their per-task budget against the daily limit, so parallel runs can't overshoot it. Runs are capped at 80 turns.
+- Renderer is sandboxed with context isolation, no Node access, a strict CSP, blocked navigation, redirects, webviews and new windows, and IPC that only accepts calls from the app's exact page. No local network ports are opened.
 
 ## Project layout
 

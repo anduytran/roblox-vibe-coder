@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
@@ -6,6 +7,7 @@ import { AgentRunner, type QueryFn } from './agentRunner'
 import { CostTracker } from './costs'
 import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus } from './git'
 import { JsonStore } from './jsonStore'
+import { KeyProxy } from './keyProxy'
 import { ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, saveRole } from './roles'
 import { SecretStore } from './secrets'
@@ -16,7 +18,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   perRunBudgetUsd: 2,
   globalDailyBudgetUsd: 20,
   studioMcpCommand: '',
-  studioMcpArgs: []
+  studioMcpArgs: [],
+  hideKeyFromAgents: true
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -53,10 +56,14 @@ function createWindow(): BrowserWindow {
     if (/^https:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-  // Block navigation away from the app UI.
+  // Block navigation and redirects away from the app UI, and never allow embedded webviews.
   win.webContents.on('will-navigate', (e, url) => {
     if (!isAppUrl(url)) e.preventDefault()
   })
+  win.webContents.on('will-redirect', (e, url) => {
+    if (!isAppUrl(url)) e.preventDefault()
+  })
+  win.webContents.on('will-attach-webview', (e) => e.preventDefault())
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -66,10 +73,19 @@ function createWindow(): BrowserWindow {
   return win
 }
 
+const APP_FILE_URL = pathToFileURL(join(__dirname, '../renderer/index.html')).href
+
+/** True only for the app's own page: the exact bundled index.html (or the dev server in development). */
 function isAppUrl(url: string): boolean {
   const dev = process.env.ELECTRON_RENDERER_URL
-  if (!app.isPackaged && dev && url.startsWith(dev)) return true
-  return url.startsWith('file://') && url.includes('/renderer/index.html')
+  if (!app.isPackaged && dev) {
+    try {
+      return new URL(url).origin === new URL(dev).origin
+    } catch {
+      return false
+    }
+  }
+  return url.split('#')[0]!.split('?')[0] === APP_FILE_URL
 }
 
 /** Only accept IPC from our own UI, never from any other frame or page. */
@@ -91,13 +107,14 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
     typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
   const next = { ...current }
   if (typeof patch.defaultModel === 'string' && patch.defaultModel.trim()) next.defaultModel = patch.defaultModel.trim()
-  if (patch.maxConcurrentRuns !== undefined) next.maxConcurrentRuns = Math.round(num(patch.maxConcurrentRuns, 1, 10, current.maxConcurrentRuns))
-  if (patch.perRunBudgetUsd !== undefined) next.perRunBudgetUsd = num(patch.perRunBudgetUsd, 0.05, 100, current.perRunBudgetUsd)
+  if (patch.maxConcurrentRuns !== undefined) next.maxConcurrentRuns = Math.round(num(patch.maxConcurrentRuns, 1, 6, current.maxConcurrentRuns))
+  if (patch.perRunBudgetUsd !== undefined) next.perRunBudgetUsd = num(patch.perRunBudgetUsd, 0.05, 25, current.perRunBudgetUsd)
   if (patch.globalDailyBudgetUsd !== undefined) {
     next.globalDailyBudgetUsd = patch.globalDailyBudgetUsd === null ? null : num(patch.globalDailyBudgetUsd, 0.1, 10000, 20)
   }
   if (typeof patch.studioMcpCommand === 'string') next.studioMcpCommand = patch.studioMcpCommand.trim()
   if (Array.isArray(patch.studioMcpArgs)) next.studioMcpArgs = patch.studioMcpArgs.filter((a): a is string => typeof a === 'string')
+  if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
   return next
 }
 
@@ -106,6 +123,7 @@ app.whenReady().then(() => {
   const secrets = new SecretStore(join(dataDir(), 'anthropic-key.bin'))
   const registry = new ProjectRegistry(join(dataDir(), 'projects.json'))
   const costs = new CostTracker(join(dataDir(), 'costs.json'))
+  const keyProxy = new KeyProxy(() => secrets.getKey())
 
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
@@ -117,7 +135,17 @@ app.whenReady().then(() => {
     emit,
     getSettings: () => settings.get(),
     getApiKey: () => secrets.getKey(),
+    engineAuth: async (apiKey): Promise<{ env: Record<string, string>; release: () => void }> => {
+      if (!settings.get().hideKeyFromAgents) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
+      await keyProxy.start()
+      const token = keyProxy.issueToken()
+      return {
+        env: { ANTHROPIC_BASE_URL: keyProxy.baseUrl(), ANTHROPIC_API_KEY: token },
+        release: () => keyProxy.revokeToken(token)
+      }
+    },
     persistFile: join(dataDir(), 'agents.json'),
+    trustFile: join(dataDir(), 'trusted-project-config.json'),
     loadQuery: async () => {
       const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
       return sdk.query
@@ -225,7 +253,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
   })
-  app.on('before-quit', () => runner.stopAll())
+  app.on('before-quit', () => {
+    runner.stopAll()
+    keyProxy.stop()
+  })
 })
 
 app.on('window-all-closed', () => {

