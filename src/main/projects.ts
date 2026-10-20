@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import type { AppSettings, Project, ProjectSettings } from '@shared/types'
+import type { AppSettings, CheckCommand, Project, ProjectSettings } from '@shared/types'
 import { JsonStore } from './jsonStore'
-import { STUDIO_MCP_NAME } from './permissions'
+import { shellWords, STUDIO_MCP_NAME } from './permissions'
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   robloxStudioMcp: true,
@@ -15,7 +15,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   sandbox: true,
   sandboxAllowedDomains: [],
   autonomous: false,
-  testPlace: null
+  testPlace: null,
+  checks: [],
+  reviewer: true
 }
 
 export class ProjectRegistry {
@@ -67,6 +69,20 @@ export class ProjectRegistry {
   }
 }
 
+/** Check commands must be plain words (no quotes, variables, chaining or redirection): Hangar runs them without a shell. */
+export function sanitizeChecks(v: unknown): CheckCommand[] {
+  if (!Array.isArray(v)) return []
+  const out: CheckCommand[] = []
+  for (const c of v.slice(0, 10)) {
+    if (!c || typeof c !== 'object') continue
+    const command = typeof (c as CheckCommand).command === 'string' ? (c as CheckCommand).command.trim().replace(/\s+/g, ' ').slice(0, 300) : ''
+    if (!command || !shellWords(command)) continue
+    const name = typeof (c as CheckCommand).name === 'string' && (c as CheckCommand).name.trim() ? (c as CheckCommand).name.trim().slice(0, 40) : command.split(' ')[0]!
+    out.push({ name, command })
+  }
+  return out
+}
+
 function sanitizeSettings(s: ProjectSettings): ProjectSettings {
   const strings = (v: unknown): string[] =>
     Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean))] : []
@@ -84,7 +100,9 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
       s.testPlace && /^\d{1,20}$/.test(String(s.testPlace.universeId)) && /^\d{1,20}$/.test(String(s.testPlace.placeId))
         ? { universeId: String(s.testPlace.universeId), placeId: String(s.testPlace.placeId) }
         : null,
-    sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d))
+    sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d)),
+    checks: sanitizeChecks(s.checks),
+    reviewer: s.reviewer !== false
   }
 }
 

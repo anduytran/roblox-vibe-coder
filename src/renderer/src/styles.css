@@ -1129,3 +1129,30 @@ button.file-item {
   border-top: 1px solid var(--line);
   gap: 12px;
 }
+
+/* ---------- checks, reviewer agent, research ---------- */
+.badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.tag { display: inline-block; font-size: 11px; line-height: 16px; padding: 1px 7px; border-radius: 999px; background: var(--bg-3); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.tag-ok { color: var(--live); border-color: rgba(60, 207, 145, 0.35); background: rgba(60, 207, 145, 0.08); }
+.tag-warn { color: var(--warn); border-color: rgba(245, 165, 36, 0.35); background: rgba(245, 165, 36, 0.08); }
+.tag-err { color: var(--err); border-color: rgba(255, 107, 107, 0.4); background: rgba(255, 107, 107, 0.08); }
+.err { color: var(--err); }
+.check-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--bg-2); display: flex; flex-direction: column; gap: 6px; }
+.check-panel-err { border-color: rgba(255, 107, 107, 0.45); }
+.check-panel p { margin: 0; }
+.check-row { display: flex; flex-direction: column; gap: 4px; }
+.check-line { display: flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--text); padding: 4px 0; cursor: pointer; font: inherit; text-align: left; }
+.check-line code { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-output { margin: 0; max-height: 220px; overflow: auto; font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; color: var(--muted); }
+.finding { border-left: 3px solid var(--line-2); padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 2px; }
+.finding p { margin: 2px 0 0; }
+.finding-high { border-left-color: var(--err); }
+.finding-medium { border-left-color: var(--warn); }
+.finding-low { border-left-color: var(--info); }
+.finding-sev { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.source-list { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; word-break: break-all; }
+.source-list a { color: var(--info); }
+.research-text { max-height: none; }
+.check-list { display: flex; flex-direction: column; gap: 6px; }
+.check-edit { display: grid; grid-template-columns: 140px 1fr auto; gap: 6px; align-items: center; }
+.role-badge { font-size: 11px; color: var(--info); }

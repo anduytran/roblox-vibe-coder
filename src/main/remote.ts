@@ -343,8 +343,19 @@ export class RemoteServer {
         res.writeHead(200, { 'content-type': type, 'content-length': size, 'cache-control': 'no-store', ...this.securityHeaders() })
         return void stream.pipe(res)
       }
-      if (method === 'POST' && (c === 'merge' || c === 'discard' || c === 'publish')) {
-        const review: Review = c === 'merge' ? await this.deps.reviews.merge(b) : c === 'discard' ? await this.deps.reviews.discard(b) : await this.deps.reviews.publish(b)
+      if (method === 'POST' && (c === 'merge' || c === 'discard' || c === 'publish' || c === 'recheck')) {
+        const body = c === 'merge' || c === 'recheck' ? await this.body(req) : {}
+        const review: Review =
+          c === 'merge'
+            ? await this.deps.reviews.merge(b, {
+                force: body.force === true,
+                acknowledged: Array.isArray(body.acknowledged) ? body.acknowledged.filter((w: unknown): w is string => typeof w === 'string').slice(0, 20) : []
+              })
+            : c === 'discard'
+              ? await this.deps.reviews.discard(b)
+              : c === 'recheck'
+                ? await this.deps.reviews.recheck(b, { reviewer: body.reviewer === true })
+                : await this.deps.reviews.publish(b)
         return this.json(res, 200, { review })
       }
     }
@@ -408,7 +419,14 @@ export class RemoteServer {
     const reviews = this.deps.reviews
       .list()
       .filter((r) => r.status === 'pending')
-      .map((r) => ({ ...r, agent: this.agentName(r.projectId, r.agentId), clip: r.clip ? { kind: r.clip.kind, count: r.clip.files.length } : null }))
+      .map((r) => ({
+        ...r,
+        agent: this.agentName(r.projectId, r.agentId),
+        clip: r.clip ? { kind: r.clip.kind, count: r.clip.files.length } : null,
+        // The report itself is loaded on demand (via /diff); the list only needs its provenance.
+        research: r.research ? { ...r.research, markdown: '' } : null,
+        mergeWarnings: this.deps.reviews.mergeWarnings(r)
+      }))
     return { projects, approvals, reviews, costs: this.deps.costs.summary(), vapidPublicKey: this.store.get().vapid?.publicKey ?? null }
   }
 }

@@ -11,6 +11,10 @@ import { KeyProxy } from './keyProxy'
 import { StudioClipRecorder } from './clips'
 import { RemoteServer } from './remote'
 import { ReviewActions } from './reviewActions'
+import { ReviewPipeline } from './reviewPipeline'
+import { runChecks } from './checks'
+import { TaskReviewer } from './taskReviewer'
+import { WebEgressProxy } from './webEgress'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
@@ -133,39 +137,54 @@ app.whenReady().then(() => {
   const registry = new ProjectRegistry(join(dataDir(), 'projects.json'))
   const costs = new CostTracker(join(dataDir(), 'costs.json'))
   const keyProxy = new KeyProxy(() => secrets.getKey())
+  const webEgress = new WebEgressProxy()
 
   const reviews = new ReviewStore(join(dataDir(), 'reviews.json'), (r) => r.clip && StudioClipRecorder.remove(r.clip.files))
   const testPlaceKeys = new TestPlaceKeys(dataDir())
   let remote: RemoteServer | null = null
+  let pipeline: ReviewPipeline | null = null
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
     remote?.onEvent(event)
+  }
+
+  const engineAuth = async (apiKey: string, opts: { forceHideKey: boolean }): Promise<{ env: Record<string, string>; release: () => void }> => {
+    if (!settings.get().hideKeyFromAgents && !opts.forceHideKey) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
+    await keyProxy.start()
+    const token = keyProxy.issueToken()
+    return {
+      env: { ANTHROPIC_BASE_URL: keyProxy.baseUrl(), ANTHROPIC_API_KEY: token },
+      release: () => keyProxy.revokeToken(token)
+    }
+  }
+  const loadQuery = async (): Promise<QueryFn> => {
+    const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
+    return sdk.query
   }
 
   const runner = new AgentRunner({
     registry,
     costs,
     emit,
+    onReview: (r) => void pipeline?.start(r),
+    researchProxy: () => webEgress.start(),
     getSettings: () => settings.get(),
     getApiKey: () => secrets.getKey(),
-    engineAuth: async (apiKey, opts): Promise<{ env: Record<string, string>; release: () => void }> => {
-      if (!settings.get().hideKeyFromAgents && !opts.forceHideKey) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
-      await keyProxy.start()
-      const token = keyProxy.issueToken()
-      return {
-        env: { ANTHROPIC_BASE_URL: keyProxy.baseUrl(), ANTHROPIC_API_KEY: token },
-        release: () => keyProxy.revokeToken(token)
-      }
-    },
+    engineAuth,
     persistFile: join(dataDir(), 'agents.json'),
     trustFile: join(dataDir(), 'trusted-project-config.json'),
     appDataDir: dataDir(),
     reviews,
     clips: new StudioClipRecorder(join(dataDir(), 'clips')),
-    loadQuery: async () => {
-      const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
-      return sdk.query
-    }
+    loadQuery
+  })
+
+  pipeline = new ReviewPipeline({
+    registry,
+    reviews,
+    emit,
+    runChecks: (project, review) => runChecks(project, review, { workDir: join(dataDir(), 'builds'), appDataDir: dataDir() }),
+    reviewer: new TaskReviewer({ loadQuery, engineAuth, getApiKey: () => secrets.getKey(), getSettings: () => settings.get(), costs, workDir: join(dataDir(), 'builds') })
   })
 
   const reviewActions = new ReviewActions({
@@ -173,7 +192,8 @@ app.whenReady().then(() => {
     reviews,
     runner,
     emit,
-    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => settings.get().rojoCommand, workDir: join(dataDir(), 'builds') })
+    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
+    pipeline
   })
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs })
   void remote.start().catch(() => undefined)
@@ -226,7 +246,9 @@ app.whenReady().then(() => {
       prompt: str(role.prompt, 'instructions'),
       ...(Array.isArray(role.tools) && role.tools.length ? { tools: role.tools.filter((t) => typeof t === 'string') } : {}),
       ...(typeof role.model === 'string' && role.model.trim() ? { model: role.model.trim() } : {}),
-      ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {})
+      ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {}),
+      ...(role.vaultKind === 'design' ? { vaultKind: 'design' as const } : {}),
+      ...(role.mode === 'research' ? { mode: 'research' as const } : {})
     })
     return listRoles(root(id))
   })
@@ -272,7 +294,13 @@ app.whenReady().then(() => {
   // Reviews (autonomous task branches)
   handle(IPC.reviewsList, (id: unknown) => reviewActions.list(str(id, 'project')))
   handle(IPC.reviewsDiff, (id: unknown) => reviewActions.diff(str(id, 'review')))
-  handle(IPC.reviewsMerge, (id: unknown) => reviewActions.merge(str(id, 'review')))
+  handle(IPC.reviewsMerge, (id: unknown, opts?: { force?: unknown; acknowledged?: unknown }) =>
+    reviewActions.merge(str(id, 'review'), {
+      force: opts?.force === true,
+      acknowledged: Array.isArray(opts?.acknowledged) ? opts.acknowledged.filter((w): w is string => typeof w === 'string').slice(0, 20) : []
+    })
+  )
+  handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))
   handle(IPC.reviewsCheckout, (id: unknown) => reviewActions.checkout(str(id, 'review')))
   handle(IPC.reviewsCheckoutBase, (id: unknown) => reviewActions.checkoutBase(str(id, 'project')))
@@ -285,7 +313,8 @@ app.whenReady().then(() => {
   // Obsidian vaults
   handle(IPC.vaultStatus, (id: unknown, folder: unknown) => vaultStatus(root(id), str(folder, 'folder')))
   handle(IPC.vaultCreate, (id: unknown, folder: unknown) => {
-    createVault(root(id), str(folder, 'folder'))
+    const f = str(folder, 'folder')
+    createVault(root(id), f, listRoles(root(id)).find((r) => r.vault === f)?.vaultKind ?? 'ui')
     return vaultStatus(root(id), str(folder, 'folder'))
   })
   handle(IPC.vaultOpen, async (id: unknown, folder: unknown) => {
@@ -317,6 +346,7 @@ app.whenReady().then(() => {
   app.on('before-quit', () => {
     runner.stopAll()
     keyProxy.stop()
+    webEgress.stop()
     remote?.stop()
   })
 })

@@ -16,7 +16,7 @@ export function sandboxSupported(platform: NodeJS.Platform = process.platform): 
 }
 
 /** Folders with secrets that sandboxed commands may not read. */
-const CREDENTIAL_DIRS = [
+export const CREDENTIAL_DIRS = [
   '~/.ssh', '~/.aws', '~/.azure', '~/.config/gcloud', '~/.kube', '~/.gnupg', '~/.docker', '~/.config/gh',
   '~/.netrc', '~/.npmrc', '~/.pypirc', '~/.git-credentials', '~/Library/Keychains', '~/.claude'
 ]

@@ -96,7 +96,7 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
 
 test('agents list the main agent plus role files', () => {
   const { runner, project } = setup()
-  assert.deepEqual(runner.snapshot(project.id).map((a) => a.agentId).sort(), ['lead', 'main', 'qa-tester', 'scripter', 'ui-builder'])
+  assert.deepEqual(runner.snapshot(project.id).map((a) => a.agentId).sort(), ['lead', 'main', 'qa-tester', 'researcher', 'scripter', 'ui-builder'])
 })
 
 test('queues respect the concurrency limit and resume sessions', async () => {

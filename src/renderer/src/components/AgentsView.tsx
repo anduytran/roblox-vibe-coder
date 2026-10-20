@@ -114,6 +114,9 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
             <StatusPill status={state?.status ?? 'idle'} />
           </div>
           <p className="muted small">{role.description}</p>
+          {role.mode === 'research' && (
+            <p className="role-badge">Web researcher · searches and reads public web pages only · its reports wait in Reviews until you approve them</p>
+          )}
         </div>
         <div className="row gap-xs">
           {props.onEdit && (
@@ -149,7 +152,11 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
         {log.length === 0 && approvals.length === 0 && (
           <div className="feed-empty">
             <p>Give {role.name} a task. Small, specific requests work best, for example:</p>
-            <code>Add a 3-second cooldown to the dash augment and playtest it.</code>
+            <code>
+              {role.mode === 'research'
+                ? 'What are the current DataStore limits and best practices for saving player inventories?'
+                : 'Add a 3-second cooldown to the dash augment and playtest it.'}
+            </code>
           </div>
         )}
         {log.map((e) => (
@@ -195,10 +202,13 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
         <div className="composer-foot">
           <span className="muted small">
             Enter to send · Shift+Enter for a new line{busy ? ' · new messages are queued' : ''}
-            {project.settings.robloxStudioMcp ? ' · Roblox Studio tools on' : ''}
-            {project.settings.sandbox && (window.hangar.platform === 'darwin' || window.hangar.platform === 'linux') ? ' · Sandboxed' : ' · Not sandboxed'}
+            {role.mode === 'research'
+              ? ' · Web only · no project access'
+              : `${project.settings.robloxStudioMcp ? ' · Roblox Studio tools on' : ''}${
+                  project.settings.sandbox && (window.hangar.platform === 'darwin' || window.hangar.platform === 'linux') ? ' · Sandboxed' : ' · Not sandboxed'
+                }`}
           </span>
-          {project.settings.robloxStudioMcp && (
+          {project.settings.robloxStudioMcp && role.mode !== 'research' && (
             <label className="record-check" title="Record a short clip of the agent's playtest for the review">
               <input type="checkbox" checked={record} onChange={(e) => setRecord(e.target.checked)} /> Record playtest
             </label>

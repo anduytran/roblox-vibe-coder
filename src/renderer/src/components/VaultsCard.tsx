@@ -9,6 +9,7 @@ export function VaultsCard({ project }: { project: Project }) {
   const [status, setStatus] = useState<Record<string, { exists: boolean; notes: number }>>({})
   const withVault = roles.filter((r) => r.vault)
   const uiBuilder = roles.find((r) => r.id === 'ui-builder' && !r.vault)
+  const lead = roles.find((r) => r.id === 'lead' && !r.vault)
 
   useEffect(() => {
     void Promise.all(withVault.map((r) => window.hangar.vault.status(project.id, r.vault!))).then((list) =>
@@ -16,9 +17,9 @@ export function VaultsCard({ project }: { project: Project }) {
     )
   }, [project.id, roles]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const giveVault = (role: Role, folder: string): void => {
+  const giveVault = (role: Role, folder: string, kind: 'ui' | 'design' = 'ui'): void => {
     void attempt(async () => {
-      setRoles(project.id, await window.hangar.roles.save(project.id, { ...role, vault: folder }))
+      setRoles(project.id, await window.hangar.roles.save(project.id, { ...role, vault: folder, ...(kind === 'design' ? { vaultKind: 'design' as const } : {}) }))
       toast(`${role.name} now keeps notes in ${folder}/.`)
     })
   }
@@ -27,16 +28,17 @@ export function VaultsCard({ project }: { project: Project }) {
     <section className="card">
       <h3>Obsidian vaults</h3>
       <p className="small muted">
-        A folder of Markdown notes inside the project that a role reads before working and keeps up to date — for the UI Builder: style guide, screens, components,
-        decisions and an inbox for your requests. Open it in Obsidian to read and edit; changes show up in reviews like any other file.
+        A folder of Markdown notes inside the project that a role reads before working and keeps up to date. The Lead keeps the game design (overview, mechanics
+        with acceptance criteria, balance, roadmap); the UI Builder keeps the style guide, screens and components. Each has an Inbox for your requests. Open them in
+        Obsidian to read and edit; changes show up in reviews like any other file.
       </p>
-      {withVault.length === 0 && !uiBuilder && <p className="small muted">No roles have a vault. Add one in a role's settings (Agents → Edit role).</p>}
+      {withVault.length === 0 && !uiBuilder && !lead && <p className="small muted">No roles have a vault. Add one in a role's settings (Agents → Edit role).</p>}
       {withVault.map((r) => {
         const st = status[r.vault!]
         return (
           <div key={r.id} className="row between vault-row">
             <span>
-              <strong>{r.name}</strong> <code>{r.vault}/</code>{' '}
+              <strong>{r.name}</strong> <code>{r.vault}/</code> <span className="tag">{r.vaultKind === 'design' ? 'game design' : 'UI'}</span>{' '}
               <span className="muted small">{st ? (st.exists ? `${st.notes} notes` : 'not created yet') : ''}</span>
             </span>
             <div className="row gap-xs">
@@ -63,6 +65,14 @@ export function VaultsCard({ project }: { project: Project }) {
           </div>
         )
       })}
+      {lead && (
+        <div className="row between vault-row">
+          <span className="small">The Lead doesn't have a game design vault yet.</span>
+          <Button size="sm" tone="primary" onClick={() => giveVault(lead, 'design-vault', 'design')}>
+            Give Lead a design vault
+          </Button>
+        </div>
+      )}
       {uiBuilder && (
         <div className="row between vault-row">
           <span className="small">The UI Builder doesn't have a vault yet.</span>

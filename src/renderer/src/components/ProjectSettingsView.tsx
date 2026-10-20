@@ -3,6 +3,7 @@ import type { Project, ProjectSettings } from '@shared/types'
 import { attempt, removeProject, replaceProject, toast, useStore } from '../store'
 import { Button, Field, Toggle, usd } from './ui'
 import { VaultsCard } from './VaultsCard'
+import { ChecksCard } from './ChecksCard'
 
 export function ProjectSettingsView({ project }: { project: Project }) {
   const totals = useStore((s) => s.costs)
@@ -89,6 +90,8 @@ export function ProjectSettingsView({ project }: { project: Project }) {
           {sandboxAvailable && !s.sandbox && <li className="warn">The sandbox is off for this project, so shell commands still ask.</li>}
         </ul>
       </section>
+
+      <ChecksCard project={project} update={update} />
 
       <section className="card">
         <h3>Sandbox</h3>

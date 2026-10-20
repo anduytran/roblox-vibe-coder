@@ -64,6 +64,24 @@ These features were reviewed by an independent reviewer before release; each fin
 
 Phone remote design: Hangar listens on `127.0.0.1` only and is exposed to your own Tailscale devices by `tailscale serve` (HTTPS). Pairing uses a 6-digit code (5 minutes, 5 tries); devices get random tokens stored only as hashes; every API call needs the token; Host and Origin are checked; the phone app runs under a strict CSP with no inline script. The phone can't change settings or rules, choose "always allow", or approve high-risk actions. Never expose Hangar with `tailscale funnel`.
 
+## Checks, reviewer agent and web researcher (audited 2026-10-20)
+
+Design:
+- **Checks** run in a temporary checkout of the task's exact commit, inside Hangar's data folder, without a shell, with programs resolved from `PATH` (never the checkout), a minimal environment, `NoDefaultCurrentDirectoryInExePath=1` on Windows, a time limit, and — on macOS/Linux with the project's sandbox on — inside the OS sandbox (Seatbelt / bubblewrap: no network, writes only to the checkout and temp, no reading credential folders or Hangar's data). If the sandbox is wanted but missing, checks report an error instead of running unsandboxed.
+- **Reviewer agent**: a separate session with only Read/Glob/Grep, every call checked by Hangar's path policy against the temporary checkout; no MCP servers, subagents, settings files, web or shell; always behind the key-hiding proxy; $1 cap. Its verdict is advice and never merges or blocks on its own.
+- **Web researcher**: only WebSearch and WebFetch; runs in an empty temporary folder with no project files, `CLAUDE.md`, MCP servers or subagents; is never offered as a subagent; never resumes or keeps a session; always behind the key-hiding proxy. Pages must be public `http(s)` host names (no IPs, `localhost`, `.local`, tailnet names), and its web traffic goes through Hangar's egress proxy, which resolves names itself, refuses loopback/private/CGNAT/link-local/tailnet addresses and connects to the exact address it checked. Its report reaches other agents only after you approve it into `research/` (hidden characters stripped, the pages it opened recorded by Hangar).
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| On Windows a check could run a program the branch planted in the checkout (cmd.exe and Node find `node.bat` etc. in the current folder first) | High | `NoDefaultCurrentDirectoryInExePath=1`; checks are skipped when a task adds program or script files (`.exe`, `.bat`, `.cmd`, `.ps1`, …) or files named like the tools. |
+| JS tool configs are code (`eslint.config.js`, `.prettierrc.cjs`, `tsconfig` plugins), so an agent could get code run by a check | High | Checks run inside the OS sandbox on macOS/Linux; checks are skipped when a task changes any such file. |
+| An agent could avoid the failing-checks prompt by getting checks skipped | Medium | "Checks didn't run" is a merge warning. |
+| `allowedTools` pre-approved the reviewer's reads, bypassing the path check | Medium | Removed; every read goes through Hangar's policy. |
+| Text in the diff could turn a reviewer "block" into an error, which didn't warn | Medium-Low | A reviewer that didn't finish is a merge warning. |
+| "Merge anyway" could skip a warning that appeared after you looked (e.g. a late "block") | Medium-Low | Merge anyway only covers the exact warnings you were shown; anything new is refused. |
+| The researcher could reach local services through names that resolve to this computer; sessions could carry web content across runs | Low-Medium | Egress proxy with resolve-then-connect; research sessions are never resumed or saved. |
+| `research/` or a vault folder that is a link could make Hangar write outside the project | Low | Both must be real folders inside the project. |
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.
@@ -73,6 +91,10 @@ Phone remote design: Hangar listens on `127.0.0.1` only and is exposed to your o
 - **One local port.** The proxy listens on 127.0.0.1 only and requires a per-run random token.
 - **Same-user programs can decrypt the stored key.** OS keychain encryption (DPAPI on Windows) protects against other users and stolen disks, not against programs running as you — including commands you approve. Another reason to use a dedicated, spend-limited key.
 - **Approved git config.** If you approve a repository whose git config defines filters, git commands that agents run (and you approve) will use them. Hangar itself still refuses to run git there.
+- **Checks on Windows** run without an OS sandbox. Linters and Rojo only read code, but a test runner that executes game code (for example Lune) runs it with your permissions. Only add such checks if you're comfortable with that.
+- **The reviewer agent can be fooled.** It reads code another agent wrote; treat "looks good" as a second opinion, not a guarantee.
+- **Approved research is trusted context.** Once you approve a report, every agent may read it. Read it for accuracy and for instructions aimed at an AI before approving. Pages on documentation sites the engine trusts by default may be missing from the "pages it opened" list.
+- **The researcher's egress proxy** relies on the engine honouring `HTTPS_PROXY` for web fetches; the host-name rules apply either way. If you use a corporate proxy, the researcher connects directly instead of through it.
 - **Playtest recordings** capture the Studio window's area of the screen; anything overlapping it (a notification, another window) is captured too.
 - **Logs on disk.** Agent feeds (`agents.json` in the app data folder) and engine transcripts may contain code and command output in plain text.
 - **Not yet run end to end.** These protections are unit-tested, but the first run with the real SDK, Studio and a packaged build happens on your machine. Builds are unsigned, Electron fuses are not yet set, and there is no committed lockfile until the first `npm install`.

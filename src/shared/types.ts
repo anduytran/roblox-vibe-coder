@@ -13,6 +13,21 @@ export interface Role {
   model?: string
   /** Folder (inside the project) of this role's Obsidian vault, e.g. "ui-vault". */
   vault?: string
+  /** Which templates the vault starts from: UI (screens, components, style guide) or game design. */
+  vaultKind?: VaultKind
+  /**
+   * "research": a web researcher. It can only search and read the web — no project files, commands,
+   * Studio or subagents — and its findings wait in Reviews until you approve them into research/.
+   */
+  mode?: 'research'
+}
+
+export type VaultKind = 'ui' | 'design'
+
+/** A command Hangar runs on every finished task before you merge it (lint, build, tests). */
+export interface CheckCommand {
+  name: string
+  command: string
 }
 
 export interface ProjectSettings {
@@ -42,6 +57,10 @@ export interface ProjectSettings {
   autonomous: boolean
   /** Private test place for "Publish to test place" (never the live game). */
   testPlace: { universeId: string; placeId: string } | null
+  /** Run on each finished autonomous task, in a separate checkout of its branch. */
+  checks: CheckCommand[]
+  /** A read-only reviewer agent reads each finished task's change and reports problems. */
+  reviewer: boolean
 }
 
 export interface Project {
@@ -88,6 +107,57 @@ export interface QueuedTask {
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
 
+export interface CheckResult {
+  name: string
+  command: string
+  status: 'passed' | 'failed' | 'error'
+  /** Last part of the command's output. */
+  output: string
+  ms: number
+}
+
+export interface ReviewChecks {
+  status: 'running' | 'done' | 'skipped'
+  /** Why the checks were skipped or could not run. */
+  reason: string | null
+  results: CheckResult[]
+  /** Ran inside the OS sandbox (macOS/Linux); false on Windows or with the project's sandbox off. */
+  sandboxed?: boolean
+}
+
+export interface AiFinding {
+  severity: 'high' | 'medium' | 'low'
+  file: string
+  line: number | null
+  title: string
+  detail: string
+}
+
+/** The reviewer agent's report. Advisory: it read agent-written code and can be fooled by it. */
+export interface AiReview {
+  status: 'running' | 'done' | 'error'
+  verdict: 'approve' | 'concerns' | 'block' | null
+  summary: string
+  findings: AiFinding[]
+  costUsd: number
+  error: string | null
+}
+
+/** Findings from the web researcher, held back from every agent until you approve them. */
+export interface ResearchFindings {
+  markdown: string
+  /** Pages the researcher actually fetched, recorded by Hangar (not taken from the report). */
+  fetched: string[]
+  /** Searches it ran. */
+  queries: string[]
+  /** Links the report cites. */
+  cited: string[]
+  /** Hidden or direction-changing characters were found and removed. */
+  hiddenChars: boolean
+  /** Where it was saved once approved (inside the project). */
+  savedAs: string | null
+}
+
 /** A finished autonomous task: its work lives on its own branch until you merge or discard it. */
 export interface Review {
   id: string
@@ -110,6 +180,11 @@ export interface Review {
   /** Playtest clip: a video file, or screenshot frames when recording wasn't possible. */
   clip: { kind: 'video' | 'frames'; files: string[] } | null
   published: { versionNumber: number; at: number } | null
+  /** "research" reviews hold web findings instead of a branch (branch and shas are empty). */
+  kind?: 'code' | 'research'
+  checks?: ReviewChecks | null
+  aiReview?: AiReview | null
+  research?: ResearchFindings | null
 }
 
 export interface AgentState {

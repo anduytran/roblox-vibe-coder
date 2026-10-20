@@ -50,6 +50,7 @@ export const IPC = {
   reviewsCheckoutBase: 'reviews:checkoutBase',
   reviewsClipFile: 'reviews:clipFile',
   reviewsPublish: 'reviews:publish',
+  reviewsRecheck: 'reviews:recheck',
   testPlaceKeyStatus: 'testPlaceKey:status',
   testPlaceKeySet: 'testPlaceKey:set',
   testPlaceKeyClear: 'testPlaceKey:clear',
@@ -131,7 +132,8 @@ export interface HangarApi {
   reviews: {
     list(projectId: string): Promise<Review[]>
     diff(reviewId: string): Promise<string>
-    merge(reviewId: string): Promise<Review>
+    /** For research reviews: approve and save to research/. `force` merges despite failing checks or a reviewer block. */
+    merge(reviewId: string, opts?: { force?: boolean; acknowledged?: string[] }): Promise<Review>
     discard(reviewId: string): Promise<Review>
     /** Switch the project folder to the review's branch so you can try it in Studio. */
     checkout(reviewId: string): Promise<void>
@@ -139,6 +141,8 @@ export interface HangarApi {
     /** A clip file as a data: URL for display. */
     clipFile(reviewId: string, index: number): Promise<string>
     publish(reviewId: string): Promise<Review>
+    /** Run the checks again (and the reviewer agent if `reviewer`). */
+    recheck(reviewId: string, opts?: { reviewer?: boolean }): Promise<Review>
   }
   vault: {
     status(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>

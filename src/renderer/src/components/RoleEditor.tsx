@@ -12,6 +12,9 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
   const [model, setModel] = useState(props.role.model ?? '')
   const [prompt, setPrompt] = useState(props.role.prompt)
   const [vault, setVault] = useState(props.role.vault ?? '')
+  const [vaultKind, setVaultKind] = useState<'ui' | 'design'>(props.role.vaultKind ?? 'ui')
+  const [mode, setMode] = useState<'normal' | 'research'>(props.role.mode === 'research' ? 'research' : 'normal')
+  const research = mode === 'research'
 
   const save = (): void => {
     void attempt(async () => {
@@ -25,7 +28,9 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
           .map((t) => t.trim())
           .filter(Boolean),
         model: model.trim() || undefined,
-        vault: vault.trim() || undefined
+        vault: research ? undefined : vault.trim() || undefined,
+        vaultKind: !research && vault.trim() && vaultKind === 'design' ? 'design' : undefined,
+        mode: research ? 'research' : undefined
       }
       const roles = await window.hangar.roles.save(project.id, role)
       setRoles(project.id, roles)
@@ -77,12 +82,37 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
       <Field label="Description" hint="One line: what this agent is for. The Lead agent uses it to decide when to delegate.">
         <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} />
       </Field>
-      <Field label="Built-in tools allowed (optional)" hint="Comma-separated, e.g. Read, Glob, Grep. Empty = all tools. Roblox Studio tools are always offered.">
-        <input value={tools} onChange={(e) => setTools(e.target.value)} placeholder="Read, Glob, Grep, Edit, Write, Bash" />
+      <Field
+        label="Kind"
+        hint={
+          research
+            ? 'Only web search and reading public web pages. No project files, commands, Studio or subagents, and no other agent can call it. Its reports wait in Reviews until you approve them into research/.'
+            : 'Works in the project with the tools below.'
+        }
+      >
+        <select value={mode} onChange={(e) => setMode(e.target.value as 'normal' | 'research')}>
+          <option value="normal">Project agent</option>
+          <option value="research">Web researcher (findings reviewed by you)</option>
+        </select>
       </Field>
-      <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated, e.g. ui-vault. Created from templates on first use.">
-        <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />
-      </Field>
+      {!research && (
+        <>
+          <Field label="Built-in tools allowed (optional)" hint="Comma-separated, e.g. Read, Glob, Grep. Empty = all tools. Roblox Studio tools are always offered.">
+            <input value={tools} onChange={(e) => setTools(e.target.value)} placeholder="Read, Glob, Grep, Edit, Write, Bash" />
+          </Field>
+          <div className="grid-2">
+            <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated. Created from templates on first use.">
+              <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />
+            </Field>
+            <Field label="Vault templates" hint="UI: style guide, screens, components. Game design: overview, mechanics with acceptance criteria, balance, roadmap.">
+              <select value={vaultKind} disabled={!vault.trim()} onChange={(e) => setVaultKind(e.target.value as 'ui' | 'design')}>
+                <option value="ui">UI</option>
+                <option value="design">Game design</option>
+              </select>
+            </Field>
+          </div>
+        </>
+      )}
       <Field label="Instructions">
         <textarea className="mono" rows={12} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
       </Field>

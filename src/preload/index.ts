@@ -55,12 +55,13 @@ const api: HangarApi = {
   reviews: {
     list: (id) => invoke(IPC.reviewsList, id),
     diff: (id) => invoke(IPC.reviewsDiff, id),
-    merge: (id) => invoke(IPC.reviewsMerge, id),
+    merge: (id, opts) => invoke(IPC.reviewsMerge, id, opts),
     discard: (id) => invoke(IPC.reviewsDiscard, id),
     checkout: (id) => invoke(IPC.reviewsCheckout, id),
     checkoutBase: (id) => invoke(IPC.reviewsCheckoutBase, id),
     clipFile: (id, index) => invoke(IPC.reviewsClipFile, id, index),
-    publish: (id) => invoke(IPC.reviewsPublish, id)
+    publish: (id) => invoke(IPC.reviewsPublish, id),
+    recheck: (id, opts) => invoke(IPC.reviewsRecheck, id, opts)
   },
   vault: {
     status: (id, folder) => invoke(IPC.vaultStatus, id, folder),

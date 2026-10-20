@@ -49,6 +49,11 @@ label.check{display:flex;gap:10px;align-items:center;font-size:15px}label.check 
 .agent{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--line)}.agent .pill{align-self:flex-start}pre.summary{font:14px/1.5 system-ui,-apple-system,sans-serif}.agent:first-of-type{border-top:0}
 .diff div{white-space:pre;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;padding:0 8px}
 .diff{overflow:auto;max-height:60vh;background:var(--bg);border-radius:8px;padding:6px 0}
+.tag{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--bg3);color:var(--muted);margin-right:4px;white-space:nowrap}.tag.ok{color:var(--live)}.tag.bad{color:var(--err)}.tag.meh{color:var(--accent)}
+.sect{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.sect h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
+.out{white-space:pre-wrap;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border-radius:6px;padding:6px;max-height:30vh;overflow:auto;color:var(--muted)}
+.finding{border-left:3px solid var(--line);padding:2px 0 2px 8px;margin:6px 0}.finding.high{border-color:var(--err)}.finding.medium{border-color:var(--accent)}.finding.low{border-color:var(--info)}
+.src{font-size:12px;word-break:break-all;color:var(--info)}
 .d-add{background:var(--add)}.d-del{background:var(--del)}.d-hunk{color:var(--info)}.d-meta{color:var(--muted);font-weight:600}
 video,img.frame{width:100%;border-radius:8px;background:#000}
 .frames{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start}.frames img{flex:0 0 85%;width:85%;height:auto;scroll-snap-align:center;border-radius:8px}
@@ -161,10 +166,68 @@ function approvalCard(a) {
           h('button', { class: 'btn danger grow', onclick: () => act(() => api('/api/approvals/' + a.id, { method: 'POST', body: { decision: 'deny' } }), 'Denied') }, 'Deny')))
 }
 
+function badges(r) {
+  const out = []
+  const c = r.checks, ai = r.aiReview
+  if (c) out.push(c.status === 'running' ? h('span', { class: 'tag' }, 'checks…') : c.status === 'skipped' ? h('span', { class: 'tag meh' }, 'checks skipped') : (c.reason || c.results.some((x) => x.status !== 'passed')) ? h('span', { class: 'tag bad' }, '✗ checks') : h('span', { class: 'tag ok' }, '✓ checks'))
+  if (ai) out.push(ai.status === 'running' ? h('span', { class: 'tag' }, 'reviewing…') : ai.status === 'error' ? h('span', { class: 'tag meh' }, 'review failed') : h('span', { class: 'tag ' + (ai.verdict === 'approve' ? 'ok' : ai.verdict === 'block' ? 'bad' : 'meh') }, ai.verdict === 'approve' ? '✓ reviewer' : ai.verdict === 'block' ? '✗ reviewer' : '! reviewer'))
+  return out.length ? h('div', {}, out) : null
+}
+
 function reviewRow(r) {
+  const what = r.kind === 'research' ? 'web research · ' + ((r.research && r.research.fetched.length) || 0) + ' pages' : r.files.length + ' file' + (r.files.length === 1 ? '' : 's')
   return h('div', { class: 'card', onclick: () => { openReview = r; render() } },
     h('div', { class: 'row' }, h('strong', { class: 'grow' }, r.title), r.clip ? h('span', { class: 'pill' }, r.clip.kind === 'video' ? '▶ clip' : '▶ frames') : null),
-    h('div', { class: 'small muted' }, r.agent + ' · ' + projectName(r.projectId) + ' · ' + r.files.length + ' file' + (r.files.length === 1 ? '' : 's') + (r.incomplete ? ' · stopped early' : '')))
+    h('div', { class: 'small muted' }, r.agent + ' · ' + projectName(r.projectId) + ' · ' + what + (r.incomplete ? ' · stopped early' : '')),
+    badges(r))
+}
+
+function checksSection(r) {
+  const c = r.checks
+  if (!c) return null
+  const rows = [h('h3', {}, 'Checks')]
+  if (c.status === 'running') rows.push(h('div', { class: 'small muted' }, 'Running…'))
+  if (c.reason) rows.push(h('div', { class: 'small' }, '⚠ ' + c.reason))
+  for (const x of c.results) {
+    rows.push(h('div', { class: 'small' }, (x.status === 'passed' ? '✓ ' : '✗ ') + x.name + ' — ' + (x.status === 'error' ? "couldn't run" : x.status)))
+    if (x.status !== 'passed' && x.output) rows.push(h('div', { class: 'out' }, x.output))
+  }
+  return h('div', { class: 'sect' }, rows)
+}
+
+function aiSection(r) {
+  const ai = r.aiReview
+  if (!ai) return null
+  const rows = [h('h3', {}, 'Reviewer agent')]
+  if (ai.status === 'running') rows.push(h('div', { class: 'small muted' }, 'Reading the change…'))
+  if (ai.status === 'error') rows.push(h('div', { class: 'small' }, '⚠ ' + (ai.error || 'Failed')))
+  if (ai.status === 'done') {
+    rows.push(h('div', { class: 'small' }, h('span', { class: 'tag ' + (ai.verdict === 'approve' ? 'ok' : ai.verdict === 'block' ? 'bad' : 'meh') }, ai.verdict === 'approve' ? 'Looks good' : ai.verdict === 'block' ? "Don't merge as is" : 'Has concerns'), ai.summary))
+    for (const f of ai.findings) rows.push(h('div', { class: 'finding ' + f.severity }, h('div', { class: 'small' }, h('strong', {}, f.title)), f.file ? h('div', { class: 'small muted' }, f.file + (f.line ? ':' + f.line : '')) : null, f.detail ? h('div', { class: 'small' }, f.detail) : null))
+    rows.push(h('div', { class: 'small muted' }, "Advice from an AI that read another agent's code; it can be fooled."))
+  }
+  return h('div', { class: 'sect' }, rows)
+}
+
+function researchView(r) {
+  const res = r.research || { fetched: [], queries: [] }
+  const textBox = h('div', {}, h('div', { class: 'small muted' }, 'Loading report…'))
+  api('/api/reviews/' + r.id + '/diff').then((d) => textBox.replaceChildren(h('pre', { class: 'summary' }, d.diff))).catch((e) => textBox.replaceChildren(h('div', { class: 'small' }, e.message)))
+  const done = (msg) => () => { openReview = null; toast(msg); refresh() }
+  return h('main', {},
+    h('button', { class: 'btn', onclick: () => { openReview = null; render() } }, '← Back'),
+    h('div', { class: 'card' + (r.note || r.incomplete ? ' warn' : '') },
+      h('h2', {}, r.title),
+      h('div', { class: 'small muted' }, r.agent + ' · web research · no agent sees this until you approve it'),
+      r.incomplete ? h('div', { class: 'small' }, '⚠ ' + r.incomplete) : null,
+      r.note ? h('div', { class: 'small' }, '⚠ ' + r.note) : null,
+      h('div', { class: 'sect' }, h('h3', {}, 'Pages it opened (' + res.fetched.length + ')'), res.fetched.length ? res.fetched.map((u) => h('div', { class: 'src' }, u)) : h('div', { class: 'small muted' }, 'None — search results only.')),
+      res.queries.length ? h('div', { class: 'sect' }, h('h3', {}, 'Searches'), res.queries.map((q) => h('div', { class: 'small' }, '“' + q + '”'))) : null,
+      h('div', { class: 'sect' }, h('h3', {}, 'Report'), textBox),
+      h('div', { class: 'small muted' }, 'Check it is right and current, and that it has no instructions aimed at an AI. Approving saves it to research/ for the agents.'),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn primary grow', onclick: () => act(async () => { await api('/api/reviews/' + r.id + '/merge', { method: 'POST', body: {} }); done('Saved to research/')() }) }, 'Approve & save'),
+        h('button', { class: 'btn danger grow', onclick: () => { if (confirm('Discard this research?')) act(async () => { await api('/api/reviews/' + r.id + '/discard', { method: 'POST', body: {} }); done('Discarded')() }) } }, 'Discard'))))
 }
 
 function inboxView() {
@@ -187,7 +250,9 @@ function diffView(text) {
 }
 
 function reviewView(r) {
+  if (r.kind === 'research') return researchView(r)
   const project = state.projects.find((p) => p.id === r.projectId)
+  const warnings = r.mergeWarnings || []
   const clipBox = h('div', {})
   if (r.clip) {
     if (r.clip.kind === 'video') {
@@ -216,12 +281,17 @@ function reviewView(r) {
       r.incomplete ? h('div', { class: 'small' }, '⚠ ' + r.incomplete) : null,
       r.note ? h('div', { class: 'small' }, '⚠ ' + r.note) : null,
       clipBox,
+      checksSection(r),
+      aiSection(r),
       r.summary ? h('pre', { class: 'summary' }, r.summary) : h('div', { class: 'small muted' }, 'No summary from the agent.'),
       h('div', { class: 'small muted' }, r.files.join('\\n')),
       diffBox,
       r.published ? h('div', { class: 'small' }, 'Published to your test place (version ' + r.published.versionNumber + ').') : null,
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn primary grow', onclick: () => act(async () => { await api('/api/reviews/' + r.id + '/merge', { method: 'POST', body: {} }); done('Merged')() }) }, 'Merge'),
+        h('button', { class: 'btn primary grow', onclick: () => {
+          if (warnings.length && !confirm(warnings.join(' ') + ' Merge anyway?')) return
+          act(async () => { await api('/api/reviews/' + r.id + '/merge', { method: 'POST', body: { force: warnings.length > 0, acknowledged: warnings } }); done('Merged')() })
+        } }, warnings.length ? 'Merge anyway…' : 'Merge'),
         h('button', { class: 'btn danger grow', onclick: () => { if (confirm('Discard this work? The branch will be deleted.')) act(async () => { await api('/api/reviews/' + r.id + '/discard', { method: 'POST', body: {} }); done('Discarded')() }) } }, 'Discard')),
       project && project.hasTestPlace
         ? h('button', { class: 'btn', onclick: (e) => { e.target.disabled = true; e.target.textContent = 'Building and publishing…'; act(async () => { const x = await api('/api/reviews/' + r.id + '/publish', { method: 'POST', body: {} }); openReview = Object.assign({}, r, x.review, { agent: r.agent, clip: r.clip }); render() }, 'Published — open your test place in the Roblox app') } }, 'Publish to test place')

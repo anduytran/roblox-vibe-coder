@@ -192,6 +192,24 @@ export async function gitInit(root: string): Promise<void> {
   await git(root, ['init'])
 }
 
+/**
+ * Commit one file Hangar wrote (approved research) on the current branch, leaving anything else
+ * uncommitted alone. Refuses on a task branch, so it can't end up inside an agent's change.
+ */
+export async function commitFile(root: string, file: string, message: string): Promise<void> {
+  assertInside(root, file)
+  await assertSafeRepo(root)
+  const branch = await currentBranch(root)
+  if (branch === null) {
+    // A repo with no commits yet: leave the file uncommitted.
+    return
+  }
+  if (branch.startsWith('hangar/')) throw new Error(`You're on a task branch (${branch}). Switch back to your main branch first.`)
+  await git(root, ['add', '--', file])
+  const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
+  await git(root, [...identity, 'commit', '--no-verify', '--only', '-m', message.slice(0, 200), '--', file])
+}
+
 // ---------- branch-per-task (autonomous mode) ----------
 
 const BRANCH_PREFIX = 'hangar/'

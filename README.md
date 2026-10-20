@@ -24,9 +24,27 @@ Turn it on per project (Project settings → Autonomous mode). Agents then work 
 - Tasks in an autonomous project run one at a time (they share your folder and Studio). The project needs git with a first commit and no uncommitted changes when a task starts.
 - Still asking (from your desktop or phone): anything outside the project, network access, protected files, Toolbox assets, Studio's web fetch and AI generation, and — on Windows, where there's no sandbox — shell commands.
 
+## Before you merge: checks and the reviewer agent
+
+Project settings → Before you merge. Every finished autonomous task is checked before it reaches you:
+
+- **Checks** — commands you list (suggested: `stylua --check src`, `selene src`, `rojo build -o hangar-check.rbxl`) run in a temporary copy of the task's branch, so your project folder isn't touched. On macOS/Linux they run inside the OS sandbox. They're skipped (and Merge asks you to confirm) when a task changes files that decide what runs, like `rokit.toml`, `package.json` or JS tool configs.
+- **Reviewer agent** — a separate, read-only Claude session reads the change with a Roblox checklist (client trust in RemoteEvents, backdoors like `require(id)`/`loadstring`, DataStore safety, performance, scope creep) and returns a verdict with findings. Up to $1 per task.
+
+Results show on the review (desktop and phone). Merge turns into **Merge anyway…** when a check failed or didn't run, the reviewer says "don't merge", or something is still running. **Run again** / **Review again** re-run them.
+
+## Web researcher
+
+The **Researcher** role (in the starter roles) searches the web — Roblox docs, DevForum, APIs — and writes a sourced report. It's fenced off from everything else: only web search and reading public pages, no project files, commands, Studio or subagents, no other agent can call it, and it never keeps a session. Its report lands in **Reviews** with the list of pages it actually opened (recorded by Hangar) and the searches it ran. **Approve & save** writes it to `research/<date>-<topic>.md` in the project and commits just that file; from then on every agent can read it. Discard and nothing is kept. That's the point: web content, which can contain instructions aimed at AIs, only reaches your agents after you've read it. Any role can be made a researcher (Edit role → Kind).
+
 ## Obsidian vaults
 
-The UI Builder keeps an Obsidian vault for each project in `ui-vault/` (any role can have one: Edit role → Obsidian vault folder). It's created from templates on first use — Home, Style Guide, Screens, Components, Decisions and an Inbox for your UI requests. The agent reads it before UI work and updates the notes after, so the vault stays a living spec of your game's interface. Open it with Obsidian → "Open folder as vault", or from Project settings → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
+Two roles keep an Obsidian vault in the project by default (any role can have one: Edit role → Obsidian vault folder and templates):
+
+- **Lead → `design-vault/`** (game design): Game Overview (pitch, core loop, pillars), Mechanics with **acceptance criteria**, Content lists, Balance numbers, Roadmap, Decisions and an Inbox for feature ideas. The Lead plans to it, hands acceptance criteria to whoever builds a feature, checks them when it's done, and keeps the numbers in sync with the code.
+- **UI Builder → `ui-vault/`**: Home, Style Guide, Screens, Components, Decisions and an Inbox for UI requests. It reads it before UI work and updates the notes after, so the vault stays a living spec of your game's interface.
+
+Vaults are created from templates on first use (or Project settings → Obsidian vaults). Open it with Obsidian → "Open folder as vault", or from Project settings → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
 
 ## Phone remote
 
@@ -102,7 +120,7 @@ Every tool call that isn't clearly safe goes through Hangar's policy (`src/main/
 | Anything touching a path outside the project (including `~`, `$VAR`, `%VAR%`, network paths, outside Glob patterns) | Always asks, in red, never "always allow" |
 | Shell commands | Ask, unless they match an allow rule exactly (a rule ending in ` *` also allows plain relative file names after it). Flags, quotes, variables, `~`, globs, chaining and redirection are never auto-allowed. Defaults: `git status`, `selene *`, `stylua --check *` |
 | Commands that could print secrets (`env`, `printenv`, `$ANTHROPIC_API_KEY`, …) | Always ask, in red |
-| Web access | Asks every time (no "always allow") |
+| Web access | Asks every time (no "always allow"). The Researcher role searches and reads public pages freely, but has no other tools and its findings wait for your approval |
 | Other MCP tools (e.g. `execute_luau`, `insert_asset`) | Ask |
 
 **OS sandbox (macOS and Linux):** on by default, shell commands run inside the operating system's sandbox. They and anything they start can only write to the project folder and a temp folder, can't read your credential folders or Hangar's data, and have no network unless you list domains in Project settings. If the sandbox can't start, nothing runs — there is no fallback to unsandboxed commands. Native Windows has no sandbox, so there approved commands run with your full permissions (the app says so).
@@ -129,6 +147,11 @@ src/
     sdkMessages.ts   SDK stream → feed entries
     projects.ts      project registry, MCP config (Roblox Studio + .mcp.json)
     roles.ts         .claude/agents role files + templates
+    checks.ts        "before you merge" check commands (temp checkout, OS sandbox)
+    taskReviewer.ts  read-only reviewer agent
+    reviewPipeline.ts runs checks then the reviewer on each finished task
+    webEgress.ts     the web researcher's filtering proxy
+    vault.ts         Obsidian vault templates (UI, game design)
     git.ts, costs.ts, secrets.ts, pathScope.ts, jsonStore.ts
   preload/       the only bridge to the UI (window.hangar)
   renderer/      React UI
