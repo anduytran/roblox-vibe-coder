@@ -186,6 +186,13 @@ export function evaluateToolUse(args: {
     return ask('Edits a file in the project')
   }
 
+  if (toolName === 'Bash' || toolName === 'PowerShell') {
+    // The engine's "run this outside the sandbox" switch is never honoured.
+    if (input.dangerouslyDisableSandbox === true) {
+      return { action: 'deny', reason: 'Hangar does not allow commands to run outside the sandbox. Try a different approach that works inside the project folder.' }
+    }
+  }
+
   if (toolName === 'Bash') {
     const command = typeof input.command === 'string' ? input.command : ''
     if (mayRevealSecrets(command)) return ask('This command may print environment variables or secrets, including your API key', true)

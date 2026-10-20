@@ -9,12 +9,15 @@ export function ProjectSettingsView({ project }: { project: Project }) {
   const [prefixes, setPrefixes] = useState(project.settings.allowedBashPrefixes.join('\n'))
   const [budget, setBudget] = useState(project.settings.dailyBudgetUsd?.toString() ?? '')
   const [model, setModel] = useState(project.settings.model ?? '')
+  const [domains, setDomains] = useState(project.settings.sandboxAllowedDomains.join('\n'))
+  const sandboxAvailable = window.hangar.platform === 'darwin' || window.hangar.platform === 'linux'
 
   useEffect(() => {
     setName(project.name)
     setPrefixes(project.settings.allowedBashPrefixes.join('\n'))
     setBudget(project.settings.dailyBudgetUsd?.toString() ?? '')
     setModel(project.settings.model ?? '')
+    setDomains(project.settings.sandboxAllowedDomains.join('\n'))
   }, [project])
 
   const update = (patch: { name?: string; settings?: Partial<ProjectSettings> }, message?: string): void => {
@@ -59,6 +62,36 @@ export function ProjectSettingsView({ project }: { project: Project }) {
           hint="Connects agents to Studio's built-in MCP server. Studio must be open with “Enable Studio as MCP server” turned on (Assistant → … → Manage MCP Servers)."
         />
         <p className="muted small">Other MCP servers are read from this project's .mcp.json.</p>
+      </section>
+
+      <section className="card">
+        <h3>Sandbox</h3>
+        {sandboxAvailable ? (
+          <>
+            <Toggle
+              checked={s.sandbox}
+              onChange={(v) => update({ settings: { sandbox: v } })}
+              label="Sandbox shell commands (recommended)"
+              hint="Your operating system stops commands agents run from changing anything outside this project folder, reading your credential folders, or using the network. If the sandbox can't start, nothing runs."
+            />
+            {s.sandbox && (
+              <Field label="Websites sandboxed commands may reach" hint="One domain per line, e.g. api.github.com. Leave empty for no network access.">
+                <textarea
+                  className="mono"
+                  rows={3}
+                  value={domains}
+                  onChange={(e) => setDomains(e.target.value)}
+                  onBlur={() => update({ settings: { sandboxAllowedDomains: domains.split('\n') } }, 'Domains saved.')}
+                />
+              </Field>
+            )}
+            {s.sandbox && s.autoApproveEdits && <p className="small muted">Because file edits are auto-approved here, sandboxed commands also run without asking.</p>}
+          </>
+        ) : (
+          <p className="small warn">
+            The OS sandbox isn't available on Windows. Shell commands still need your approval, but once approved they run with your full permissions — read each one before allowing it.
+          </p>
+        )}
       </section>
 
       <section className="card">

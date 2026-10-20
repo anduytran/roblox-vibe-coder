@@ -146,6 +146,7 @@ app.whenReady().then(() => {
     },
     persistFile: join(dataDir(), 'agents.json'),
     trustFile: join(dataDir(), 'trusted-project-config.json'),
+    appDataDir: dataDir(),
     loadQuery: async () => {
       const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
       return sdk.query

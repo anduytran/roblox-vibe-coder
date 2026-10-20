@@ -7,6 +7,7 @@ import type { AgentEvent } from '@shared/types'
 const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => ipcRenderer.invoke(channel, ...args) as Promise<T>
 
 const api: HangarApi = {
+  platform: process.platform,
   settings: {
     get: () => invoke(IPC.settingsGet),
     set: (patch) => invoke(IPC.settingsSet, patch)

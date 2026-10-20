@@ -11,7 +11,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   allowedBashPrefixes: ['git status', 'git status *', 'selene *', 'stylua --check *'],
   alwaysAllowTools: [],
   dailyBudgetUsd: null,
-  model: null
+  model: null,
+  sandbox: true,
+  sandboxAllowedDomains: []
 }
 
 export class ProjectRegistry {
@@ -73,7 +75,9 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     allowedBashPrefixes: strings(s.allowedBashPrefixes),
     alwaysAllowTools: strings(s.alwaysAllowTools),
     dailyBudgetUsd: budget,
-    model: typeof s.model === 'string' && s.model.trim() ? s.model.trim() : null
+    model: typeof s.model === 'string' && s.model.trim() ? s.model.trim() : null,
+    sandbox: s.sandbox !== false,
+    sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d))
   }
 }
 

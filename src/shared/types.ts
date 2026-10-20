@@ -29,6 +29,10 @@ export interface ProjectSettings {
   dailyBudgetUsd: number | null
   /** Model override for this project; null = app default. */
   model: string | null
+  /** Run agents' shell commands in the OS sandbox (macOS/Linux only): writes only inside the project, no network. */
+  sandbox: boolean
+  /** Network domains sandboxed commands may reach (e.g. "api.github.com"). Empty = no network. */
+  sandboxAllowedDomains: string[]
 }
 
 export interface Project {

@@ -68,6 +68,8 @@ Every tool call that isn't clearly safe goes through Hangar's policy (`src/main/
 | Web access | Asks every time (no "always allow") |
 | Other MCP tools (e.g. `execute_luau`, `insert_asset`) | Ask |
 
+**OS sandbox (macOS and Linux):** on by default, shell commands run inside the operating system's sandbox. They and anything they start can only write to the project folder and a temp folder, can't read your credential folders or Hangar's data, and have no network unless you list domains in Project settings. If the sandbox can't start, nothing runs — there is no fallback to unsandboxed commands. Native Windows has no sandbox, so there approved commands run with your full permissions (the app says so).
+
 Before any agent starts in a project, programs the folder would launch — MCP servers in `.mcp.json`, or repository git config that runs commands — are shown for approval. Any change to them asks again.
 
 Other protections:

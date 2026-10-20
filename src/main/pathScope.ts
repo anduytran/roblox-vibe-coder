@@ -92,6 +92,9 @@ const extraProtectedDirs = new Map<string, Set<string>>()
 export function setServerScriptDirs(projectRoot: string, relDirs: string[]): void {
   extraProtectedDirs.set(projectRoot, new Set(relDirs.map((d) => d.toLowerCase())))
 }
+export function serverScriptDirs(projectRoot: string): string[] {
+  return [...(extraProtectedDirs.get(projectRoot) ?? [])]
+}
 
 export function isProtectedPath(rel: string, projectRoot?: string): boolean {
   const lower = rel.toLowerCase()

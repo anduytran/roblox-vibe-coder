@@ -21,7 +21,7 @@ async function until(cond: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-function setup(opts: { max?: number; key?: string | null; daily?: number | null; autoTrust?: boolean } = {}) {
+function setup(opts: { max?: number; key?: string | null; daily?: number | null; autoTrust?: boolean; platform?: NodeJS.Platform } = {}) {
   const dir = tmp('hangar-run-proj-')
   installTemplates(dir)
   const registry = new ProjectRegistry(join(tmp('hangar-run-'), 'projects.json'))
@@ -81,7 +81,9 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
       }
     },
     persistFile: join(tmp('hangar-run-'), 'agents.json'),
-    trustFile: join(tmp('hangar-run-'), 'trust.json')
+    trustFile: join(tmp('hangar-run-'), 'trust.json'),
+    appDataDir: '/fake/appdata/Hangar',
+    platform: opts.platform ?? 'darwin'
   })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
   return { runner, project, registry, costs, events, calls, status, maxActive: () => maxActive }
@@ -271,4 +273,44 @@ test('re-audit: a project\'s first run shows the instructions it will give agent
   runner.respond(runner.pendingApprovals()[0]!.id, 'allow')
   await until(() => calls.length === 1)
   calls[0]!.release()
+})
+
+test('sandbox: on macOS/Linux shell commands run in the OS sandbox with no fallback', async () => {
+  const { runner, project, calls, status } = setup()
+  runner.send(project.id, 'main', 'go')
+  await until(() => calls.length === 1)
+  const sb = (calls[0]!.options.settings as { sandbox: Record<string, any> }).sandbox
+  assert.equal(sb.enabled, true)
+  assert.equal(sb.failIfUnavailable, true, 'never silently runs unsandboxed')
+  assert.equal(sb.allowUnsandboxedCommands, false, 'no retry outside the sandbox')
+  assert.equal(sb.autoAllowBashIfSandboxed, false, 'still asks unless edits are auto-approved')
+  assert.deepEqual(sb.network.allowedDomains, [])
+  assert.ok(sb.filesystem.denyRead.includes('/fake/appdata/Hangar'), "Hangar's key folder is unreadable")
+  assert.ok(sb.filesystem.denyRead.includes('~/.ssh'))
+  assert.ok(sb.filesystem.denyWrite.includes(join(project.path, 'package.json')))
+  assert.ok(runner.snapshot(project.id)[0]!.log.some((e) => /Sandbox on/.test(e.text)))
+  calls[0]!.release()
+  await until(() => status('main') === 'idle')
+})
+
+test('sandbox: not available on Windows, and the run says so', async () => {
+  const { runner, project, calls, status } = setup({ platform: 'win32' })
+  runner.send(project.id, 'main', 'go')
+  await until(() => calls.length === 1)
+  assert.equal(calls[0]!.options.settings, undefined)
+  assert.ok(runner.snapshot(project.id)[0]!.log.some((e) => /Not sandboxed: .*Windows/.test(e.text)))
+  calls[0]!.release()
+  await until(() => status('main') === 'idle')
+})
+
+test('sandbox: auto-run only when the project auto-approves edits; domains are passed through', async () => {
+  const { runner, project, registry, calls, status } = setup()
+  registry.update(project.id, { settings: { autoApproveEdits: true, sandboxAllowedDomains: ['api.github.com', 'not a domain'] } })
+  runner.send(project.id, 'main', 'go')
+  await until(() => calls.length === 1)
+  const sb = (calls[0]!.options.settings as { sandbox: Record<string, any> }).sandbox
+  assert.equal(sb.autoAllowBashIfSandboxed, true)
+  assert.deepEqual(sb.network.allowedDomains, ['api.github.com'])
+  calls[0]!.release()
+  await until(() => status('main') === 'idle')
 })

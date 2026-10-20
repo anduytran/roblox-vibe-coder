@@ -195,6 +195,7 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
           <span className="muted small">
             Enter to send · Shift+Enter for a new line{busy ? ' · new messages are queued' : ''}
             {project.settings.robloxStudioMcp ? ' · Roblox Studio tools on' : ''}
+            {project.settings.sandbox && (window.hangar.platform === 'darwin' || window.hangar.platform === 'linux') ? ' · Sandboxed' : ' · Not sandboxed'}
           </span>
           <Button tone="primary" disabled={!draft.trim()} onClick={send}>
             {busy ? 'Queue' : 'Send'}

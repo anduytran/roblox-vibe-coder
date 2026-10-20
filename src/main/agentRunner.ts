@@ -14,6 +14,7 @@ import { JsonStore } from './jsonStore'
 import { gitSafetyEnv } from './git'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
 import { readClaudeMd, reviewProject, TrustStore } from './projectTrust'
+import { planSandbox } from './sandbox'
 import { mcpServersFor } from './projects'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
@@ -94,6 +95,9 @@ export interface RunnerDeps {
   emit: (event: AgentEvent) => void
   persistFile: string
   trustFile: string
+  /** Hangar's own data folder; sandboxed commands may not read it. */
+  appDataDir: string
+  platform?: NodeJS.Platform
 }
 
 const keyOf = (projectId: string, agentId: string): string => `${projectId}:${agentId}`
@@ -336,6 +340,13 @@ export class AgentRunner {
       }
 
       const query = await this.deps.loadQuery()
+      const sandbox = planSandbox(project, { platform: this.deps.platform, appDataDir: this.deps.appDataDir })
+      this.log(s, {
+        kind: 'system',
+        text: sandbox.active
+          ? `Sandbox on: shell commands can only change files in this project${project.settings.sandboxAllowedDomains.length ? ` and reach ${project.settings.sandboxAllowedDomains.join(', ')}` : ' and have no network access'}.`
+          : `Not sandboxed: ${sandbox.reason}`
+      })
       const auth = await this.deps.engineAuth(apiKey)
       releaseAuth = auth.release
       const allRoles = listRoles(project.path)
@@ -364,6 +375,7 @@ export class AgentRunner {
         env: buildAgentEnv(auth.env),
         canUseTool: this.makeCanUseTool(s, project, role)
       }
+      if (sandbox.settings) options.settings = sandbox.settings
       if (role?.tools?.length) options.disallowedTools = [...EDIT_TOOLS, 'Bash'].filter((t) => !role.tools!.includes(t))
       if (s.sessionId) options.resume = s.sessionId
 
@@ -502,6 +514,9 @@ function friendlyError(message: string): string {
   if (/hangar_proxy_error|Invalid session token/i.test(message)) return `Hangar's key-hiding proxy refused the request: ${message}. If this keeps happening, turn off "Hide API key from agents" in Settings.`
   if (/invalid x-api-key|authentication_error|401/i.test(message)) return 'Your API key was rejected. Check it in Settings (or try turning off "Hide API key from agents").'
   if (/credit balance|billing/i.test(message)) return 'Your Anthropic account is out of credits.'
+  if (/sandbox/i.test(message) && /(unavailable|bubblewrap|bwrap|socat|not supported|failed to start)/i.test(message)) {
+    return `The sandbox could not start, so nothing ran: ${message}. On Linux install bubblewrap and socat; or turn off the sandbox for this project in Project settings.`
+  }
   if (/Cannot find module|ERR_MODULE_NOT_FOUND/i.test(message)) return 'The Claude Agent SDK is not installed. Run "npm install" in the Hangar folder.'
   if (/ENOENT/i.test(message) && /claude/i.test(message)) return `Could not start the Claude Code engine: ${message}`
   return message

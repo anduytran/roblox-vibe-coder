@@ -213,3 +213,8 @@ test('round 3: variation selectors and raw control characters turn the card red'
     assert.ok(isDanger(evalTool('Bash', { command: `git status${ch}` })), ch.codePointAt(0)!.toString(16))
   }
 })
+
+test('sandbox: requests to run a command outside the sandbox are refused', () => {
+  assert.equal(evalTool('Bash', { command: 'git status', dangerouslyDisableSandbox: true }).action, 'deny')
+  assert.equal(evalTool('PowerShell', { command: 'x', dangerouslyDisableSandbox: true }).action, 'deny')
+})

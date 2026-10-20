@@ -51,6 +51,8 @@ export interface KeyStatus {
 }
 
 export interface HangarApi {
+  /** The OS Hangar runs on ("win32", "darwin", "linux"). */
+  platform: string
   settings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>

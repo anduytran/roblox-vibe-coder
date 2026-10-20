@@ -36,8 +36,21 @@ The code was audited by an independent reviewer (not the author) in three rounds
 | The proxy token could reach batches/files endpoints and lived for the whole launch | Medium–High | One token per run, revoked when the run ends; only `POST /v1/messages` and `/count_tokens`; request cap per run; header allowlists both ways; size and time limits. |
 | A project's `CLAUDE.md` and role files went to agents unreviewed | Low | Shown on the project's first approval. |
 
+## OS sandbox
+
+On macOS and Linux, agents' shell commands run inside Claude Code's built-in sandbox (Seatbelt on macOS, bubblewrap on Linux/WSL2), configured by Hangar per project:
+
+- Writes only to the project folder and a temp folder; Hangar's protected files and the folders of approved MCP scripts are write-denied too.
+- No reads of credential folders (`~/.ssh`, `~/.aws`, cloud CLIs, `~/.claude`) or Hangar's own data folder.
+- No network except domains you list for the project.
+- `failIfUnavailable` and `allowUnsandboxedCommands: false`: if the sandbox can't start the run fails, and the engine's "retry outside the sandbox" option is refused (Hangar also denies it directly).
+- Sandboxed commands still ask for approval unless the project auto-approves edits.
+
+The sandbox covers shell commands only. File edits are covered by Hangar's own path rules, and MCP servers (including Roblox Studio) run outside it. It is not available on native Windows.
+
 ## Remaining risks (be aware)
 
+- **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.
 - **You are the last line of defence.** Anything you approve runs with your permissions. Read red cards carefully; when unsure, deny. Turning on "auto-approve edits" means an agent can change your game code without asking (protected files still ask), so review the Changes tab before committing.
 - **Prompt injection can still steer what agents write.** A malicious `CLAUDE.md` or role file in a cloned repo can influence agent behaviour (not run programs). Check those files in projects you didn't create.
 - **The key-hiding proxy limits theft, not use.** While a run is active, a command it runs could use that run's token to make extra API calls (up to the per-run request cap) that Hangar doesn't count toward spending limits. The token stops working when the run ends. Use a dedicated API key with a spending limit in the Claude Console. If agents can't connect with hiding on, you can turn it off in Settings (the key is then visible to the engine).
