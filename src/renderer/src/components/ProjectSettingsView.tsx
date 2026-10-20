@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Project, ProjectSettings } from '@shared/types'
 import { attempt, removeProject, replaceProject, toast, useStore } from '../store'
 import { Button, Field, Toggle, usd } from './ui'
+import { VaultsCard } from './VaultsCard'
 
 export function ProjectSettingsView({ project }: { project: Project }) {
   const totals = useStore((s) => s.costs)
@@ -180,6 +181,8 @@ export function ProjectSettingsView({ project }: { project: Project }) {
           />
         </Field>
       </section>
+
+      <VaultsCard project={project} />
 
       <section className="card">
         <h3>Test place</h3>

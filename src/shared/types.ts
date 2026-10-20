@@ -11,6 +11,8 @@ export interface Role {
   prompt: string
   tools?: string[]
   model?: string
+  /** Folder (inside the project) of this role's Obsidian vault, e.g. "ui-vault". */
+  vault?: string
 }
 
 export interface ProjectSettings {

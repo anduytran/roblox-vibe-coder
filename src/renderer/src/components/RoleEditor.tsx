@@ -11,6 +11,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
   const [tools, setTools] = useState((props.role.tools ?? []).join(', '))
   const [model, setModel] = useState(props.role.model ?? '')
   const [prompt, setPrompt] = useState(props.role.prompt)
+  const [vault, setVault] = useState(props.role.vault ?? '')
 
   const save = (): void => {
     void attempt(async () => {
@@ -23,7 +24,8 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
           .split(',')
           .map((t) => t.trim())
           .filter(Boolean),
-        model: model.trim() || undefined
+        model: model.trim() || undefined,
+        vault: vault.trim() || undefined
       }
       const roles = await window.hangar.roles.save(project.id, role)
       setRoles(project.id, roles)
@@ -77,6 +79,9 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
       </Field>
       <Field label="Built-in tools allowed (optional)" hint="Comma-separated, e.g. Read, Glob, Grep. Empty = all tools. Roblox Studio tools are always offered.">
         <input value={tools} onChange={(e) => setTools(e.target.value)} placeholder="Read, Glob, Grep, Edit, Write, Bash" />
+      </Field>
+      <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated, e.g. ui-vault. Created from templates on first use.">
+        <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />
       </Field>
       <Field label="Instructions">
         <textarea className="mono" rows={12} value={prompt} onChange={(e) => setPrompt(e.target.value)} />

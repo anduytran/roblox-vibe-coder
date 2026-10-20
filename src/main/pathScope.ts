@@ -79,7 +79,7 @@ export function patternEscapes(pattern: string): boolean {
  * Edits to these always ask, with a warning, whatever the project settings say.
  */
 const PROTECTED_DIRS = new Set([
-  '.git', '.claude', '.vscode', '.github', '.husky', '.idea', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs'
+  '.git', '.claude', '.vscode', '.github', '.husky', '.idea', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs', '.obsidian'
 ])
 const PROTECTED_FILES = new Set([
   '.mcp.json', 'claude.md', '.gitattributes', '.gitmodules', '.npmrc', 'package.json', '.envrc', 'makefile',

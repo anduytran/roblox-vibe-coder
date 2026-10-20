@@ -24,6 +24,10 @@ Turn it on per project (Project settings → Autonomous mode). Agents then work 
 - Tasks in an autonomous project run one at a time (they share your folder and Studio). The project needs git with a first commit and no uncommitted changes when a task starts.
 - Still asking (from your desktop or phone): anything outside the project, network access, protected files, Toolbox assets, Studio's web fetch and AI generation, and — on Windows, where there's no sandbox — shell commands.
 
+## Obsidian vaults
+
+The UI Builder keeps an Obsidian vault for each project in `ui-vault/` (any role can have one: Edit role → Obsidian vault folder). It's created from templates on first use — Home, Style Guide, Screens, Components, Decisions and an Inbox for your UI requests. The agent reads it before UI work and updates the notes after, so the vault stays a living spec of your game's interface. Open it with Obsidian → "Open folder as vault", or from Project settings → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
+
 ## Phone remote
 
 Settings → Phone remote. Hangar listens on `127.0.0.1` only; one command makes it reachable from your own Tailscale devices over HTTPS (never the public internet):

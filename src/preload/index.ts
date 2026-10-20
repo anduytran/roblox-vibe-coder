@@ -62,6 +62,11 @@ const api: HangarApi = {
     clipFile: (id, index) => invoke(IPC.reviewsClipFile, id, index),
     publish: (id) => invoke(IPC.reviewsPublish, id)
   },
+  vault: {
+    status: (id, folder) => invoke(IPC.vaultStatus, id, folder),
+    create: (id, folder) => invoke(IPC.vaultCreate, id, folder),
+    open: (id, folder) => invoke(IPC.vaultOpen, id, folder)
+  },
   testPlaceKey: {
     status: (id) => invoke(IPC.testPlaceKeyStatus, id),
     set: (id, key) => invoke(IPC.testPlaceKeySet, id, key),

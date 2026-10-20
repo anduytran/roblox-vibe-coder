@@ -331,3 +331,15 @@ test('audit: sandbox blocks all writes to .git and protected names at any depth'
   calls[0]!.release()
   await until(() => status('main') === 'idle')
 })
+
+test('vault: the UI Builder gets its vault created and is told to keep it up to date', async () => {
+  const { runner, project, calls, status } = setup()
+  runner.send(project.id, 'ui-builder', 'restyle the shop')
+  await until(() => calls.length === 1)
+  assert.match(String((calls[0]!.options.systemPrompt as { append: string }).append), /Your Obsidian vault: ui-vault\//)
+  assert.ok(require('node:fs').existsSync(join(project.path, 'ui-vault', 'Home.md')))
+  const sb = (calls[0]!.options.settings as { sandbox: { filesystem: { denyWrite: string[] } } }).sandbox
+  assert.ok(sb.filesystem.denyWrite.includes(join(project.path, '**', '.obsidian')))
+  calls[0]!.release()
+  await until(() => status('ui-builder') === 'idle')
+})

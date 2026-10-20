@@ -19,6 +19,7 @@ import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
 import { readClaudeMd, reviewProject, TrustStore } from './projectTrust'
 import { planSandbox } from './sandbox'
+import { createVault, vaultInstructions } from './vault'
 import { mcpServersFor } from './projects'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
@@ -397,6 +398,11 @@ export class AgentRunner {
         this.log(s, { kind: 'system', text: `Autonomous: working on branch ${name} (from ${from.base}). You'll review it when it's done.` })
       }
       if (task.record && this.deps.clips) clip = this.deps.clips.begin({ taskId: task.id, projectPath: project.path })
+      // A role with a vault gets it created from templates on first use (on the task branch in autonomous mode).
+      if (role?.vault) {
+        const created = createVault(project.path, role.vault)
+        if (created.length) this.log(s, { kind: 'system', text: `Created the ${role.vault} Obsidian vault (${created.length} notes). Open the folder as a vault in Obsidian to read and edit it.` })
+      }
 
       const query = await this.deps.loadQuery()
       const sandbox = planSandbox(project, { platform: this.deps.platform, appDataDir: this.deps.appDataDir })
@@ -414,6 +420,7 @@ export class AgentRunner {
       let append = ''
       if (claudeMd) append += `\n\n# Project instructions (CLAUDE.md)\n${claudeMd}`
       if (role) append += `\n\n# Your role: ${role.name}\n${role.prompt}`
+      if (role?.vault) append += `\n${vaultInstructions(role.vault)}`
       if (project.settings.autonomous) append += `\n${AUTONOMOUS_INSTRUCTIONS}`
       if (task.record) {
         append += `\n\nThis task asks for a recorded playtest. When you playtest the feature, demonstrate it clearly within about 30 seconds, and take a screenshot (screen_capture) at each key moment.`

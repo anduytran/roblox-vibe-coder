@@ -14,6 +14,7 @@ import { ReviewActions } from './reviewActions'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
+import { createVault, vaultStatus } from './vault'
 import { ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, saveRole } from './roles'
 import { SecretStore } from './secrets'
@@ -224,7 +225,8 @@ app.whenReady().then(() => {
       description: str(role.description ?? '', 'description').slice(0, 500),
       prompt: str(role.prompt, 'instructions'),
       ...(Array.isArray(role.tools) && role.tools.length ? { tools: role.tools.filter((t) => typeof t === 'string') } : {}),
-      ...(typeof role.model === 'string' && role.model.trim() ? { model: role.model.trim() } : {})
+      ...(typeof role.model === 'string' && role.model.trim() ? { model: role.model.trim() } : {}),
+      ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {})
     })
     return listRoles(root(id))
   })
@@ -279,6 +281,21 @@ app.whenReady().then(() => {
   handle(IPC.testPlaceKeyStatus, (id: unknown) => testPlaceKeys.status(str(id, 'project')))
   handle(IPC.testPlaceKeySet, (id: unknown, key: unknown) => testPlaceKeys.set(str(id, 'project'), str(key, 'key')))
   handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))
+
+  // Obsidian vaults
+  handle(IPC.vaultStatus, (id: unknown, folder: unknown) => vaultStatus(root(id), str(folder, 'folder')))
+  handle(IPC.vaultCreate, (id: unknown, folder: unknown) => {
+    createVault(root(id), str(folder, 'folder'))
+    return vaultStatus(root(id), str(folder, 'folder'))
+  })
+  handle(IPC.vaultOpen, async (id: unknown, folder: unknown) => {
+    const f = str(folder, 'folder')
+    const st = vaultStatus(root(id), f)
+    if (!st.exists) throw new Error('Create the vault first.')
+    const home = join(root(id), f, 'Home.md')
+    // obsidian:// is the only non-https scheme Hangar ever opens, and only for a vault inside a project.
+    await shell.openExternal(`obsidian://open?path=${encodeURIComponent(home)}`).catch(() => shell.openPath(join(root(id), f)))
+  })
 
   // Phone remote
   handle(IPC.remoteStatus, () => remote!.status())

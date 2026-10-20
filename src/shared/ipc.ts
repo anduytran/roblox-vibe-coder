@@ -53,6 +53,9 @@ export const IPC = {
   testPlaceKeyStatus: 'testPlaceKey:status',
   testPlaceKeySet: 'testPlaceKey:set',
   testPlaceKeyClear: 'testPlaceKey:clear',
+  vaultStatus: 'vault:status',
+  vaultCreate: 'vault:create',
+  vaultOpen: 'vault:open',
   remoteStatus: 'remote:status',
   remoteSet: 'remote:set',
   remotePair: 'remote:pair',
@@ -136,6 +139,12 @@ export interface HangarApi {
     /** A clip file as a data: URL for display. */
     clipFile(reviewId: string, index: number): Promise<string>
     publish(reviewId: string): Promise<Review>
+  }
+  vault: {
+    status(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>
+    create(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>
+    /** Open the vault in Obsidian (or the folder, if Obsidian isn't installed). */
+    open(projectId: string, folder: string): Promise<void>
   }
   testPlaceKey: {
     status(projectId: string): Promise<{ hasKey: boolean }>

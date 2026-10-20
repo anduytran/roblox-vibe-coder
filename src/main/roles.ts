@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Role } from '@shared/types'
+import { validVaultFolder } from './vault'
 
 /** Roles live in <project>/.claude/agents/*.md, the same format Claude Code uses for subagents. */
 export function agentsDir(projectRoot: string): string {
@@ -44,6 +45,7 @@ export function parseRole(id: string, text: string): Role | null {
   }
   if (meta.tools) role.tools = parseList(meta.tools)
   if (meta.model && meta.model !== 'inherit') role.model = meta.model
+  if (meta.vault && validVaultFolder(meta.vault)) role.vault = meta.vault
   return role
 }
 
@@ -51,6 +53,7 @@ export function serializeRole(role: Role): string {
   const lines = ['---', `name: ${role.name.replace(/\n/g, ' ')}`, `description: ${role.description.replace(/\n/g, ' ')}`]
   if (role.tools && role.tools.length > 0) lines.push(`tools: ${role.tools.join(', ')}`)
   if (role.model) lines.push(`model: ${role.model}`)
+  if (role.vault && validVaultFolder(role.vault)) lines.push(`vault: ${role.vault}`)
   lines.push('---', '', role.prompt.trim(), '')
   return lines.join('\n')
 }
@@ -76,6 +79,7 @@ export function listRoles(projectRoot: string): Role[] {
 export function saveRole(projectRoot: string, role: Role): void {
   const id = role.id && ID_RE.test(role.id) ? role.id : slugify(role.name)
   if (!role.name.trim() || !role.prompt.trim()) throw new Error('A role needs a name and instructions.')
+  if (role.vault && !validVaultFolder(role.vault)) throw new Error('Vault folder must be a simple folder name inside the project, like ui-vault.')
   const dir = agentsDir(projectRoot)
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, `${id}.md`), serializeRole({ ...role, id }), 'utf8')
@@ -111,8 +115,10 @@ Finish every task by stating what changed and whether it was playtested.`
   {
     id: 'ui-builder',
     name: 'UI Builder',
-    description: 'Builds and adjusts game UI: ScreenGuis, layouts, UI scripts.',
+    description: 'Builds and adjusts game UI: ScreenGuis, layouts, UI scripts. Keeps the project\'s UI vault (Obsidian) up to date.',
+    vault: 'ui-vault',
     prompt: `You build user interface for a Roblox game.
+- Your Obsidian vault (style guide, screen and component notes, decisions, inbox) is the source of truth for the UI; read it first and keep it current.
 - Prefer UI defined in code (or Rojo model files) so it can be reviewed in git.
 - Use UIListLayout/UIGridLayout/UIPadding and scale-based sizing so it works on phone and desktop.
 - Keep UI logic in LocalScripts/ModuleScripts on the client; send requests to the server via RemoteEvents.
