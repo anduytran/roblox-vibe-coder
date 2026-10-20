@@ -22,7 +22,27 @@ const api: HangarApi = {
     add: () => invoke(IPC.projectsAdd),
     remove: (id) => invoke(IPC.projectsRemove, id),
     update: (id, patch) => invoke(IPC.projectsUpdate, id, patch),
-    reveal: (id) => invoke(IPC.projectsReveal, id)
+    reveal: (id) => invoke(IPC.projectsReveal, id),
+    create: (input) => invoke(IPC.projectsCreate, input),
+    pickFolder: () => invoke(IPC.projectsPickFolder),
+    readDocument: () => invoke(IPC.projectsReadDocument)
+  },
+  system: {
+    tools: () => invoke(IPC.systemTools)
+  },
+  autopilot: {
+    list: () => invoke(IPC.autopilotList),
+    start: (id, opts) => invoke(IPC.autopilotStart, id, opts),
+    pause: (id) => invoke(IPC.autopilotPause, id),
+    resume: (id) => invoke(IPC.autopilotResume, id),
+    stop: (id) => invoke(IPC.autopilotStop, id),
+    configure: (id, config) => invoke(IPC.autopilotConfigure, id, config),
+    feedback: (id, text) => invoke(IPC.autopilotFeedback, id, text)
+  },
+  trends: {
+    get: () => invoke(IPC.trendsGet),
+    refresh: () => invoke(IPC.trendsRefresh),
+    ideas: () => invoke(IPC.trendsIdeas)
   },
   roles: {
     list: (id) => invoke(IPC.rolesList, id),

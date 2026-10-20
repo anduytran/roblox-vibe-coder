@@ -146,6 +146,7 @@ tags: [hangar, design]
 
 The design of this game. The Lead agent reads these notes before planning and turns them into tasks; you can edit anything here in Obsidian.
 
+- [[Brief]] — the product owner's idea (if the project was created in Hangar)
 - [[Game Overview]] — the pitch, core loop, pillars and target players
 - [[Mechanics/_Index|Mechanics]] — every mechanic, with acceptance criteria
 - [[Content/_Index|Content]] — items, abilities, enemies, maps (lists and tables)

@@ -103,6 +103,8 @@ export interface QueuedTask {
   createdAt: number
   /** Record a short clip of the agent's playtest for the review. */
   record?: boolean
+  /** Queued by autopilot (a build step, or the end-of-sprint check-in report). */
+  origin?: 'autopilot' | 'autopilot-report'
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
@@ -237,6 +239,115 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+// ---------- new game flow, autopilot, trends ----------
+
+/** Everything the "New game" wizard collects. */
+export interface NewGameInput {
+  name: string
+  /** Folder the new project folder is created in. */
+  parentDir: string
+  /** The game idea, in the user's words. */
+  idea: string
+  /** Text of an attached design document (optional). */
+  document: { name: string; text: string } | null
+  platforms: ('phone' | 'pc' | 'console' | 'vr')[]
+  genre: string
+  notes: string
+  model: string | null
+  dailyBudgetUsd: number | null
+  studioTools: boolean
+  autopilot: AutopilotConfig
+  /** Start autopilot right after creating the project. */
+  startNow: boolean
+}
+
+export interface AutopilotConfig {
+  /** Build tasks per sprint before the check-in. */
+  sprintTasks: number
+  /** Spending limit per sprint (USD); the sprint ends early when it's reached. */
+  sprintBudgetUsd: number
+  /** Merge finished work automatically when checks pass and the reviewer approves. */
+  autoMerge: boolean
+}
+
+export type AutopilotStatus = 'off' | 'running' | 'waiting' | 'checkin' | 'paused'
+
+export interface SprintReport {
+  sprint: number
+  at: number
+  text: string
+  /** Tasks finished in this sprint and what happened to them. */
+  tasks: { title: string; outcome: 'merged' | 'waiting' | 'discarded' | 'no-changes' | 'failed' }[]
+  spentUsd: number
+}
+
+export interface AutopilotState {
+  projectId: string
+  status: AutopilotStatus
+  config: AutopilotConfig
+  sprint: number
+  tasksDone: number
+  /** Project spend when the sprint started (sprint spend = total now − this). */
+  spentAtSprintStart: number
+  /** Why autopilot is waiting or paused. */
+  reason: string | null
+  /** The review autopilot is waiting on (checks, reviewer, or you). */
+  awaitingReviewId: string | null
+  /** Product-owner feedback to give the Lead at the start of the next task. */
+  feedback: string[]
+  sprintTasks: SprintReport['tasks']
+  reports: SprintReport[]
+  consecutiveFailures: number
+  updatedAt: number
+}
+
+/** A Roblox experience from the discovery lists, with Hangar's trending score. */
+export interface TrendingGame {
+  universeId: number
+  placeId: number
+  name: string
+  genre: string
+  description: string
+  players: number
+  visits: number
+  favorites: number
+  likeRatio: number
+  createdAt: number | null
+  updatedAt: number | null
+  /** Discovery lists it appears in, with its position (1 = top). */
+  lists: { list: 'top-trending' | 'up-and-coming' | 'top-playing-now'; rank: number }[]
+  /** 0–100: demand, reduced for how saturated its space is (see trending.ts). */
+  score: number
+  /** 0–100 before the saturation adjustment. */
+  demand: number
+  parts: { momentum: number; placement: number; freshness: number; approval: number; scale: number; saturation: number }
+  /** Player-count change since the snapshot about a day ago (null until there's history). */
+  growth: number | null
+}
+
+/** An original game idea generated from what's trending. */
+export interface GameIdea {
+  id: string
+  title: string
+  pitch: string
+  coreLoop: string
+  whyNow: string
+  genre: string
+  scope: 'small' | 'medium' | 'large'
+  inspiredBy: string[]
+  score: number
+}
+
+export interface TrendsSnapshot {
+  fetchedAt: number | null
+  games: TrendingGame[]
+  /** Game spaces (Roblox sub-genres): demand, how saturated they are (0–100, higher = more crowded), and the resulting score. */
+  genres: { genre: string; score: number; demand: number; saturation: number; games: number; leader: string }[]
+  ideas: GameIdea[]
+  ideasAt: number | null
+  error: string | null
+}
+
 export type AgentEvent =
   | { type: 'state'; state: AgentState }
   | { type: 'log'; projectId: string; agentId: string; entry: LogEntry }
@@ -245,6 +356,7 @@ export type AgentEvent =
   | { type: 'cost'; summary: CostSummary }
   | { type: 'reset'; projectId: string; agentId: string }
   | { type: 'review'; review: Review }
+  | { type: 'autopilot'; state: AutopilotState }
 
 export interface Result<T> {
   ok: boolean

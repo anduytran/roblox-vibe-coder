@@ -102,7 +102,9 @@ const ICONS: Record<string, string> = {
   globe: 'M8 13.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Zm0 0c1.5-1.5 2.2-3.5 2.2-5.5S9.5 4 8 2.5m0 11C6.5 12 5.8 10 5.8 8S6.5 4 8 2.5M2.7 6.2h10.6M2.7 9.8h10.6',
   sun: 'M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM8 1.8v1.4m0 9.6v1.4M1.8 8h1.4m9.6 0h1.4M3.6 3.6l1 1m6.8 6.8 1 1m0-8.8-1 1m-6.8 6.8-1 1',
   moon: 'M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6Z',
-  monitor: 'M2.5 3.5h11v7h-11zM6 13h4m-2-2.5V13'
+  monitor: 'M2.5 3.5h11v7h-11zM6 13h4m-2-2.5V13',
+  home: 'M2.5 7.5 8 3l5.5 4.5M4 6.5V13h3V10h2v3h3V6.5',
+  folder: 'M2.5 4.5h4l1.5 1.5h5.5v6.5h-11z'
 }
 
 /** Small line icons drawn at 16px on a 16-unit grid; they inherit the text colour. */

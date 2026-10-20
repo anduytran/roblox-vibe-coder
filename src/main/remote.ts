@@ -12,6 +12,7 @@ import { PHONE_FILES } from './phoneApp'
 import type { ProjectRegistry } from './projects'
 import { generateVapidKeys, sendPush, validSubscription, type PushSubscription, type VapidKeys } from './push'
 import type { ReviewActions } from './reviewActions'
+import type { Autopilot } from './autopilot'
 import { listRoles } from './roles'
 import { DECEPTIVE_CHARS, shellWords } from './permissions'
 
@@ -92,11 +93,14 @@ export class RemoteServer {
   private rate = new Map<string, number[]>()
   private notifyTimer: NodeJS.Timeout | null = null
   private pendingNotes: { title: string; body: string }[] = []
+  private notifiedReviews = new Set<string>()
+  private autopilotStatus = new Map<string, string>()
 
   constructor(
     file: string,
     private readonly deps: {
       registry: ProjectRegistry
+      autopilot?: Autopilot
       runner: AgentRunner
       reviews: ReviewActions
       costs: CostTracker
@@ -170,7 +174,20 @@ export class RemoteServer {
         e.request.dangerous ? `${who} needs you at your computer` : `${who} needs approval`,
         e.request.dangerous ? 'A high-risk action is waiting (approve it on your computer).' : e.request.summary.slice(0, 140)
       )
+    } else if (e.type === 'autopilot') {
+      const prev = this.autopilotStatus.get(e.state.projectId)
+      this.autopilotStatus.set(e.state.projectId, e.state.status)
+      if (prev === e.state.status) return
+      const name = this.projectName(e.state.projectId)
+      if (e.state.status === 'checkin') this.queueNote(`${name}: sprint ${e.state.sprint} check-in is ready`, 'See what was built and plan the next sprint.')
+      else if (e.state.status === 'waiting') this.queueNote(`${name} needs you`, (e.state.reason ?? 'A task is waiting for your review.').slice(0, 140))
+      else if (e.state.status === 'paused' && e.state.reason && !/by you|stopped all/i.test(e.state.reason)) this.queueNote(`${name}: autopilot paused`, e.state.reason.slice(0, 140))
     } else if (e.type === 'review' && e.review.status === 'pending') {
+      // Once per review (it's updated as checks run), and not for work autopilot is handling itself.
+      if (this.notifiedReviews.has(e.review.id)) return
+      const ap = this.deps.autopilot?.get(e.review.projectId)
+      if (ap && (ap.status === 'running' || ap.awaitingReviewId === e.review.id)) return
+      this.notifiedReviews.add(e.review.id)
       const who = this.agentName(e.review.projectId, e.review.agentId)
       this.queueNote(`${who} finished: ${e.review.title.slice(0, 60)}`, `${e.review.files.length} file${e.review.files.length === 1 ? '' : 's'} changed${e.review.incomplete ? ' (stopped early)' : ''}. Tap to review.`)
     } else if (e.type === 'state' && e.state.status === 'error' && e.state.lastError) {
@@ -374,7 +391,19 @@ export class RemoteServer {
       }
     }
 
+    if (method === 'POST' && a === 'autopilot' && b && this.deps.autopilot) {
+      const ap = this.deps.autopilot
+      const body = await this.body(req)
+      this.deps.registry.get(b) // must be a real project
+      const feedback = typeof body.feedback === 'string' ? body.feedback.slice(0, 8000) : ''
+      const state =
+        c === 'continue' ? ap.start(b, { feedback }) : c === 'pause' ? ap.pause(b) : c === 'resume' ? ap.resume(b) : c === 'feedback' ? ap.addFeedback(b, feedback) : null
+      if (!state) return this.json(res, 404, { error: 'Unknown action' })
+      return this.json(res, 200, { ok: true, status: state.status })
+    }
+
     if (method === 'POST' && a === 'stop-all') {
+      this.deps.autopilot?.pauseAll('You stopped all agents.')
       this.deps.runner.stopAll()
       return this.json(res, 200, { ok: true })
     }
@@ -395,6 +424,14 @@ export class RemoteServer {
     return this.json(res, 404, { error: 'Not found' })
   }
 
+  private projectName(projectId: string): string {
+    try {
+      return this.deps.registry.get(projectId).name
+    } catch {
+      return 'A project'
+    }
+  }
+
   private agentName(projectId: string, agentId: string): string {
     if (agentId === 'main') return 'Main'
     try {
@@ -409,6 +446,19 @@ export class RemoteServer {
       id: p.id,
       name: p.name,
       autonomous: p.settings.autonomous,
+      autopilot: (() => {
+        const ap = this.deps.autopilot?.get(p.id)
+        if (!ap) return null
+        const report = ap.reports[ap.reports.length - 1]
+        return {
+          status: ap.status,
+          sprint: ap.sprint,
+          tasksDone: ap.tasksDone,
+          sprintTasks: ap.config.sprintTasks,
+          reason: ap.reason,
+          report: ap.status === 'checkin' && report ? report.text.slice(0, 20_000) : null
+        }
+      })(),
       hasTestPlace: p.settings.testPlace !== null,
       agents: this.deps.runner.snapshot(p.id).map((a) => ({
         id: a.agentId,

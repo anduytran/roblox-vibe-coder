@@ -10,7 +10,11 @@ import type {
   Project,
   ProjectSettings,
   Review,
-  Role
+  Role,
+  AutopilotConfig,
+  AutopilotState,
+  NewGameInput,
+  TrendsSnapshot
 } from './types'
 
 export const IPC = {
@@ -61,6 +65,20 @@ export const IPC = {
   remoteSet: 'remote:set',
   remotePair: 'remote:pair',
   remoteUnpair: 'remote:unpair',
+  projectsCreate: 'projects:create',
+  projectsPickFolder: 'projects:pickFolder',
+  projectsReadDocument: 'projects:readDocument',
+  systemTools: 'system:tools',
+  autopilotList: 'autopilot:list',
+  autopilotStart: 'autopilot:start',
+  autopilotPause: 'autopilot:pause',
+  autopilotResume: 'autopilot:resume',
+  autopilotStop: 'autopilot:stop',
+  autopilotConfigure: 'autopilot:configure',
+  autopilotFeedback: 'autopilot:feedback',
+  trendsGet: 'trends:get',
+  trendsRefresh: 'trends:refresh',
+  trendsIdeas: 'trends:ideas',
   agentEvent: 'agent:event'
 } as const
 
@@ -100,6 +118,30 @@ export interface HangarApi {
     remove(projectId: string): Promise<void>
     update(projectId: string, patch: { name?: string; settings?: Partial<ProjectSettings> }): Promise<Project>
     reveal(projectId: string): Promise<void>
+    /** Create a new game project from the wizard; starts autopilot if asked (and an API key is saved). */
+    create(input: NewGameInput): Promise<{ project: Project; started: boolean; note: string | null }>
+    /** Folder picker for where new projects go. */
+    pickFolder(): Promise<string | null>
+    /** Pick a design document (Markdown or text) to attach to the brief. */
+    readDocument(): Promise<{ name: string; text: string } | null>
+  }
+  system: {
+    /** Which build tools are installed (used to pick the checks for new projects). */
+    tools(): Promise<{ rojo: boolean; selene: boolean; stylua: boolean; git: boolean; defaultParent: string }>
+  }
+  autopilot: {
+    list(): Promise<AutopilotState[]>
+    start(projectId: string, opts?: { feedback?: string; config?: Partial<AutopilotConfig> }): Promise<AutopilotState>
+    pause(projectId: string): Promise<AutopilotState>
+    resume(projectId: string): Promise<AutopilotState>
+    stop(projectId: string): Promise<AutopilotState>
+    configure(projectId: string, config: Partial<AutopilotConfig>): Promise<AutopilotState>
+    feedback(projectId: string, text: string): Promise<AutopilotState>
+  }
+  trends: {
+    get(): Promise<TrendsSnapshot>
+    refresh(): Promise<TrendsSnapshot>
+    ideas(): Promise<TrendsSnapshot>
   }
   roles: {
     list(projectId: string): Promise<Role[]>

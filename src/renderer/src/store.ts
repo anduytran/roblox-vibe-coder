@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, CostSummary, Project, Review, Role } from '@shared/types'
+import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
 export interface StoreState {
   ready: boolean
@@ -16,6 +16,11 @@ export interface StoreState {
   settings: AppSettings | null
   key: KeyStatus
   toast: { id: number; text: string; tone: 'info' | 'error' } | null
+  /** projectId -> autopilot state */
+  autopilot: Record<string, AutopilotState>
+  trends: TrendsSnapshot | null
+  /** The "New game" wizard, optionally prefilled (from a trending suggestion). */
+  wizard: { idea?: string; name?: string; genre?: string } | null
 }
 
 let state: StoreState = {
@@ -29,7 +34,10 @@ let state: StoreState = {
   costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} },
   settings: null,
   key: { hasKey: false, encryptionAvailable: true },
-  toast: null
+  toast: null,
+  autopilot: {},
+  trends: null,
+  wizard: null
 }
 
 /** Stable empty values so selectors never return a fresh object (which would re-render forever). */
@@ -118,6 +126,9 @@ function applyEvent(e: AgentEvent): void {
     case 'cost':
       set({ costs: e.summary })
       break
+    case 'autopilot':
+      set((s) => ({ autopilot: { ...s.autopilot, [e.state.projectId]: e.state } }))
+      break
     case 'review':
       set((s) => {
         const list = (s.reviews[e.review.projectId] ?? []).filter((r) => r.id !== e.review.id)
@@ -130,21 +141,27 @@ function applyEvent(e: AgentEvent): void {
 export function initStore(): void {
   api().onAgentEvent(applyEvent)
   void (async () => {
-    const [projects, settings, key, costs, approvals] = await Promise.all([
+    const [projects, settings, key, costs, approvals, autopilots, trends] = await Promise.all([
       api().projects.list(),
       api().settings.get(),
       api().key.status(),
       api().costs.summary(),
-      api().approvals.pending()
+      api().approvals.pending(),
+      api().autopilot.list(),
+      api().trends.get()
     ])
-    let selected: string | null = null
-    try {
-      selected = localStorage.getItem('hangar.selectedProject')
-    } catch {
-      selected = null
-    }
-    if (!projects.some((p) => p.id === selected)) selected = projects[0]?.id ?? null
-    set({ ready: true, projects, settings, key, costs, approvals, selectedProjectId: selected })
+    // Hangar opens on Home: what needs you, your games, and what's trending.
+    set({
+      ready: true,
+      projects,
+      settings,
+      key,
+      costs,
+      approvals,
+      selectedProjectId: null,
+      autopilot: Object.fromEntries(autopilots.map((a) => [a.projectId, a])),
+      trends
+    })
     for (const p of projects) void loadProject(p.id)
   })()
 }
@@ -163,6 +180,29 @@ export function selectProject(id: string | null): void {
   } catch {
     // Storage unavailable: selection just isn't remembered.
   }
+}
+
+export function openWizard(prefill: StoreState['wizard'] = {}): void {
+  set({ wizard: prefill ?? {} })
+}
+
+export function closeWizard(): void {
+  set({ wizard: null })
+}
+
+export function setTrends(trends: TrendsSnapshot): void {
+  set({ trends })
+}
+
+export function setAutopilot(st: AutopilotState): void {
+  set((s) => ({ autopilot: { ...s.autopilot, [st.projectId]: st } }))
+}
+
+/** A project the wizard just created. */
+export async function addCreatedProject(p: Project): Promise<void> {
+  set((s) => ({ projects: s.projects.some((x) => x.id === p.id) ? s.projects.map((x) => (x.id === p.id ? p : x)) : [...s.projects, p] }))
+  selectProject(p.id)
+  await loadProject(p.id)
 }
 
 export async function addProject(): Promise<void> {

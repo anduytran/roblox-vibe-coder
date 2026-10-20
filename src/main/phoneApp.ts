@@ -233,6 +233,13 @@ function researchView(r) {
 
 function inboxView() {
   const items = []
+  for (const p of state.projects) {
+    if (p.autopilot && (p.autopilot.status === 'checkin' || p.autopilot.status === 'waiting')) {
+      items.push(h('div', { class: 'card warn', onclick: () => { tab = 'projects'; render() } },
+        h('strong', {}, p.name + (p.autopilot.status === 'checkin' ? ': sprint ' + p.autopilot.sprint + ' check-in' : ' needs you')),
+        h('div', { class: 'small muted' }, p.autopilot.status === 'checkin' ? 'Read it and start the next sprint (Projects tab).' : (p.autopilot.reason || 'A task is waiting for your review.'))))
+    }
+  }
   for (const a of state.approvals) items.push(approvalCard(a))
   if (state.reviews.length) items.push(h('div', { class: 'small muted' }, 'Ready for review'))
   for (const r of state.reviews) items.push(reviewRow(r))
@@ -302,6 +309,27 @@ function reviewView(r) {
 // ---------- projects ----------
 function projectName(id) { const p = state && state.projects.find((x) => x.id === id); return p ? p.name : '' }
 
+const AP_LABEL = { off: 'Autopilot off', running: 'Building', waiting: 'Needs your review', checkin: 'Check-in ready', paused: 'Paused' }
+
+/** Autopilot on the phone: status, check-in report, feedback and "start next sprint". */
+function autopilotBox(p) {
+  const ap = p.autopilot
+  if (!ap || ap.status === 'off') return null
+  const feedback = h('textarea', { placeholder: ap.status === 'checkin' ? 'Answer the questions, say what to change or do next…' : 'A note for the Lead’s next task…' })
+  const post = (action, ok) => act(async () => { await api('/api/autopilot/' + p.id + '/' + action, { method: 'POST', body: { feedback: feedback.value } }); feedback.value = '' }, ok)
+  return h('div', { class: 'sect' },
+    h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Autopilot · sprint ' + ap.sprint), h('span', { class: 'pill ' + (ap.status === 'running' ? 'working' : ap.status === 'waiting' ? 'awaiting_approval' : '') }, AP_LABEL[ap.status] || ap.status)),
+    ap.status !== 'checkin' ? h('div', { class: 'small muted' }, ap.tasksDone + ' of ' + ap.sprintTasks + ' tasks done') : null,
+    ap.reason ? h('div', { class: 'small' }, ap.reason) : null,
+    ap.report ? h('pre', { class: 'summary' }, ap.report) : null,
+    feedback,
+    h('div', { class: 'row wrap' },
+      ap.status === 'checkin' ? h('button', { class: 'btn primary grow', onclick: () => post('continue', 'Sprint ' + (ap.sprint + 1) + ' started') }, 'Start sprint ' + (ap.sprint + 1)) : null,
+      ap.status === 'paused' ? h('button', { class: 'btn primary grow', onclick: () => post('resume', 'Resumed') }, 'Resume') : null,
+      ap.status === 'running' || ap.status === 'waiting' ? h('button', { class: 'btn grow', onclick: () => post('pause', 'Paused') }, 'Pause') : null,
+      ap.status !== 'checkin' ? h('button', { class: 'btn grow', onclick: () => { if (!feedback.value.trim()) return toast('Write a note first', true); post('feedback', 'Noted') } }, 'Add note') : null))
+}
+
 function projectsView() {
   if (!state.projects.length) return h('main', {}, h('div', { class: 'empty' }, 'No projects yet. Add one on your computer.'))
   return h('main', {}, state.projects.map((p) => {
@@ -310,6 +338,7 @@ function projectsView() {
     const record = h('input', { type: 'checkbox' })
     return h('div', { class: 'card' },
       h('div', { class: 'row' }, h('h2', { class: 'grow' }, p.name), p.autonomous ? h('span', { class: 'pill' }, 'Autonomous') : null),
+      autopilotBox(p),
       h('div', {}, p.agents.map((a) => h('div', { class: 'agent' },
         h('div', {}, h('div', {}, a.name), h('div', { class: 'small muted' }, a.lastError || a.activity || (a.queued ? a.queued + ' queued' : ''))),
         h('span', { class: 'pill ' + a.status }, a.status.replace('_', ' '))))),
@@ -359,7 +388,7 @@ function render() {
   const header = h('header', {},
     h('div', {}, h('h1', {}, 'Hangar'), h('div', { class: 'spend' }, 'Today $' + state.costs.todayUsd.toFixed(2))),
     h('button', { class: 'btn danger', disabled: !busy, onclick: () => { if (confirm('Stop every agent and clear all queues?')) act(() => api('/api/stop-all', { method: 'POST', body: {} }), 'All agents stopped') } }, 'Stop all'))
-  const count = state.approvals.length + state.reviews.length
+  const count = state.approvals.length + state.reviews.length + state.projects.filter((p) => p.autopilot && (p.autopilot.status === 'checkin' || p.autopilot.status === 'waiting')).length
   const navBtn = (id, label) => h('button', { class: tab === id ? 'on' : '', onclick: () => { tab = id; openReview = null; render() } }, label, id === 'inbox' && count ? h('span', { class: 'count' }, count) : null)
   const view = openReview ? reviewView(state.reviews.find((r) => r.id === openReview.id) || openReview) : tab === 'inbox' ? inboxView() : tab === 'projects' ? projectsView() : settingsView()
   app.replaceChildren(header, view, h('nav', {}, navBtn('inbox', 'Inbox'), navBtn('projects', 'Projects'), navBtn('settings', 'Settings')))

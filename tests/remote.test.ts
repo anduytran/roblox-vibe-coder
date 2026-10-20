@@ -199,3 +199,41 @@ test('audit: pairing never reveals whether it is active; device names are cleane
     t.server.stop()
   }
 })
+
+test('remote: the phone can read check-ins and start the next sprint, pause and add notes', async () => {
+  const port = await freePort()
+  const file = join(tmp('hangar-remote-ap-'), 'remote.json')
+  writeFileSync(file, JSON.stringify({ enabled: false, port, devices: [], vapid: null }))
+  const calls: unknown[][] = []
+  const st = { status: 'checkin', sprint: 2, tasksDone: 5, config: { sprintTasks: 5 }, reason: null, reports: [{ text: '## Built\nGliders' }] }
+  const autopilot = {
+    get: () => st,
+    start: (...a: unknown[]) => (calls.push(['start', ...a]), { status: 'running' }),
+    pause: (...a: unknown[]) => (calls.push(['pause', ...a]), { status: 'paused' }),
+    resume: (...a: unknown[]) => (calls.push(['resume', ...a]), { status: 'running' }),
+    addFeedback: (...a: unknown[]) => (calls.push(['feedback', ...a]), { status: 'running' }),
+    pauseAll: () => calls.push(['pauseAll'])
+  }
+  const registry = { list: () => [{ id: 'p1', name: 'Game', path: tmp('x-'), settings: { autonomous: true, testPlace: null } }], get: (id: string) => { if (id !== 'p1') throw new Error('Project not found.'); return { path: tmp('x-') } } }
+  const runner = { pendingApprovals: () => [], respond: () => {}, send: () => {}, stopAll: () => {}, snapshot: () => [] }
+  const reviews = { list: () => [], mergeWarnings: () => [] }
+  const server = new RemoteServer(file, { registry, runner, reviews, costs: { summary: () => ({ todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} }) }, autopilot } as any)
+  await server.setEnabled(true)
+  try {
+    const { code } = server.startPairing()
+    const token = (await call(port, '/api/pair', { body: { code } })).json.token
+    const state = await call(port, '/api/state', { token })
+    assert.equal(state.json.projects[0].autopilot.status, 'checkin')
+    assert.match(state.json.projects[0].autopilot.report, /Gliders/)
+    assert.equal((await call(port, '/api/autopilot/p1/continue', { token, body: { feedback: 'Add co-op' } })).status, 200)
+    assert.deepEqual(calls[0], ['start', 'p1', { feedback: 'Add co-op' }])
+    await call(port, '/api/autopilot/p1/pause', { token, body: {} })
+    assert.equal(calls[1]![0], 'pause')
+    assert.equal((await call(port, '/api/autopilot/nope/continue', { token, body: {} })).status, 500, 'unknown project refused')
+    assert.equal((await call(port, '/api/autopilot/p1/continue', { body: {} })).status, 401, 'needs a paired phone')
+    await call(port, '/api/stop-all', { token, body: {} })
+    assert.ok(calls.some((c) => c[0] === 'pauseAll'), 'stop all also pauses autopilot')
+  } finally {
+    server.stop()
+  }
+})

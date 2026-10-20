@@ -4,6 +4,35 @@ A desktop control room for Claude-powered game development. Each project folder 
 
 Built for personal use first; packaging for a downloadable installer is set up but not yet signed.
 
+## How it works: you're the product owner
+
+1. **New game** — describe the idea in a prompt or attach a design document, pick the platforms, model, budgets and how big each sprint is.
+2. Hangar creates a ready-to-build Rojo project (code layout, lint/format config, `CLAUDE.md` conventions, starter roles, a game design vault with your brief, a first git commit) and turns on autonomous mode.
+3. **Autopilot** takes over: the Lead writes the game overview, a roadmap with milestones and acceptance criteria, then builds one reviewed feature at a time.
+4. Work that passes the checks and gets the reviewer agent's approval merges by itself; anything else waits for you. At the end of each sprint the Lead writes a **check-in**: what was built, how to try it, the plan for the next sprint, and questions for you.
+5. You check in (desktop or phone), answer, give feedback, and start the next sprint. Repeat until it's the game you want.
+
+**Home** shows what needs you, every game's sprint progress, and what's trending on Roblox with original game ideas, sorted by trending score.
+
+## Home: trending games and ideas
+
+Hangar reads Roblox's public discovery charts (Top Trending, Up-and-Coming, Top Playing Now) and the public details of those experiences, and keeps a snapshot each time so it can measure growth.
+
+- **Demand** (0–100): momentum 30% (player growth over about a day; Up-and-Coming position until there's history), chart placement 25%, freshness 15% (newer experiences score higher), like ratio 15%, current players 15% (log scale).
+- **Saturation** (0–100) of each game space (Roblox sub-genre): how many charting games are in it (50%), how much of its players the biggest game holds (30%), and how established the top games are (20%).
+- **Trending score** = demand × (1 − 0.4 × saturation). A rising game in an open space ranks above an equally hot one in a space full of entrenched competitors. Spaces are labelled Open, Competitive or Crowded.
+- **Ideas for you**: Claude (with no tools) suggests original concepts that ride what's trending, preferring open spaces, scored the same way. "Create this game" or "Use idea" opens the New game wizard pre-filled.
+
+Saturation is measured among charting games, so it reflects competition among successful experiences rather than every game ever published.
+
+## Autopilot details
+
+- Sprints end after the chosen number of tasks or the sprint budget, whichever comes first.
+- Auto-merge needs: checks passed (if configured), the reviewer agent's approval, no warnings or notes, and no changes to files that control how code or tools run (those always wait for you).
+- Two failed tasks in a row, a stopped task, or closing Hangar pauses autopilot; Resume carries on. "Stop all agents" pauses every autopilot.
+- "Steer the Lead" notes are handed to the Lead at the start of its next task; check-in feedback starts the next sprint.
+- The phone app shows check-ins, starts the next sprint, pauses and takes notes.
+
 ## What it does
 
 - **Projects sidebar** — one entry per folder, with live dots for working agents and a badge when something needs your approval.

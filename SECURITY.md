@@ -115,6 +115,14 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - `PostToolUse` hooks run (the link check after writes).
 - The researcher's web fetches use `HTTPS_PROXY` with credentials (otherwise its fetches fail; the host-name rules still apply).
 
+## New game, autopilot and trends (2026-10-20)
+
+- **Auto-merge** only applies work that passed every gate: checks (if configured), the reviewer agent's approval, no merge warnings, no notes (quarantined ignored files, edited `.gitignore`, history problems), and no changes to protected or tool-config files (`package.json`, CI/editor config, JS tool configs, scripts, `node_modules`, `.mcp.json`…). Everything else waits for you. Turn auto-merge off to review every task.
+- **Trends** come from two fixed Roblox hosts (`apis.roblox.com`, `games.roblox.com`), read-only, no credentials, responses size-limited; names and descriptions are cleaned of hidden characters and treated as untrusted text.
+- **Idea generation** runs Claude with no tools, no project, behind the key-hiding proxy; its output is shown to you and only becomes a brief if you click "Create this game" (you see it in the wizard first).
+- **New projects** are created only inside a folder you choose, never into a non-empty folder; the game name is sanitised before it's written into code.
+- **Phone**: a paired phone can start the next sprint, pause/resume and add notes (spending stays within the sprint, project and daily limits).
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.
@@ -126,6 +134,7 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - **Approved git config.** If you approve a repository whose git config defines filters, git commands that agents run (and you approve) will use them. Hangar itself still refuses to run git there.
 - **Checks on Windows** run without an OS sandbox. Linters and Rojo only read code, but a test runner that executes game code (for example Lune) runs it with your permissions. Only add such checks if you're comfortable with that.
 - **The reviewer agent can be fooled.** It reads code another agent wrote; treat "looks good" as a second opinion, not a guarantee.
+- **Auto-merged work is still agent-written.** The reviewer agent can be fooled; auto-merge only lands game code (never tool or config files), but check in regularly and play the result. You can revert any merge with git.
 - **Approved research is trusted context.** Once you approve a report, every agent may read it. Read it for accuracy and for instructions aimed at an AI before approving. Pages on documentation sites the engine trusts by default may be missing from the "pages it opened" list.
 - **The researcher's egress proxy** relies on the engine honouring `HTTPS_PROXY` for web fetches; the host-name rules apply either way. If you use a corporate proxy, the researcher connects directly instead of through it.
 - **Playtest recordings** capture the Studio window's area of the screen; anything overlapping it (a notification, another window) is captured too.

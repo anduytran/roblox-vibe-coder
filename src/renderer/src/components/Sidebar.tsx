@@ -1,4 +1,4 @@
-import { addProject, attempt, selectProject, toast, useStore } from '../store'
+import { addProject, attempt, openWizard, selectProject, toast, useStore } from '../store'
 import { Avatar, Icon, usd } from './ui'
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -8,6 +8,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const approvals = useStore((s) => s.approvals)
   const costs = useStore((s) => s.costs)
   const settings = useStore((s) => s.settings)
+  const autopilot = useStore((s) => s.autopilot)
 
   const anyRunning = Object.values(agents).some((proj) =>
     Object.values(proj).some((a) => a.status === 'working' || a.status === 'awaiting_approval' || a.status === 'queued')
@@ -22,12 +23,21 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </svg>
         Hangar
       </div>
-      <div className="side-label">Projects</div>
+      <button className={`side-btn side-nav ${selected === null ? 'side-btn-active' : ''}`} onClick={() => selectProject(null)}>
+        <Icon name="home" />
+        Home
+      </button>
+      <button className="side-btn side-new" onClick={() => openWizard()}>
+        <Icon name="plus" />
+        New game
+      </button>
+      <div className="side-label side-label-gap">Games</div>
       <ul className="project-list">
         {projects.map((p) => {
           const list = Object.values(agents[p.id] ?? {})
-          const working = list.filter((a) => a.status === 'working').length
-          const waiting = approvals.filter((a) => a.projectId === p.id).length
+          const working = list.filter((a) => a.status === 'working').length || (autopilot[p.id]?.status === 'running' ? 1 : 0)
+          const ap = autopilot[p.id]
+          const waiting = approvals.filter((a) => a.projectId === p.id).length + (ap?.status === 'waiting' || ap?.status === 'checkin' ? 1 : 0)
           const errored = list.some((a) => a.status === 'error')
           return (
             <li key={p.id}>
@@ -38,7 +48,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 </span>
                 <span className="project-item-name">{p.name}</span>
                 {waiting > 0 ? (
-                  <span className="badge badge-warn" title="Actions waiting for your approval">
+                  <span className="badge badge-warn" title="Waiting for you (approvals, reviews or a check-in)">
                     {waiting}
                   </span>
                 ) : working > 0 ? (
@@ -51,9 +61,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           )
         })}
       </ul>
-      <button className="side-btn" onClick={() => void addProject()}>
-        <Icon name="plus" />
-        Add project
+      <button className="side-btn side-btn-quiet" onClick={() => void addProject()}>
+        <Icon name="folder" />
+        Open existing folder
       </button>
 
       <div className="side-foot">

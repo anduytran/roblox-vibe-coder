@@ -239,6 +239,16 @@ export async function gitInit(root: string): Promise<void> {
   await git(root, ['init'])
 }
 
+/** A brand-new project: git repository on "main" with everything committed (your identity, or "Hangar"). */
+export async function gitInitialCommit(root: string, message: string): Promise<void> {
+  await git(root, ['init'])
+  await git(root, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
+  await assertSafeRepo(root)
+  await git(root, ['add', '-A'])
+  const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
+  await git(root, [...identity, 'commit', '--no-verify', '-m', message.slice(0, 200)])
+}
+
 /**
  * Commit one file Hangar wrote (approved research) on the current branch, leaving anything else
  * uncommitted alone. Refuses on a task branch, so it can't end up inside an agent's change.

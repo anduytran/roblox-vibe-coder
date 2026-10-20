@@ -16,6 +16,13 @@ import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
 import { WebEgressProxy } from './webEgress'
+import { Autopilot } from './autopilot'
+import { createGameProject, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
+import { Trends } from './trending'
+import { SUGGESTED_CHECKS } from './checks'
+import { resolveCommand } from './testPlace'
+import { readFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
+import { basename } from 'node:path'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
@@ -171,9 +178,11 @@ app.whenReady().then(() => {
   const testPlaceKeys = new TestPlaceKeys(dataDir())
   let remote: RemoteServer | null = null
   let pipeline: ReviewPipeline | null = null
+  let autopilot: Autopilot | null = null
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
     remote?.onEvent(event)
+    if (event.type === 'review') autopilot?.onReview(event.review)
   }
 
   const engineAuth = async (apiKey: string, opts: { forceHideKey: boolean }): Promise<{ env: Record<string, string>; release: () => void }> => {
@@ -195,6 +204,7 @@ app.whenReady().then(() => {
     costs,
     emit,
     onReview: (r) => void pipeline?.start(r),
+    onTaskDone: (o) => autopilot?.onTaskDone(o),
     researchProxy: () => webEgress.issue(),
     getSettings: () => settings.get(),
     getApiKey: () => secrets.getKey(),
@@ -223,7 +233,17 @@ app.whenReady().then(() => {
     publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
     pipeline
   })
-  remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs })
+  autopilot = new Autopilot({
+    file: join(dataDir(), 'autopilot.json'),
+    registry,
+    reviews,
+    costs,
+    emit,
+    send: (projectId, agentId, prompt, opts) => runner.send(projectId, agentId, prompt, opts),
+    merge: (id) => reviewActions.merge(id)
+  })
+  const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: () => secrets.getKey(), getSettings: () => settings.get(), engineAuth, costs })
+  remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot })
   void remote.start().catch(() => undefined)
 
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void => {
@@ -247,8 +267,10 @@ app.whenReady().then(() => {
   })
   handle(IPC.projectsRemove, (id: unknown) => {
     const projectId = str(id, 'project')
+    autopilot?.stop(projectId)
     for (const s of runner.snapshot(projectId)) runner.stop(projectId, s.agentId)
     registry.remove(projectId)
+    autopilot?.remove(projectId)
   })
   handle(IPC.projectsUpdate, (id: unknown, patch: { name?: string; settings?: Partial<ProjectSettings> }) =>
     registry.update(str(id, 'project'), patch ?? {})
@@ -292,7 +314,10 @@ app.whenReady().then(() => {
     runner.send(str(id, 'project'), str(agentId, 'agent'), str(prompt, 'prompt'), { record: opts?.record === true })
   )
   handle(IPC.agentsStop, (id: unknown, agentId: unknown) => runner.stop(str(id, 'project'), str(agentId, 'agent')))
-  handle(IPC.agentsStopAll, () => runner.stopAll())
+  handle(IPC.agentsStopAll, () => {
+    autopilot!.pauseAll('You stopped all agents.')
+    runner.stopAll()
+  })
   handle(IPC.agentsClearQueue, (id: unknown, agentId: unknown) => runner.clearQueue(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsResetSession, (id: unknown, agentId: unknown) => runner.resetSession(str(id, 'project'), str(agentId, 'agent')))
 
@@ -353,6 +378,76 @@ app.whenReady().then(() => {
     // obsidian:// is the only non-https scheme Hangar ever opens, and only for a vault inside a project.
     await shell.openExternal(`obsidian://open?path=${encodeURIComponent(home)}`).catch(() => shell.openPath(join(root(id), f)))
   })
+
+  // New game flow
+  const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; git: boolean } => ({
+    rojo: resolveCommand(settings.get().rojoCommand) !== null,
+    selene: resolveCommand('selene') !== null,
+    stylua: resolveCommand('stylua') !== null,
+    git: resolveCommand('git') !== null
+  })
+  const defaultParent = (): string => join(app.getPath('documents'), 'Hangar Games')
+  handle(IPC.systemTools, () => ({ ...tools(), defaultParent: defaultParent() }))
+  handle(IPC.projectsPickFolder, async () => {
+    const opts = { title: 'Where should new games go?', defaultPath: defaultParent(), properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
+    const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts)
+    return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
+  })
+  handle(IPC.projectsReadDocument, async () => {
+    const opts = { title: 'Attach a design document', properties: ['openFile'] as Array<'openFile'>, filters: [{ name: 'Text documents', extensions: ['md', 'markdown', 'txt'] }] }
+    const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts)
+    const file = res.canceled ? undefined : res.filePaths[0]
+    if (!file) return null
+    if (statSync(file).size > MAX_DOCUMENT) throw new Error('That document is too large (300 KB max). Paste the important parts instead.')
+    const text = readFileSync(file, 'utf8')
+    if (text.includes('\0')) throw new Error('That file isn\'t a text document. Save it as Markdown or plain text first.')
+    return { name: basename(file), text }
+  })
+  handle(IPC.projectsCreate, async (raw: unknown) => {
+    const input = sanitizeNewGame(raw)
+    if (input.parentDir === defaultParent() && !existsSync(input.parentDir)) mkdirSync(input.parentDir, { recursive: true })
+    const path = await createGameProject(input)
+    const added = registry.add(path)
+    const t = tools()
+    const checks = SUGGESTED_CHECKS.filter((c) => (c.name === 'Format' ? t.stylua : c.name === 'Lint' ? t.selene : t.rojo))
+    const project = registry.update(added.id, {
+      name: input.name.trim(),
+      settings: { autonomous: true, reviewer: true, checks, robloxStudioMcp: input.studioTools, model: input.model, dailyBudgetUsd: input.dailyBudgetUsd }
+    })
+    autopilot!.configure(project.id, input.autopilot)
+    let started = false
+    let note: string | null = null
+    if (input.startNow) {
+      if (!secrets.getKey()) note = 'Add your Anthropic API key in Settings, then start autopilot from the project Overview.'
+      else {
+        autopilot!.start(project.id)
+        started = true
+      }
+    }
+    const missing = (['rojo', 'selene', 'stylua'] as const).filter((k) => !t[k])
+    if (missing.length) note = [note, `Not installed, so not used as checks: ${missing.join(', ')}.`].filter(Boolean).join(' ')
+    return { project, started, note }
+  })
+
+  // Autopilot
+  const pid = (id: unknown): string => registry.get(str(id, 'project')).id
+  handle(IPC.autopilotList, () => autopilot!.list())
+  handle(IPC.autopilotStart, (id: unknown, opts?: { feedback?: unknown; config?: Record<string, unknown> }) =>
+    autopilot!.start(pid(id), {
+      feedback: typeof opts?.feedback === 'string' ? opts.feedback.slice(0, 8000) : undefined,
+      config: opts?.config && typeof opts.config === 'object' ? (opts.config as never) : undefined
+    })
+  )
+  handle(IPC.autopilotPause, (id: unknown) => autopilot!.pause(pid(id)))
+  handle(IPC.autopilotResume, (id: unknown) => autopilot!.resume(pid(id)))
+  handle(IPC.autopilotStop, (id: unknown) => autopilot!.stop(pid(id)))
+  handle(IPC.autopilotConfigure, (id: unknown, config: unknown) => autopilot!.configure(pid(id), config && typeof config === 'object' ? (config as never) : {}))
+  handle(IPC.autopilotFeedback, (id: unknown, text: unknown) => autopilot!.addFeedback(pid(id), str(text, 'feedback').slice(0, 8000)))
+
+  // Trends and ideas
+  handle(IPC.trendsGet, () => trends.current())
+  handle(IPC.trendsRefresh, () => trends.refresh())
+  handle(IPC.trendsIdeas, () => trends.generateIdeas())
 
   // Phone remote
   handle(IPC.remoteStatus, () => remote!.status())

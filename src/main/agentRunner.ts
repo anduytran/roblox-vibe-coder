@@ -101,6 +101,8 @@ export interface RunnerDeps {
   clips?: ClipRecorder
   /** Called with each new review (to start its checks and the reviewer agent). */
   onReview?: (review: Review) => void
+  /** Called when any task ends (autopilot uses it to plan the next step). */
+  onTaskDone?: (outcome: { projectId: string; agentId: string; task: QueuedTask; ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null }) => void
   /** A per-run URL (with credentials) for the web researcher's filtering proxy (see webEgress.ts). */
   researchProxy?: () => Promise<{ url: string; release: () => void }>
 }
@@ -278,13 +280,19 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin'] } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
     if (!this.agentIds(project).includes(agentId)) throw new Error('Unknown agent.')
     const s = this.state(projectId, agentId)
-    const task: QueuedTask = { id: randomUUID(), prompt: text.slice(0, 20000), createdAt: Date.now(), ...(opts.record ? { record: true } : {}) }
+    const task: QueuedTask = {
+      id: randomUUID(),
+      prompt: text.slice(0, 20000),
+      createdAt: Date.now(),
+      ...(opts.record ? { record: true } : {}),
+      ...(opts.origin ? { origin: opts.origin } : {})
+    }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
     if (s.status === 'error' || s.status === 'stopped' || s.status === 'idle') {
@@ -398,6 +406,19 @@ export class AgentRunner {
   }
 
   private async run(s: AgentState, task: QueuedTask): Promise<void> {
+    const box = { ok: false, stopped: false, text: '', error: null as string | null, reviewId: null as string | null }
+    try {
+      await this.runTask(s, task, box)
+    } finally {
+      try {
+        this.deps.onTaskDone?.({ projectId: s.projectId, agentId: s.agentId, task, ...box, error: box.ok ? null : (s.lastError ?? box.error) })
+      } catch {
+        // a listener failing must never break the queue
+      }
+    }
+  }
+
+  private async runTask(s: AgentState, task: QueuedTask, box: { ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null }): Promise<void> {
     const prompt = task.prompt
     const key = keyOf(s.projectId, s.agentId)
     this.log(s, { kind: 'user', text: prompt })
@@ -618,10 +639,13 @@ export class AgentRunner {
       proxyGrant?.release()
       this.controllers.delete(key)
       this.denyPendingFor(s.projectId, s.agentId, 'Run ended')
+      box.ok = finished && !s.lastError && !controller.signal.aborted
+      box.stopped = controller.signal.aborted
+      box.text = lastText
       if (taskBranch) {
         this.wrapping.add(project.id)
         try {
-          await this.finishTask(s, project, task, taskBranch, lastText, clip, finished && !s.lastError && !controller.signal.aborted)
+          box.reviewId = await this.finishTask(s, project, task, taskBranch, lastText, clip, finished && !s.lastError && !controller.signal.aborted)
         } finally {
           this.wrapping.delete(project.id)
         }
@@ -644,9 +668,11 @@ export class AgentRunner {
     lastText: string,
     clip: ClipSession | null,
     completed: boolean
-  ): Promise<void> {
+  ): Promise<string | null> {
     const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
-    const title = task.prompt.split('\n')[0]!.slice(0, 120)
+    // Autopilot prompts are long instructions; the agent's own first line says what it actually built.
+    const reportLine = lastText.split('\n').map((l) => l.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean)
+    const title = (task.origin ? (reportLine ?? 'Autopilot task') : task.prompt.split('\n')[0]!).slice(0, 120)
     try {
       const { files, headSha, note } = await finishTaskBranch(
         project.path,
@@ -660,7 +686,7 @@ export class AgentRunner {
       if (files.length === 0 || !headSha) {
         if (clipResult) StudioClipRecorder.remove(clipResult.files)
         this.log(s, { kind: 'system', text: `No files changed, so there's nothing to review. Back on ${branch.from.base}.${note ? ` ${note}` : ''}` })
-        return
+        return null
       }
       const review = this.deps.reviews.add({
         projectId: project.id,
@@ -680,10 +706,12 @@ export class AgentRunner {
       this.deps.onReview?.(review)
       this.log(s, { kind: 'system', text: `Ready for review: ${files.length} file${files.length === 1 ? '' : 's'} changed on ${branch.name}. Back on ${branch.from.base}.` })
       if (note) this.log(s, { kind: 'error', text: note })
+      return review.id
     } catch (err) {
       clip?.abort()
       const message = err instanceof Error ? err.message : String(err)
       this.log(s, { kind: 'error', text: `Couldn't wrap up the task branch ${branch.name}: ${message}. Your work is still on that branch; check the Changes tab.` })
+      return null
     }
   }
 
