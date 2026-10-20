@@ -9,6 +9,7 @@ import type {
   GitStatus,
   Project,
   ProjectSettings,
+  Review,
   Role
 } from './types'
 
@@ -41,6 +42,21 @@ export const IPC = {
   gitRevertFile: 'git:revertFile',
   gitInit: 'git:init',
   costsSummary: 'costs:summary',
+  reviewsList: 'reviews:list',
+  reviewsDiff: 'reviews:diff',
+  reviewsMerge: 'reviews:merge',
+  reviewsDiscard: 'reviews:discard',
+  reviewsCheckout: 'reviews:checkout',
+  reviewsCheckoutBase: 'reviews:checkoutBase',
+  reviewsClipFile: 'reviews:clipFile',
+  reviewsPublish: 'reviews:publish',
+  testPlaceKeyStatus: 'testPlaceKey:status',
+  testPlaceKeySet: 'testPlaceKey:set',
+  testPlaceKeyClear: 'testPlaceKey:clear',
+  remoteStatus: 'remote:status',
+  remoteSet: 'remote:set',
+  remotePair: 'remote:pair',
+  remoteUnpair: 'remote:unpair',
   agentEvent: 'agent:event'
 } as const
 
@@ -48,6 +64,17 @@ export interface KeyStatus {
   hasKey: boolean
   /** False when the OS cannot encrypt secrets; the key is then not saved to disk. */
   encryptionAvailable: boolean
+}
+
+export interface RemoteStatus {
+  enabled: boolean
+  port: number
+  /** URL to open on the phone once `tailscale serve` is set up, if Hangar could detect it. */
+  url: string | null
+  /** The command that exposes Hangar to your own Tailscale devices (HTTPS, tailnet only). */
+  serveCommand: string
+  devices: { id: string; name: string; pairedAt: number; lastSeen: number | null }[]
+  pushReady: boolean
 }
 
 export interface HangarApi {
@@ -78,7 +105,7 @@ export interface HangarApi {
   }
   agents: {
     snapshot(projectId: string): Promise<AgentState[]>
-    send(projectId: string, agentId: string, prompt: string): Promise<void>
+    send(projectId: string, agentId: string, prompt: string, opts?: { record?: boolean }): Promise<void>
     stop(projectId: string, agentId: string): Promise<void>
     stopAll(): Promise<void>
     clearQueue(projectId: string, agentId: string): Promise<void>
@@ -97,6 +124,30 @@ export interface HangarApi {
   }
   costs: {
     summary(): Promise<CostSummary>
+  }
+  reviews: {
+    list(projectId: string): Promise<Review[]>
+    diff(reviewId: string): Promise<string>
+    merge(reviewId: string): Promise<Review>
+    discard(reviewId: string): Promise<Review>
+    /** Switch the project folder to the review's branch so you can try it in Studio. */
+    checkout(reviewId: string): Promise<void>
+    checkoutBase(projectId: string): Promise<void>
+    /** A clip file as a data: URL for display. */
+    clipFile(reviewId: string, index: number): Promise<string>
+    publish(reviewId: string): Promise<Review>
+  }
+  testPlaceKey: {
+    status(projectId: string): Promise<{ hasKey: boolean }>
+    set(projectId: string, key: string): Promise<{ hasKey: boolean }>
+    clear(projectId: string): Promise<{ hasKey: boolean }>
+  }
+  remote: {
+    status(): Promise<RemoteStatus>
+    set(patch: { enabled?: boolean }): Promise<RemoteStatus>
+    /** Start pairing: returns a 6-digit code valid for 5 minutes. */
+    pair(): Promise<{ code: string; expiresAt: number }>
+    unpair(deviceId: string): Promise<RemoteStatus>
   }
   onAgentEvent(listener: (event: AgentEvent) => void): () => void
 }

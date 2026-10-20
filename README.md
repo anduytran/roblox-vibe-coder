@@ -15,6 +15,39 @@ Built for personal use first; packaging for a downloadable installer is set up b
 - **Spending controls** — per-task limit, daily limit across projects, optional daily limit per project, and a **Stop all agents** button.
 - **Sessions resume** — each agent continues its conversation across tasks and app restarts until you click *New session*.
 
+## Autonomous mode
+
+Turn it on per project (Project settings → Autonomous mode). Agents then work without asking inside the fence — edits in the project, sandboxed shell commands, and Studio's playtest tools (start/stop play, simulated input, running test code) — and you review results instead of approving steps:
+
+- Each task runs on its own git branch (`hangar/<agent>-<task>-<id>`) created from your current branch. When it finishes, Hangar commits the work to that branch (as "Hangar (<agent>)"), switches back, and the task appears in the **Reviews** tab with the agent's report, the diff, and a playtest clip if you asked for one.
+- **Merge** squashes it into your branch as one commit; **Discard** deletes the branch; **Try it in Studio** switches your project folder to the branch so Rojo syncs it into Studio.
+- Tasks in an autonomous project run one at a time (they share your folder and Studio). The project needs git with a first commit and no uncommitted changes when a task starts.
+- Still asking (from your desktop or phone): anything outside the project, network access, protected files, Toolbox assets, Studio's web fetch and AI generation, and — on Windows, where there's no sandbox — shell commands.
+
+## Phone remote
+
+Settings → Phone remote. Hangar listens on `127.0.0.1` only; one command makes it reachable from your own Tailscale devices over HTTPS (never the public internet):
+
+```bash
+tailscale serve --bg --https=443 127.0.0.1:47621
+```
+
+Never use `tailscale funnel` for this (that would expose it to the internet). Open the shown `https://<computer>.<tailnet>.ts.net/` address on your phone, add it to your Home Screen, and pair it with the 6-digit code from "Pair a phone". From the phone you can see every project and agent, queue tasks (with "Record playtest"), approve or deny everyday actions, review/merge/discard finished tasks, publish them to your test place, and stop all agents. Turn on notifications in the phone app's Settings tab (on iPhone, open it from the Home Screen first). Settings, permission rules and high-risk approvals can only be changed on the computer.
+
+## Playtest clips
+
+Tick **Record playtest** when queueing a task. While the agent playtests, Hangar records only the Studio window (up to 30 s) and attaches the clip to the review:
+
+- macOS: uses the built-in `screencapture`; grant Hangar Screen Recording and Accessibility permission when asked. Install `ffmpeg` (`brew install ffmpeg`) for smaller .mp4 files.
+- Windows: needs `ffmpeg` (`winget install ffmpeg`).
+- If recording isn't possible, the screenshots the agent takes during the playtest are shown as a slideshow instead.
+
+Recording captures the Studio window's area of your screen, so anything overlapping it is captured too. Clips are stored in Hangar's data folder (never your project or git) and deleted when you merge or discard the task.
+
+## Test place publishing
+
+Project settings → Test place: enter the universe and place ID of a **private test place** (not your live game) and a Roblox Open Cloud API key created with only the `universe-places` Write permission for that game. On a review, **Publish to test place** builds that branch with Rojo in a temporary folder and uploads it; then open the place in the Roblox app on your phone. Agents can never publish — only your tap does.
+
 ## Requirements
 
 - Node.js 20 or newer

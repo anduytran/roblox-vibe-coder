@@ -10,6 +10,7 @@ import { CostTracker } from '../src/main/costs'
 import { ProjectRegistry } from '../src/main/projects'
 import { installTemplates } from '../src/main/roles'
 import { convertMessage } from '../src/main/sdkMessages'
+import { ReviewStore } from '../src/main/reviews'
 
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms))
@@ -21,12 +22,13 @@ async function until(cond: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-function setup(opts: { max?: number; key?: string | null; daily?: number | null; autoTrust?: boolean; platform?: NodeJS.Platform } = {}) {
+function setup(opts: { max?: number; key?: string | null; daily?: number | null; autoTrust?: boolean; platform?: NodeJS.Platform; onRun?: (prompt: string, cwd: string) => void; autoRelease?: boolean } = {}) {
   const dir = tmp('hangar-run-proj-')
   installTemplates(dir)
   const registry = new ProjectRegistry(join(tmp('hangar-run-'), 'projects.json'))
   const project = registry.add(dir)
   const costs = new CostTracker(join(tmp('hangar-run-'), 'costs.json'))
+  const reviews = new ReviewStore(join(tmp('hangar-run-'), 'reviews.json'))
   const settings: AppSettings = {
     defaultModel: 'claude-sonnet-5-5',
     maxConcurrentRuns: opts.max ?? 2,
@@ -34,7 +36,8 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
     globalDailyBudgetUsd: opts.daily === undefined ? null : opts.daily,
     studioMcpCommand: '',
     studioMcpArgs: [],
-    hideKeyFromAgents: false
+    hideKeyFromAgents: false,
+    rojoCommand: 'rojo'
   }
   const events: AgentEvent[] = []
   const calls: { prompt: string; options: Record<string, unknown>; release: () => void }[] = []
@@ -56,7 +59,8 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
           const r = await canUseTool('Edit', { file_path: 'src/x.luau' }, { signal: ac.signal })
           yield { type: 'assistant', message: { content: [{ type: 'text', text: `edit ${r.behavior}` }] } }
         }
-        await gate
+        opts.onRun?.(prompt, options.cwd as string)
+        if (!opts.autoRelease) await gate
         // Like the real SDK: an aborted run throws instead of finishing.
         if ((options.abortController as AbortController).signal.aborted) throw new Error('aborted')
         yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'rojo build' } }] } }
@@ -83,10 +87,11 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
     persistFile: join(tmp('hangar-run-'), 'agents.json'),
     trustFile: join(tmp('hangar-run-'), 'trust.json'),
     appDataDir: '/fake/appdata/Hangar',
+    reviews,
     platform: opts.platform ?? 'darwin'
   })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
-  return { runner, project, registry, costs, events, calls, status, maxActive: () => maxActive }
+  return { runner, project, registry, costs, events, calls, status, reviews, maxActive: () => maxActive }
 }
 
 test('agents list the main agent plus role files', () => {
@@ -311,6 +316,18 @@ test('sandbox: auto-run only when the project auto-approves edits; domains are p
   const sb = (calls[0]!.options.settings as { sandbox: Record<string, any> }).sandbox
   assert.equal(sb.autoAllowBashIfSandboxed, true)
   assert.deepEqual(sb.network.allowedDomains, ['api.github.com'])
+  calls[0]!.release()
+  await until(() => status('main') === 'idle')
+})
+
+test('audit: sandbox blocks all writes to .git and protected names at any depth', async () => {
+  const { runner, project, calls, status } = setup()
+  runner.send(project.id, 'main', 'go')
+  await until(() => calls.length === 1)
+  const dw = (calls[0]!.options.settings as { sandbox: { filesystem: { denyWrite: string[] } } }).sandbox.filesystem.denyWrite
+  assert.ok(dw.includes(join(project.path, '.git')))
+  assert.ok(dw.includes(join(project.path, '**', '.gitattributes')))
+  assert.ok(dw.includes(join(project.path, '**', '.gitignore')))
   calls[0]!.release()
   await until(() => status('main') === 'idle')
 })

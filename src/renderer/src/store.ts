@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, CostSummary, Project, Role } from '@shared/types'
+import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, CostSummary, Project, Review, Role } from '@shared/types'
 
 export interface StoreState {
   ready: boolean
@@ -9,6 +9,8 @@ export interface StoreState {
   /** projectId -> agentId -> state */
   agents: Record<string, Record<string, AgentState>>
   roles: Record<string, Role[]>
+  /** projectId -> reviews (newest first) */
+  reviews: Record<string, Review[]>
   approvals: ApprovalRequest[]
   costs: CostSummary
   settings: AppSettings | null
@@ -22,6 +24,7 @@ let state: StoreState = {
   selectedProjectId: null,
   agents: {},
   roles: {},
+  reviews: {},
   approvals: [],
   costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} },
   settings: null,
@@ -32,6 +35,7 @@ let state: StoreState = {
 /** Stable empty values so selectors never return a fresh object (which would re-render forever). */
 export const EMPTY_ROLES: Role[] = []
 export const EMPTY_AGENTS: Record<string, AgentState> = {}
+export const EMPTY_REVIEWS: Review[] = []
 
 const listeners = new Set<() => void>()
 
@@ -114,6 +118,12 @@ function applyEvent(e: AgentEvent): void {
     case 'cost':
       set({ costs: e.summary })
       break
+    case 'review':
+      set((s) => {
+        const list = (s.reviews[e.review.projectId] ?? []).filter((r) => r.id !== e.review.id)
+        return { reviews: { ...s.reviews, [e.review.projectId]: [e.review, ...list].sort((a, b) => b.createdAt - a.createdAt) } }
+      })
+      break
   }
 }
 
@@ -140,10 +150,10 @@ export function initStore(): void {
 }
 
 export async function loadProject(projectId: string): Promise<void> {
-  const [agents, roles] = await Promise.all([api().agents.snapshot(projectId), api().roles.list(projectId)])
+  const [agents, roles, reviews] = await Promise.all([api().agents.snapshot(projectId), api().roles.list(projectId), api().reviews.list(projectId)])
   const map: Record<string, AgentState> = {}
   for (const a of agents) map[a.agentId] = a
-  set((s) => ({ agents: { ...s.agents, [projectId]: map }, roles: { ...s.roles, [projectId]: roles } }))
+  set((s) => ({ agents: { ...s.agents, [projectId]: map }, roles: { ...s.roles, [projectId]: roles }, reviews: { ...s.reviews, [projectId]: reviews } }))
 }
 
 export function selectProject(id: string | null): void {
@@ -191,4 +201,8 @@ export function setSettings(settings: AppSettings): void {
 
 export function setKey(key: KeyStatus): void {
   set({ key })
+}
+
+export function replaceReview(r: Review): void {
+  set((s) => ({ reviews: { ...s.reviews, [r.projectId]: (s.reviews[r.projectId] ?? []).map((x) => (x.id === r.id ? r : x)) } }))
 }

@@ -30,6 +30,22 @@ const STUDIO_READ_TOOLS = new Set([
   'list_roblox_studios'
 ])
 
+/**
+ * Studio tools an autonomous agent may use without asking: playtesting, running test scripts in play
+ * mode (changes are thrown away when play stops) and simulated player input. Still asking: running
+ * Luau in edit mode (execute_luau can rewrite scripts, insert assets or use the network outside git
+ * review), inserting Toolbox assets (common source of backdoor scripts), AI generation, uploads,
+ * Studio's own web fetch, and direct script edits.
+ */
+const STUDIO_AUTONOMOUS_TOOLS = new Set([
+  'start_stop_play',
+  'get_studio_mode',
+  'run_script_in_play_mode',
+  'character_navigation',
+  'user_keyboard_input',
+  'user_mouse_input'
+])
+
 // ---------- shell commands ----------
 
 /**
@@ -173,8 +189,10 @@ export function evaluateToolUse(args: {
   if (READ_TOOLS.has(toolName)) return { action: 'allow' }
 
   const studioPrefix = `mcp__${STUDIO_MCP_NAME}__`
-  if (settings.robloxStudioMcp && toolName.startsWith(studioPrefix) && STUDIO_READ_TOOLS.has(toolName.slice(studioPrefix.length))) {
-    return { action: 'allow' }
+  if (settings.robloxStudioMcp && toolName.startsWith(studioPrefix)) {
+    const tool = toolName.slice(studioPrefix.length)
+    if (STUDIO_READ_TOOLS.has(tool)) return { action: 'allow' }
+    if (settings.autonomous && STUDIO_AUTONOMOUS_TOOLS.has(tool)) return { action: 'allow' }
   }
 
   if (EDIT_TOOLS.has(toolName)) {
@@ -182,7 +200,7 @@ export function evaluateToolUse(args: {
     if (protectedRel) {
       return ask(`Edits ${protectedRel}, which controls how code or agents run. A change here could let an agent run commands later.`, true)
     }
-    if (settings.autoApproveEdits || settings.alwaysAllowTools.includes(toolName)) return { action: 'allow' }
+    if (settings.autonomous || settings.autoApproveEdits || settings.alwaysAllowTools.includes(toolName)) return { action: 'allow' }
     return ask('Edits a file in the project')
   }
 

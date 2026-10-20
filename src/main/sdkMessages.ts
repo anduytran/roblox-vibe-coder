@@ -11,6 +11,9 @@ interface ContentBlock {
   input?: Record<string, unknown>
   content?: unknown
   is_error?: boolean
+  id?: string
+  tool_use_id?: string
+  source?: { type?: string; media_type?: string; data?: string }
 }
 
 export interface StreamMessage {
@@ -34,6 +37,12 @@ export interface Converted {
   costUsd?: number
   activity?: string | null
   finished?: { ok: boolean; error?: string }
+  /** Tool calls in this message (used to notice playtests starting and stopping). */
+  toolUses?: { id: string; name: string; input: Record<string, unknown> }[]
+  /** Images returned by tools, with the id of the tool call that produced them. */
+  images?: { toolUseId: string; mediaType: string; data: string }[]
+  /** The assistant's latest text, for the review summary. */
+  text?: string
 }
 
 const MAX_TEXT = 4000
@@ -86,10 +95,12 @@ export function convertMessage(msg: StreamMessage): Converted {
         if (block.type === 'text' && block.text?.trim()) {
           push('assistant', sub + clip(block.text.trim(), MAX_TEXT))
           out.activity = 'Writing…'
+          if (!msg.parent_tool_use_id) out.text = block.text.trim()
         } else if (block.type === 'tool_use' && block.name) {
           const summary = summarizeToolUse(block.name, block.input ?? {})
           push('tool_use', sub + summary, block.name)
           out.activity = summary
+          ;(out.toolUses ??= []).push({ id: block.id ?? '', name: block.name, input: block.input ?? {} })
         }
       }
       break
@@ -99,6 +110,13 @@ export function convertMessage(msg: StreamMessage): Converted {
       if (!Array.isArray(content)) break
       for (const block of content) {
         if (block.type !== 'tool_result') continue
+        if (Array.isArray(block.content)) {
+          for (const c of block.content as ContentBlock[]) {
+            if (c?.type === 'image' && c.source?.type === 'base64' && typeof c.source.data === 'string' && /^image\/(png|jpeg|webp)$/.test(c.source.media_type ?? '')) {
+              ;(out.images ??= []).push({ toolUseId: block.tool_use_id ?? '', mediaType: c.source.media_type!, data: c.source.data })
+            }
+          }
+        }
         const text = toolResultText(block.content).trim()
         if (!text && !block.is_error) continue
         push(block.is_error ? 'error' : 'tool_result', sub + clip(text || 'Tool error', MAX_RESULT))

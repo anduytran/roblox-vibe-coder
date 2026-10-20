@@ -87,6 +87,7 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
   const allApprovals = useStore((s) => s.approvals)
   const approvals = useMemo(() => allApprovals.filter((a) => a.projectId === project.id && a.agentId === role.id), [allApprovals, project.id, role.id])
   const [draft, setDraft] = useState('')
+  const [record, setRecord] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const log = state?.log ?? []
@@ -101,7 +102,7 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
     const text = draft.trim()
     if (!text) return
     setDraft('')
-    void attempt(() => window.hangar.agents.send(project.id, role.id, text))
+    void attempt(() => window.hangar.agents.send(project.id, role.id, text, { record }))
   }
 
   return (
@@ -197,6 +198,11 @@ function AgentPanel(props: { project: Project; role: Role; state: AgentState | u
             {project.settings.robloxStudioMcp ? ' · Roblox Studio tools on' : ''}
             {project.settings.sandbox && (window.hangar.platform === 'darwin' || window.hangar.platform === 'linux') ? ' · Sandboxed' : ' · Not sandboxed'}
           </span>
+          {project.settings.robloxStudioMcp && (
+            <label className="record-check" title="Record a short clip of the agent's playtest for the review">
+              <input type="checkbox" checked={record} onChange={(e) => setRecord(e.target.checked)} /> Record playtest
+            </label>
+          )}
           <Button tone="primary" disabled={!draft.trim()} onClick={send}>
             {busy ? 'Queue' : 'Send'}
           </Button>

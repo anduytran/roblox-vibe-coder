@@ -13,7 +13,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   dailyBudgetUsd: null,
   model: null,
   sandbox: true,
-  sandboxAllowedDomains: []
+  sandboxAllowedDomains: [],
+  autonomous: false,
+  testPlace: null
 }
 
 export class ProjectRegistry {
@@ -77,6 +79,11 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     dailyBudgetUsd: budget,
     model: typeof s.model === 'string' && s.model.trim() ? s.model.trim() : null,
     sandbox: s.sandbox !== false,
+    autonomous: Boolean(s.autonomous),
+    testPlace:
+      s.testPlace && /^\d{1,20}$/.test(String(s.testPlace.universeId)) && /^\d{1,20}$/.test(String(s.testPlace.placeId))
+        ? { universeId: String(s.testPlace.universeId), placeId: String(s.testPlace.placeId) }
+        : null,
     sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d))
   }
 }

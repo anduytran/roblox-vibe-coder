@@ -8,6 +8,12 @@ import { CostTracker } from './costs'
 import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus } from './git'
 import { JsonStore } from './jsonStore'
 import { KeyProxy } from './keyProxy'
+import { StudioClipRecorder } from './clips'
+import { RemoteServer } from './remote'
+import { ReviewActions } from './reviewActions'
+import { ReviewStore } from './reviews'
+import { TestPlacePublisher } from './testPlace'
+import { TestPlaceKeys } from './testPlaceKeys'
 import { ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, saveRole } from './roles'
 import { SecretStore } from './secrets'
@@ -19,7 +25,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   globalDailyBudgetUsd: 20,
   studioMcpCommand: '',
   studioMcpArgs: [],
-  hideKeyFromAgents: true
+  hideKeyFromAgents: true,
+  rojoCommand: 'rojo'
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -115,6 +122,7 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   if (typeof patch.studioMcpCommand === 'string') next.studioMcpCommand = patch.studioMcpCommand.trim()
   if (Array.isArray(patch.studioMcpArgs)) next.studioMcpArgs = patch.studioMcpArgs.filter((a): a is string => typeof a === 'string')
   if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
+  if (typeof patch.rojoCommand === 'string' && patch.rojoCommand.trim()) next.rojoCommand = patch.rojoCommand.trim().slice(0, 500)
   return next
 }
 
@@ -125,8 +133,12 @@ app.whenReady().then(() => {
   const costs = new CostTracker(join(dataDir(), 'costs.json'))
   const keyProxy = new KeyProxy(() => secrets.getKey())
 
+  const reviews = new ReviewStore(join(dataDir(), 'reviews.json'), (r) => r.clip && StudioClipRecorder.remove(r.clip.files))
+  const testPlaceKeys = new TestPlaceKeys(dataDir())
+  let remote: RemoteServer | null = null
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
+    remote?.onEvent(event)
   }
 
   const runner = new AgentRunner({
@@ -135,8 +147,8 @@ app.whenReady().then(() => {
     emit,
     getSettings: () => settings.get(),
     getApiKey: () => secrets.getKey(),
-    engineAuth: async (apiKey): Promise<{ env: Record<string, string>; release: () => void }> => {
-      if (!settings.get().hideKeyFromAgents) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
+    engineAuth: async (apiKey, opts): Promise<{ env: Record<string, string>; release: () => void }> => {
+      if (!settings.get().hideKeyFromAgents && !opts.forceHideKey) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
       await keyProxy.start()
       const token = keyProxy.issueToken()
       return {
@@ -147,11 +159,23 @@ app.whenReady().then(() => {
     persistFile: join(dataDir(), 'agents.json'),
     trustFile: join(dataDir(), 'trusted-project-config.json'),
     appDataDir: dataDir(),
+    reviews,
+    clips: new StudioClipRecorder(join(dataDir(), 'clips')),
     loadQuery: async () => {
       const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
       return sdk.query
     }
   })
+
+  const reviewActions = new ReviewActions({
+    registry,
+    reviews,
+    runner,
+    emit,
+    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => settings.get().rojoCommand, workDir: join(dataDir(), 'builds') })
+  })
+  remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs })
+  void remote.start().catch(() => undefined)
 
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void => {
     ipcMain.handle(channel, guard(fn))
@@ -212,8 +236,8 @@ app.whenReady().then(() => {
 
   // Agents
   handle(IPC.agentsSnapshot, (id: unknown) => runner.snapshot(str(id, 'project')))
-  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown) =>
-    runner.send(str(id, 'project'), str(agentId, 'agent'), str(prompt, 'prompt'))
+  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown, opts?: { record?: unknown }) =>
+    runner.send(str(id, 'project'), str(agentId, 'agent'), str(prompt, 'prompt'), { record: opts?.record === true })
   )
   handle(IPC.agentsStop, (id: unknown, agentId: unknown) => runner.stop(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsStopAll, () => runner.stopAll())
@@ -243,6 +267,25 @@ app.whenReady().then(() => {
   // Costs
   handle(IPC.costsSummary, () => costs.summary())
 
+  // Reviews (autonomous task branches)
+  handle(IPC.reviewsList, (id: unknown) => reviewActions.list(str(id, 'project')))
+  handle(IPC.reviewsDiff, (id: unknown) => reviewActions.diff(str(id, 'review')))
+  handle(IPC.reviewsMerge, (id: unknown) => reviewActions.merge(str(id, 'review')))
+  handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))
+  handle(IPC.reviewsCheckout, (id: unknown) => reviewActions.checkout(str(id, 'review')))
+  handle(IPC.reviewsCheckoutBase, (id: unknown) => reviewActions.checkoutBase(str(id, 'project')))
+  handle(IPC.reviewsClipFile, (id: unknown, index: unknown) => reviewActions.clipFile(str(id, 'review'), Number(index)))
+  handle(IPC.reviewsPublish, (id: unknown) => reviewActions.publish(str(id, 'review')))
+  handle(IPC.testPlaceKeyStatus, (id: unknown) => testPlaceKeys.status(str(id, 'project')))
+  handle(IPC.testPlaceKeySet, (id: unknown, key: unknown) => testPlaceKeys.set(str(id, 'project'), str(key, 'key')))
+  handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))
+
+  // Phone remote
+  handle(IPC.remoteStatus, () => remote!.status())
+  handle(IPC.remoteSet, (patch: { enabled?: unknown }) => remote!.setEnabled(patch?.enabled === true))
+  handle(IPC.remotePair, () => remote!.startPairing())
+  handle(IPC.remoteUnpair, (id: unknown) => remote!.unpair(str(id, 'device')))
+
   mainWindow = createWindow()
 
   app.on('second-instance', () => {
@@ -257,6 +300,7 @@ app.whenReady().then(() => {
   app.on('before-quit', () => {
     runner.stopAll()
     keyProxy.stop()
+    remote?.stop()
   })
 })
 

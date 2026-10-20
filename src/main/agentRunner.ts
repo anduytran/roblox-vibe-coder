@@ -7,11 +7,15 @@ import type {
   ApprovalRequest,
   LogEntry,
   Project,
+  QueuedTask,
+  Review,
   Role
 } from '@shared/types'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
-import { gitSafetyEnv } from './git'
+import { finishTaskBranch, gitSafetyEnv, prepareTaskBase, startTaskBranch, taskBranchName, type TaskBase } from './git'
+import type { ReviewStore } from './reviews'
+import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
 import { readClaudeMd, reviewProject, TrustStore } from './projectTrust'
 import { planSandbox } from './sandbox'
@@ -90,7 +94,7 @@ export interface RunnerDeps {
    * Credentials for one run's engine environment (the real key, or a per-run proxy token and URL).
    * `release` is called when the run ends, revoking the token.
    */
-  engineAuth: (apiKey: string) => Promise<{ env: Record<string, string>; release: () => void }>
+  engineAuth: (apiKey: string, opts: { forceHideKey: boolean }) => Promise<{ env: Record<string, string>; release: () => void }>
   loadQuery: () => Promise<QueryFn>
   emit: (event: AgentEvent) => void
   persistFile: string
@@ -98,7 +102,30 @@ export interface RunnerDeps {
   /** Hangar's own data folder; sandboxed commands may not read it. */
   appDataDir: string
   platform?: NodeJS.Platform
+  reviews: ReviewStore
+  /** Records playtest clips for tasks queued with "Record playtest". Optional (tests, unsupported OS). */
+  clips?: ClipRecorder
 }
+
+export interface ClipSession {
+  onToolUse(name: string, input: Record<string, unknown>): void
+  onImages(images: { mediaType: string; data: string }[]): void
+  finish(): Promise<Review['clip']>
+  abort(): void
+}
+export interface ClipRecorder {
+  begin(opts: { taskId: string; projectPath: string }): ClipSession
+}
+
+/** Added to every agent's instructions in autonomous mode. */
+const AUTONOMOUS_INSTRUCTIONS = `
+# Autonomous mode
+You are working unattended. The user reviews your finished work later as one change on a git branch.
+- Don't ask the user questions; make sensible decisions and note any important assumptions in your final message.
+- Work only inside this project folder. Don't install packages or tools; if you need one, say so in your final message.
+- Don't run git commands that change branches, history or config (checkout, switch, reset, commit, rebase, config). Hangar commits your work for you.
+- Test your work: build, lint, and playtest in Roblox Studio when its tools are available. Fix problems you find.
+- Finish with a short report: what you changed, how you tested it, and anything the user should check.`
 
 const keyOf = (projectId: string, agentId: string): string => `${projectId}:${agentId}`
 
@@ -109,6 +136,8 @@ export class AgentRunner {
   /** Global arrival order of queued tasks, so the oldest task anywhere runs next (timestamps can tie). */
   private order = new WeakMap<object, number>()
   private seq = 0
+  /** Projects whose finished task is still being committed and switched back to the base branch. */
+  private wrapping = new Set<string>()
   private persisted: JsonStore<Persisted>
   private trust: TrustStore
 
@@ -181,13 +210,19 @@ export class AgentRunner {
 
   // ---------- commands ----------
 
-  send(projectId: string, agentId: string, prompt: string): void {
+  /** True while any agent in the project is running (the working tree may be changing). */
+  projectBusy(projectId: string): boolean {
+    if (this.wrapping.has(projectId)) return true
+    return [...this.states.values()].some((s) => s.projectId === projectId && (s.status === 'working' || s.status === 'awaiting_approval'))
+  }
+
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
     if (!this.agentIds(project).includes(agentId)) throw new Error('Unknown agent.')
     const s = this.state(projectId, agentId)
-    const task = { id: randomUUID(), prompt: text.slice(0, 20000), createdAt: Date.now() }
+    const task: QueuedTask = { id: randomUUID(), prompt: text.slice(0, 20000), createdAt: Date.now(), ...(opts.record ? { record: true } : {}) }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
     if (s.status === 'error' || s.status === 'stopped' || s.status === 'idle') {
@@ -281,16 +316,27 @@ export class AgentRunner {
     while (this.runningCount() < max) {
       const next = [...this.states.values()]
         .filter((s) => s.status === 'queued' && s.queue.length > 0)
+        // In autonomous mode a project works on one branch at a time, so its tasks run one after another.
+        .filter((s) => !(this.isAutonomous(s.projectId) && this.projectBusy(s.projectId)))
         .sort((a, b) => (this.order.get(a.queue[0]!) ?? 0) - (this.order.get(b.queue[0]!) ?? 0))[0]
       if (!next) return
       const task = next.queue.shift()!
       next.status = 'working'
       this.publish(next)
-      void this.run(next, task.prompt).finally(() => this.schedule())
+      void this.run(next, task).finally(() => this.schedule())
     }
   }
 
-  private async run(s: AgentState, prompt: string): Promise<void> {
+  private isAutonomous(projectId: string): boolean {
+    try {
+      return this.deps.registry.get(projectId).settings.autonomous
+    } catch {
+      return false
+    }
+  }
+
+  private async run(s: AgentState, task: QueuedTask): Promise<void> {
+    const prompt = task.prompt
     const key = keyOf(s.projectId, s.agentId)
     this.log(s, { kind: 'user', text: prompt })
     let project: Project
@@ -317,6 +363,10 @@ export class AgentRunner {
     let finished = false
     let started = false
     let releaseAuth: (() => void) | null = null
+    let taskBranch: { name: string; from: TaskBase } | null = null
+    let lastText = ''
+    let clip: ClipSession | null = null
+    const screenshotCalls = new Set<string>()
 
     try {
       // Anything in the folder that would launch programs (MCP servers, git config) needs approval first.
@@ -339,6 +389,15 @@ export class AgentRunner {
         this.trust.approve(project.id, review.hash)
       }
 
+      if (project.settings.autonomous) {
+        const from = await prepareTaskBase(project.path)
+        const name = taskBranchName(s.agentId, prompt, task.id)
+        await startTaskBranch(project.path, name, from)
+        taskBranch = { name, from }
+        this.log(s, { kind: 'system', text: `Autonomous: working on branch ${name} (from ${from.base}). You'll review it when it's done.` })
+      }
+      if (task.record && this.deps.clips) clip = this.deps.clips.begin({ taskId: task.id, projectPath: project.path })
+
       const query = await this.deps.loadQuery()
       const sandbox = planSandbox(project, { platform: this.deps.platform, appDataDir: this.deps.appDataDir })
       this.log(s, {
@@ -347,13 +406,18 @@ export class AgentRunner {
           ? `Sandbox on: shell commands can only change files in this project${project.settings.sandboxAllowedDomains.length ? ` and reach ${project.settings.sandboxAllowedDomains.join(', ')}` : ' and have no network access'}.`
           : `Not sandboxed: ${sandbox.reason}`
       })
-      const auth = await this.deps.engineAuth(apiKey)
+      // Unattended agents never hold the real API key.
+      const auth = await this.deps.engineAuth(apiKey, { forceHideKey: project.settings.autonomous })
       releaseAuth = auth.release
       const allRoles = listRoles(project.path)
       const claudeMd = readClaudeMd(project.path)
       let append = ''
       if (claudeMd) append += `\n\n# Project instructions (CLAUDE.md)\n${claudeMd}`
       if (role) append += `\n\n# Your role: ${role.name}\n${role.prompt}`
+      if (project.settings.autonomous) append += `\n${AUTONOMOUS_INSTRUCTIONS}`
+      if (task.record) {
+        append += `\n\nThis task asks for a recorded playtest. When you playtest the feature, demonstrate it clearly within about 30 seconds, and take a screenshot (screen_capture) at each key moment.`
+      }
       const options: Record<string, unknown> = {
         cwd: project.path,
         model: role?.model ?? project.settings.model ?? settings.defaultModel,
@@ -383,6 +447,16 @@ export class AgentRunner {
       for await (const raw of query({ prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
         if (c.sessionId) s.sessionId = c.sessionId
+        if (c.text) lastText = c.text
+        if (clip) {
+          for (const t of c.toolUses ?? []) {
+            clip.onToolUse(t.name, t.input)
+            if (/__screen_capture$/.test(t.name) && t.id) screenshotCalls.add(t.id)
+          }
+          // Only Studio screenshots become clip frames, never other tools' images.
+          const shots = (c.images ?? []).filter((img) => screenshotCalls.has(img.toolUseId))
+          if (shots.length) clip.onImages(shots)
+        }
         for (const e of c.entries) this.log(s, e)
         if (c.activity !== undefined) {
           s.activity = c.activity
@@ -429,9 +503,61 @@ export class AgentRunner {
       releaseAuth?.()
       this.controllers.delete(key)
       this.denyPendingFor(s.projectId, s.agentId, 'Run ended')
+      if (taskBranch) {
+        this.wrapping.add(project.id)
+        try {
+          await this.finishTask(s, project, task, taskBranch, lastText, clip, finished && !s.lastError && !controller.signal.aborted)
+        } finally {
+          this.wrapping.delete(project.id)
+        }
+      } else clip?.abort()
       s.activity = null
       this.save(s)
       this.publish(s)
+    }
+  }
+
+  /** Commit the task's work to its branch, switch back, and turn it into a review (or note there was nothing). */
+  private async finishTask(
+    s: AgentState,
+    project: Project,
+    task: QueuedTask,
+    branch: { name: string; from: TaskBase },
+    lastText: string,
+    clip: ClipSession | null,
+    completed: boolean
+  ): Promise<void> {
+    const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
+    const title = task.prompt.split('\n')[0]!.slice(0, 120)
+    try {
+      const { files, headSha, note } = await finishTaskBranch(project.path, branch.name, branch.from, roleName, `${roleName}: ${title}`)
+      const clipResult = clip ? await clip.finish().catch(() => null) : null
+      if (files.length === 0 || !headSha) {
+        if (clipResult) StudioClipRecorder.remove(clipResult.files)
+        this.log(s, { kind: 'system', text: `No files changed, so there's nothing to review. Back on ${branch.from.base}.${note ? ` ${note}` : ''}` })
+        return
+      }
+      const review = this.deps.reviews.add({
+        projectId: project.id,
+        agentId: s.agentId,
+        title,
+        branch: branch.name,
+        base: branch.from.base,
+        baseSha: branch.from.baseSha,
+        headSha,
+        summary: lastText.slice(0, 8000),
+        files,
+        incomplete: completed ? null : (s.lastError ?? 'The run was stopped before it finished.'),
+        note,
+        clip: clipResult
+      })
+      this.deps.emit({ type: 'review', review })
+      this.log(s, { kind: 'system', text: `Ready for review: ${files.length} file${files.length === 1 ? '' : 's'} changed on ${branch.name}. Back on ${branch.from.base}.` })
+      if (note) this.log(s, { kind: 'error', text: note })
+    } catch (err) {
+      clip?.abort()
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(s, { kind: 'error', text: `Couldn't wrap up the task branch ${branch.name}: ${message}. Your work is still on that branch; check the Changes tab.` })
     }
   }
 

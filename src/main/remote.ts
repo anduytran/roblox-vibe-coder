@@ -1,0 +1,414 @@
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { createReadStream, statSync } from 'node:fs'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { RemoteStatus } from '@shared/ipc'
+import type { AgentEvent, ApprovalRequest, Review } from '@shared/types'
+import type { AgentRunner } from './agentRunner'
+import type { CostTracker } from './costs'
+import { JsonStore } from './jsonStore'
+import { PHONE_FILES } from './phoneApp'
+import type { ProjectRegistry } from './projects'
+import { generateVapidKeys, sendPush, validSubscription, type PushSubscription, type VapidKeys } from './push'
+import type { ReviewActions } from './reviewActions'
+import { listRoles } from './roles'
+import { shellWords } from './permissions'
+
+/**
+ * Phone remote. Hangar listens on 127.0.0.1 only; `tailscale serve` makes it reachable over HTTPS
+ * from your own Tailscale devices (never the public internet).
+ *
+ * - Pairing: a 6-digit code shown on the desktop for 5 minutes, 5 attempts max; the phone receives a
+ *   random device token, of which only a hash is stored. Unpair any device from the desktop.
+ * - The phone can: see status, queue tasks, approve/deny normal approvals, review/merge/discard/publish
+ *   finished tasks, and stop all agents. It can never change settings, rules or permissions, never
+ *   choose "always allow", and high-risk (red) approvals must be approved on the computer.
+ * - Every API call needs the device token in an Authorization header (no cookies, so no CSRF);
+ *   Host and Origin are checked; bodies are size-limited; responses carry a strict CSP.
+ */
+const DEFAULT_PORT = 47621
+const MAX_BODY = 64 * 1024
+const PAIR_TTL_MS = 5 * 60 * 1000
+
+interface Device {
+  id: string
+  name: string
+  tokenHash: string
+  pairedAt: number
+  lastSeen: number | null
+  push: PushSubscription | null
+}
+
+interface RemoteData {
+  enabled: boolean
+  port: number
+  devices: Device[]
+  vapid: VapidKeys | null
+}
+
+const hash = (token: string): string => createHash('sha256').update(token).digest('hex')
+const MAX_PHONE_SUMMARY = 2000
+
+/**
+ * Whether an approval may be allowed from the phone: not high-risk, shown in full (nothing cut off),
+ * and for shell commands only plain ones (no quotes, variables, chaining or redirection) — anything
+ * trickier is easier to misjudge on a small screen, so it stays on the computer.
+ */
+export function phoneCanApprove(r: ApprovalRequest): boolean {
+  if (r.dangerous || r.truncated || r.summary.length > MAX_PHONE_SUMMARY) return false
+  if (r.toolName === 'Bash') return shellWords(r.summary.replace(/^\$ /, '')) !== null
+  return true
+}
+
+function findTailscale(): Promise<string | null> {
+  const candidates = process.platform === 'darwin' ? ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'] : ['tailscale']
+  return new Promise((resolveFind) => {
+    const tryNext = (i: number): void => {
+      if (i >= candidates.length) return resolveFind(null)
+      execFile(candidates[i]!, ['status', '--json'], { timeout: 5000, windowsHide: true }, (err, out) => {
+        if (err) return tryNext(i + 1)
+        try {
+          const dns = (JSON.parse(String(out)) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, '')
+          resolveFind(dns && /^[a-z0-9.-]+\.ts\.net$/i.test(dns) ? dns : null)
+        } catch {
+          resolveFind(null)
+        }
+      })
+    }
+    tryNext(0)
+  })
+}
+
+export class RemoteServer {
+  private store: JsonStore<RemoteData>
+  private server: Server | null = null
+  private pairing: { code: string; expiresAt: number; attempts: number } | null = null
+  private tailnetHost: string | null = null
+  private rate = new Map<string, number[]>()
+  private notifyTimer: NodeJS.Timeout | null = null
+  private pendingNotes: { title: string; body: string }[] = []
+
+  constructor(
+    file: string,
+    private readonly deps: {
+      registry: ProjectRegistry
+      runner: AgentRunner
+      reviews: ReviewActions
+      costs: CostTracker
+    }
+  ) {
+    this.store = new JsonStore<RemoteData>(file, { enabled: false, port: DEFAULT_PORT, devices: [], vapid: null })
+  }
+
+  // ---------- desktop controls ----------
+
+  async status(): Promise<RemoteStatus> {
+    const d = this.store.get()
+    if (d.enabled && !this.tailnetHost) this.tailnetHost = await findTailscale()
+    return {
+      enabled: d.enabled,
+      port: d.port,
+      url: this.tailnetHost ? `https://${this.tailnetHost}/` : null,
+      serveCommand: `tailscale serve --bg --https=443 127.0.0.1:${d.port}`,
+      devices: d.devices.map((x) => ({ id: x.id, name: x.name, pairedAt: x.pairedAt, lastSeen: x.lastSeen })),
+      pushReady: d.devices.some((x) => x.push !== null)
+    }
+  }
+
+  async setEnabled(enabled: boolean): Promise<RemoteStatus> {
+    this.store.update((d) => ({ ...d, enabled, vapid: d.vapid ?? generateVapidKeys() }))
+    if (enabled) await this.start()
+    else this.stop()
+    return this.status()
+  }
+
+  startPairing(): { code: string; expiresAt: number } {
+    if (!this.store.get().enabled) throw new Error('Turn on the phone remote first.')
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+    this.pairing = { code, expiresAt: Date.now() + PAIR_TTL_MS, attempts: 0 }
+    return { code, expiresAt: this.pairing.expiresAt }
+  }
+
+  async unpair(deviceId: string): Promise<RemoteStatus> {
+    this.store.update((d) => ({ ...d, devices: d.devices.filter((x) => x.id !== deviceId) }))
+    return this.status()
+  }
+
+  async start(): Promise<void> {
+    const d = this.store.get()
+    if (!d.enabled || this.server) return
+    const server = createServer((req, res) => {
+      this.handle(req, res).catch((e: Error) => this.json(res, 500, { error: e.message }))
+    })
+    server.requestTimeout = 30_000
+    await new Promise<void>((resolveStart, reject) => {
+      server.once('error', reject)
+      server.listen(d.port, '127.0.0.1', () => resolveStart())
+    })
+    this.server = server
+    this.tailnetHost = await findTailscale()
+  }
+
+  stop(): void {
+    this.server?.close()
+    this.server = null
+  }
+
+  // ---------- notifications ----------
+
+  /** Called with every agent event; sends a push to paired phones for the ones that need you. */
+  onEvent(e: AgentEvent): void {
+    if (!this.store.get().enabled) return
+    if (e.type === 'approval') {
+      const who = this.agentName(e.request.projectId, e.request.agentId)
+      this.queueNote(
+        e.request.dangerous ? `${who} needs you at your computer` : `${who} needs approval`,
+        e.request.dangerous ? 'A high-risk action is waiting (approve it on your computer).' : e.request.summary.slice(0, 140)
+      )
+    } else if (e.type === 'review' && e.review.status === 'pending') {
+      const who = this.agentName(e.review.projectId, e.review.agentId)
+      this.queueNote(`${who} finished: ${e.review.title.slice(0, 60)}`, `${e.review.files.length} file${e.review.files.length === 1 ? '' : 's'} changed${e.review.incomplete ? ' (stopped early)' : ''}. Tap to review.`)
+    } else if (e.type === 'state' && e.state.status === 'error' && e.state.lastError) {
+      this.queueNote(`${this.agentName(e.state.projectId, e.state.agentId)} hit a problem`, e.state.lastError.slice(0, 140))
+    }
+  }
+
+  private queueNote(title: string, body: string): void {
+    this.pendingNotes.push({ title, body })
+    // Coalesce bursts into one notification.
+    this.notifyTimer ??= setTimeout(() => {
+      const notes = this.pendingNotes.splice(0)
+      this.notifyTimer = null
+      const first = notes[0]
+      if (!first) return
+      void this.pushAll(notes.length === 1 ? first : { title: first.title, body: `${first.body} (+${notes.length - 1} more)` })
+    }, 3000)
+  }
+
+  private async pushAll(note: { title: string; body: string }): Promise<void> {
+    const d = this.store.get()
+    if (!d.vapid) return
+    for (const dev of d.devices) {
+      if (!dev.push) continue
+      const result = await sendPush(dev.push, { ...note, url: '/' }, d.vapid)
+      if (result === 'gone') this.store.update((s) => ({ ...s, devices: s.devices.map((x) => (x.id === dev.id ? { ...x, push: null } : x)) }))
+    }
+  }
+
+  // ---------- HTTP ----------
+
+  private json(res: ServerResponse, code: number, body: unknown): void {
+    if (res.headersSent) return
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...this.securityHeaders() })
+    res.end(JSON.stringify(body))
+  }
+
+  private securityHeaders(): Record<string, string> {
+    return {
+      'content-security-policy':
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'x-frame-options': 'DENY'
+    }
+  }
+
+  private hostOk(host: string | undefined): boolean {
+    const port = this.store.get().port
+    if (!host) return false
+    if (host === `127.0.0.1:${port}` || host === `localhost:${port}`) return true
+    // Reached through `tailscale serve`: your own machine's tailnet name.
+    // Only once Hangar knows this computer's own tailnet name (from `tailscale status`).
+    return this.tailnetHost !== null && host.toLowerCase() === this.tailnetHost.toLowerCase()
+  }
+
+  private limited(key: string, max: number, windowMs: number): boolean {
+    const now = Date.now()
+    const hits = (this.rate.get(key) ?? []).filter((t) => now - t < windowMs)
+    hits.push(now)
+    this.rate.set(key, hits)
+    return hits.length > max
+  }
+
+  private async body(req: IncomingMessage): Promise<Record<string, unknown>> {
+    if (!/^application\/json/i.test(req.headers['content-type'] ?? '')) throw new Error('Expected JSON')
+    let size = 0
+    const chunks: Buffer[] = []
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length
+      if (size > MAX_BODY) throw new Error('Request too large')
+      chunks.push(chunk as Buffer)
+    }
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Expected a JSON object')
+    return parsed as Record<string, unknown>
+  }
+
+  private device(req: IncomingMessage): Device | null {
+    const m = /^Bearer ([A-Za-z0-9_-]{20,200})$/.exec(req.headers.authorization ?? '')
+    if (!m) return null
+    const h = Buffer.from(hash(m[1]!))
+    for (const d of this.store.get().devices) {
+      const other = Buffer.from(d.tokenHash)
+      if (other.length === h.length && timingSafeEqual(other, h)) return d
+    }
+    return null
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.hostOk(req.headers.host)) return this.json(res, 421, { error: 'Wrong host' })
+    // Never serve requests that came in through Tailscale Funnel (the public internet).
+    if (req.headers['tailscale-funnel-request'] !== undefined) return this.json(res, 403, { error: 'Not available over Funnel' })
+    const url = new URL(req.url ?? '/', 'http://x')
+    const method = req.method ?? 'GET'
+
+    // Static phone app (no secrets in it).
+    if (method === 'GET' && !url.pathname.startsWith('/api/')) {
+      const file = PHONE_FILES[url.pathname === '/' ? '/index.html' : url.pathname]
+      if (!file) return this.json(res, 404, { error: 'Not found' })
+      res.writeHead(200, { 'content-type': file.type, 'cache-control': 'no-cache', ...this.securityHeaders() })
+      return void res.end(file.body)
+    }
+
+    // Writes must come from the app's own page (or no browser at all).
+    const origin = req.headers.origin
+    if (method !== 'GET' && origin !== undefined) {
+      const host = req.headers.host ?? ''
+      if (origin !== `https://${host}` && origin !== `http://${host}`) return this.json(res, 403, { error: 'Cross-origin request refused' })
+    }
+
+    if (url.pathname === '/api/pair' && method === 'POST') {
+      if (this.limited('pair', 10, 60_000)) return this.json(res, 429, { error: 'Too many attempts' })
+      const p = this.pairing
+      if (!p || Date.now() > p.expiresAt) return this.json(res, 400, { error: 'No pairing in progress. Click "Pair a phone" in Hangar on your computer.' })
+      const body = await this.body(req)
+      const code = typeof body.code === 'string' ? body.code.trim() : ''
+      p.attempts++
+      const ok = /^\d{6}$/.test(code) && timingSafeEqual(Buffer.from(code), Buffer.from(p.code))
+      if (!ok) {
+        if (p.attempts >= 5) this.pairing = null
+        return this.json(res, 401, { error: p.attempts >= 5 ? 'Too many wrong codes. Start pairing again on your computer.' : 'Wrong code.' })
+      }
+      this.pairing = null
+      const token = randomBytes(32).toString('base64url')
+      const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 40) : 'Phone'
+      const dev: Device = { id: randomUUID(), name, tokenHash: hash(token), pairedAt: Date.now(), lastSeen: Date.now(), push: null }
+      this.store.update((d) => ({ ...d, devices: [...d.devices, dev] }))
+      return this.json(res, 200, { token, deviceId: dev.id })
+    }
+
+    const dev = this.device(req)
+    if (!dev) return this.json(res, 401, { error: 'This phone is not paired (or was unpaired).' })
+    if (this.limited(dev.id, 120, 60_000)) return this.json(res, 429, { error: 'Slow down' })
+    if (!dev.lastSeen || Date.now() - dev.lastSeen > 60_000) {
+      this.store.update((d) => ({ ...d, devices: d.devices.map((x) => (x.id === dev.id ? { ...x, lastSeen: Date.now() } : x)) }))
+    }
+
+    const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
+    const [, a, b, c, dPart] = parts
+
+    if (method === 'GET' && a === 'state') return this.json(res, 200, this.stateFor())
+
+    if (method === 'POST' && a === 'approvals' && b) {
+      const body = await this.body(req)
+      const decision = body.decision
+      if (decision !== 'allow' && decision !== 'deny') return this.json(res, 400, { error: 'Decision must be allow or deny.' })
+      const reqst = this.deps.runner.pendingApprovals().find((x) => x.id === b)
+      if (!reqst) return this.json(res, 404, { error: 'That approval is no longer waiting.' })
+      if (decision === 'allow' && !phoneCanApprove(reqst)) return this.json(res, 403, { error: 'This one has to be approved on your computer.' })
+      this.deps.runner.respond(b, decision)
+      return this.json(res, 200, { ok: true })
+    }
+
+    if (method === 'POST' && a === 'tasks') {
+      const body = await this.body(req)
+      const { projectId, agentId, prompt, record } = body
+      if (typeof projectId !== 'string' || typeof agentId !== 'string' || typeof prompt !== 'string' || !prompt.trim()) {
+        return this.json(res, 400, { error: 'Missing project, agent or task.' })
+      }
+      this.deps.runner.send(projectId, agentId, prompt.slice(0, 20000), { record: record === true })
+      return this.json(res, 200, { ok: true })
+    }
+
+    if (a === 'reviews' && b) {
+      if (method === 'GET' && c === 'diff') {
+        const diff = await this.deps.reviews.diff(b)
+        return this.json(res, 200, { diff: diff.length > 300_000 ? diff.slice(0, 300_000) + '\n… (diff truncated; see it on your computer)' : diff })
+      }
+      if (method === 'GET' && c === 'clip' && dPart !== undefined) {
+        const { path, type } = this.deps.reviews.clipPath(b, Number(dPart))
+        const size = statSync(path).size
+        const stream = createReadStream(path)
+        stream.on('error', () => res.destroy())
+        res.writeHead(200, { 'content-type': type, 'content-length': size, 'cache-control': 'no-store', ...this.securityHeaders() })
+        return void stream.pipe(res)
+      }
+      if (method === 'POST' && (c === 'merge' || c === 'discard' || c === 'publish')) {
+        const review: Review = c === 'merge' ? await this.deps.reviews.merge(b) : c === 'discard' ? await this.deps.reviews.discard(b) : await this.deps.reviews.publish(b)
+        return this.json(res, 200, { review })
+      }
+    }
+
+    if (method === 'POST' && a === 'stop-all') {
+      this.deps.runner.stopAll()
+      return this.json(res, 200, { ok: true })
+    }
+
+    if (method === 'POST' && a === 'push' && b === 'subscribe') {
+      const body = await this.body(req)
+      if (!validSubscription(body)) return this.json(res, 400, { error: 'Unsupported notification service.' })
+      const sub: PushSubscription = { endpoint: body.endpoint, keys: { p256dh: body.keys.p256dh, auth: body.keys.auth } }
+      this.store.update((d) => ({ ...d, devices: d.devices.map((x) => (x.id === dev.id ? { ...x, push: sub } : x)) }))
+      return this.json(res, 200, { ok: true })
+    }
+
+    if (method === 'POST' && a === 'unpair') {
+      this.store.update((d) => ({ ...d, devices: d.devices.filter((x) => x.id !== dev.id) }))
+      return this.json(res, 200, { ok: true })
+    }
+
+    return this.json(res, 404, { error: 'Not found' })
+  }
+
+  private agentName(projectId: string, agentId: string): string {
+    if (agentId === 'main') return 'Main'
+    try {
+      return listRoles(this.deps.registry.get(projectId).path).find((r) => r.id === agentId)?.name ?? agentId
+    } catch {
+      return agentId
+    }
+  }
+
+  private stateFor(): unknown {
+    const projects = this.deps.registry.list().map((p) => ({
+      id: p.id,
+      name: p.name,
+      autonomous: p.settings.autonomous,
+      hasTestPlace: p.settings.testPlace !== null,
+      agents: this.deps.runner.snapshot(p.id).map((a) => ({
+        id: a.agentId,
+        name: this.agentName(p.id, a.agentId),
+        status: a.status,
+        activity: a.activity,
+        queued: a.queue.length,
+        lastError: a.status === 'error' ? a.lastError : null
+      }))
+    }))
+    const approvals = this.deps.runner.pendingApprovals().map((r: ApprovalRequest) => ({
+      id: r.id,
+      projectId: r.projectId,
+      agent: this.agentName(r.projectId, r.agentId),
+      summary: r.summary.slice(0, MAX_PHONE_SUMMARY),
+      details: r.inputJson.slice(0, 20_000),
+      reason: r.reason,
+      dangerous: r.dangerous,
+      phoneOk: phoneCanApprove(r),
+      ts: r.ts
+    }))
+    const reviews = this.deps.reviews
+      .list()
+      .filter((r) => r.status === 'pending')
+      .map((r) => ({ ...r, agent: this.agentName(r.projectId, r.agentId), clip: r.clip ? { kind: r.clip.kind, count: r.clip.files.length } : null }))
+    return { projects, approvals, reviews, costs: this.deps.costs.summary(), vapidPublicKey: this.store.get().vapid?.publicKey ?? null }
+  }
+}

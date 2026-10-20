@@ -984,3 +984,142 @@ button.file-item {
     transition: none !important;
   }
 }
+
+/* reviews, autonomous, phone remote */
+.tab-badge {
+  margin-left: 6px;
+}
+.review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+}
+.review-item:hover {
+  background: var(--bg3);
+}
+.review-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pad-x {
+  padding: 0 8px;
+}
+.review-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.review-head p {
+  margin: 2px 0 0;
+}
+.review-body {
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.review-body .error-bar {
+  border-radius: 6px;
+  border: 0;
+}
+.summary {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font: 13px/1.5 var(--sans);
+}
+.review-diff {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: none;
+}
+.clip {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 8px;
+  background: #000;
+}
+.frames {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+.frames img {
+  height: 220px;
+  border-radius: 6px;
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.card-accent {
+  border-color: var(--accent);
+}
+.bullets {
+  margin: 0;
+  padding-left: 18px;
+}
+.steps {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cmd {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-top: 4px;
+  user-select: all;
+}
+.pair-code .muted {
+  letter-spacing: normal;
+  font-family: var(--sans);
+}
+.pair-code {
+  font: 600 22px/1 var(--mono);
+  letter-spacing: 0.15em;
+}
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.record-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-left: auto;
+  cursor: pointer;
+}
+.record-check input {
+  width: auto;
+}

@@ -84,7 +84,7 @@ const PROTECTED_DIRS = new Set([
 const PROTECTED_FILES = new Set([
   '.mcp.json', 'claude.md', '.gitattributes', '.gitmodules', '.npmrc', 'package.json', '.envrc', 'makefile',
   'rokit.toml', 'aftman.toml', 'foreman.toml', 'wally.toml', '.lfsconfig', '.pre-commit-config.yaml',
-  'mise.toml', '.mise.toml', '.tool-versions'
+  'mise.toml', '.mise.toml', '.tool-versions', '.gitignore'
 ])
 
 /** Extra protected folders: those holding scripts that the project's MCP servers run (set by the runner). */

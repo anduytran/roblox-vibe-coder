@@ -32,7 +32,7 @@ const api: HangarApi = {
   },
   agents: {
     snapshot: (id) => invoke(IPC.agentsSnapshot, id),
-    send: (id, agentId, prompt) => invoke(IPC.agentsSend, id, agentId, prompt),
+    send: (id, agentId, prompt, opts) => invoke(IPC.agentsSend, id, agentId, prompt, opts),
     stop: (id, agentId) => invoke(IPC.agentsStop, id, agentId),
     stopAll: () => invoke(IPC.agentsStopAll),
     clearQueue: (id, agentId) => invoke(IPC.agentsClearQueue, id, agentId),
@@ -51,6 +51,27 @@ const api: HangarApi = {
   },
   costs: {
     summary: () => invoke(IPC.costsSummary)
+  },
+  reviews: {
+    list: (id) => invoke(IPC.reviewsList, id),
+    diff: (id) => invoke(IPC.reviewsDiff, id),
+    merge: (id) => invoke(IPC.reviewsMerge, id),
+    discard: (id) => invoke(IPC.reviewsDiscard, id),
+    checkout: (id) => invoke(IPC.reviewsCheckout, id),
+    checkoutBase: (id) => invoke(IPC.reviewsCheckoutBase, id),
+    clipFile: (id, index) => invoke(IPC.reviewsClipFile, id, index),
+    publish: (id) => invoke(IPC.reviewsPublish, id)
+  },
+  testPlaceKey: {
+    status: (id) => invoke(IPC.testPlaceKeyStatus, id),
+    set: (id, key) => invoke(IPC.testPlaceKeySet, id, key),
+    clear: (id) => invoke(IPC.testPlaceKeyClear, id)
+  },
+  remote: {
+    status: () => invoke(IPC.remoteStatus),
+    set: (patch) => invoke(IPC.remoteSet, patch),
+    pair: () => invoke(IPC.remotePair),
+    unpair: (id) => invoke(IPC.remoteUnpair, id)
   },
   onAgentEvent(listener) {
     const wrapped = (_e: IpcRendererEvent, event: AgentEvent): void => listener(event)

@@ -2,18 +2,20 @@ import { useState } from 'react'
 import { AgentsView } from './components/AgentsView'
 import { ChangesView } from './components/ChangesView'
 import { ProjectSettingsView } from './components/ProjectSettingsView'
+import { ReviewsView } from './components/ReviewsView'
 import { SettingsModal } from './components/SettingsModal'
 import { Sidebar } from './components/Sidebar'
 import { Button } from './components/ui'
 import { addProject, useStore } from './store'
 
-type Tab = 'agents' | 'changes' | 'settings'
+type Tab = 'agents' | 'reviews' | 'changes' | 'settings'
 
 export function App() {
   const ready = useStore((s) => s.ready)
   const project = useStore((s) => s.projects.find((p) => p.id === s.selectedProjectId) ?? null)
   const hasKey = useStore((s) => s.key.hasKey)
   const toast = useStore((s) => s.toast)
+  const pendingReviews = useStore((s) => (s.selectedProjectId ? (s.reviews[s.selectedProjectId] ?? []).filter((r) => r.status === 'pending').length : 0))
   const [tab, setTab] = useState<Tab>('agents')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -41,15 +43,17 @@ export function App() {
                 </span>
               </div>
               <nav className="tabs" role="tablist">
-                {(['agents', 'changes', 'settings'] as Tab[]).map((t) => (
+                {(['agents', 'reviews', 'changes', 'settings'] as Tab[]).map((t) => (
                   <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? 'tab-active' : ''}`} onClick={() => setTab(t)}>
-                    {t === 'agents' ? 'Agents' : t === 'changes' ? 'Changes' : 'Project settings'}
+                    {t === 'agents' ? 'Agents' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Project settings'}
+                    {t === 'reviews' && pendingReviews > 0 && <span className="badge badge-warn tab-badge">{pendingReviews}</span>}
                   </button>
                 ))}
               </nav>
             </header>
             <section className="view">
               {tab === 'agents' && <AgentsView project={project} />}
+              {tab === 'reviews' && <ReviewsView project={project} />}
               {tab === 'changes' && <ChangesView project={project} />}
               {tab === 'settings' && <ProjectSettingsView project={project} />}
             </section>

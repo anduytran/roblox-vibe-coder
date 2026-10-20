@@ -23,7 +23,11 @@ export class SecretStore {
   /** Used when the OS cannot encrypt: kept in memory only, never written to disk. */
   private memoryOnlyKey: string | null = null
 
-  constructor(private readonly file: string) {}
+  constructor(
+    private readonly file: string,
+    private readonly validate: (key: string) => string | null = (k) =>
+      /^sk-ant-[A-Za-z0-9_\-]{10,}$/.test(k) ? null : 'That does not look like an Anthropic API key (it should start with "sk-ant-").'
+  ) {}
 
   status(): KeyStatus {
     return {
@@ -34,9 +38,8 @@ export class SecretStore {
 
   setKey(key: string): KeyStatus {
     const trimmed = key.trim()
-    if (!/^sk-ant-[A-Za-z0-9_\-]{10,}$/.test(trimmed)) {
-      throw new Error('That does not look like an Anthropic API key (it should start with "sk-ant-").')
-    }
+    const problem = this.validate(trimmed)
+    if (problem) throw new Error(problem)
     if (canEncrypt()) {
       mkdirSync(dirname(this.file), { recursive: true })
       writeFileSync(this.file, safeStorage.encryptString(trimmed), { mode: 0o600 })

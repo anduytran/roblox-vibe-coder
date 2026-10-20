@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { attempt, setKey, setSettings, toast, useStore } from '../store'
+import { PhoneRemoteSection } from './PhoneRemoteSection'
 import { Button, Field, Modal, Toggle } from './ui'
 
 const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
@@ -15,6 +16,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [studioCmd, setStudioCmd] = useState(settings?.studioMcpCommand ?? '')
   const [studioArgs, setStudioArgs] = useState((settings?.studioMcpArgs ?? []).join(' '))
   const [hideKey, setHideKey] = useState(settings?.hideKeyFromAgents ?? true)
+  const [rojo, setRojo] = useState(settings?.rojoCommand ?? 'rojo')
 
   const saveKey = (): void => {
     void attempt(async () => {
@@ -34,7 +36,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         globalDailyBudgetUsd: Number.isFinite(d) && d > 0 ? d : null,
         studioMcpCommand: studioCmd,
         studioMcpArgs: studioArgs.trim() ? studioArgs.trim().split(/\s+/) : [],
-        hideKeyFromAgents: hideKey
+        hideKeyFromAgents: hideKey,
+        rojoCommand: rojo
       })
       setSettings(next)
       toast('Settings saved.')
@@ -130,6 +133,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           </Field>
         </div>
         <p className="muted small">Costs are the SDK's own estimates; check the Claude Console for exact billing.</p>
+      </section>
+
+      <PhoneRemoteSection />
+
+      <section className="card">
+        <h3>Tools</h3>
+        <Field label="Rojo command" hint="Used to build a reviewed branch when you publish it to a test place.">
+          <input value={rojo} onChange={(e) => setRojo(e.target.value)} placeholder="rojo" />
+        </Field>
       </section>
 
       <section className="card">

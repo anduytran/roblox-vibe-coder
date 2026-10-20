@@ -48,6 +48,22 @@ On macOS and Linux, agents' shell commands run inside Claude Code's built-in san
 
 The sandbox covers shell commands only. File edits are covered by Hangar's own path rules, and MCP servers (including Roblox Studio) run outside it. It is not available on native Windows.
 
+## Autonomous mode, phone remote, publishing and clips (audited 2026-10-20)
+
+These features were reviewed by an independent reviewer before release; each finding has a regression test.
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| An autonomous agent could move `main` (or other branches) to unreviewed commits, or trick Hangar into committing onto `main` | High | Agents' sandboxed commands can't write `.git` at all. Hangar snapshots every branch and tag when a task starts and puts back anything the agent changed; it refuses to commit unless it's on the task branch; reviews diff and merge the exact recorded commits, and a branch changed after review can't be merged. |
+| "Publish to test place" could embed files from outside the project (Rojo `$path`, symlinks) or run a planted `rojo` binary | High | Branches with symlinks/submodules are refused; every `*.project.json` `$path` must be a plain relative path; Rojo is resolved from `PATH` once and run from Hangar's own folder; one publish at a time, never while an agent is working. |
+| `execute_luau` (edit-mode Luau) was auto-allowed in autonomous mode, bypassing git review | Medium-High | Now asks; only play-mode testing and simulated input run freely. |
+| Sandboxed auto-run commands skipped Hangar's protected-file and secret checks | Medium | Sandbox write-denies protected names at any depth (plus `.git`); autonomous runs always hide the API key; `.gitignore` edits are protected and flagged in reviews. |
+| Phone approvals could hide content (truncation, raw input not shown) | Medium | The phone can only approve requests it shows in full and plain shell commands; full details are viewable; anything else must be approved on the computer. |
+| Remote accepted any `*.ts.net` host before the tailnet name was known; Funnel not blocked | Low | Only this computer's own tailnet name; requests via Funnel are refused. |
+| Clip frames accepted any tool's images without type/size checks; clip files leaked | Low | Only Studio screenshots, checked by file signature, max 5 MB each; clips deleted with reviews. |
+
+Phone remote design: Hangar listens on `127.0.0.1` only and is exposed to your own Tailscale devices by `tailscale serve` (HTTPS). Pairing uses a 6-digit code (5 minutes, 5 tries); devices get random tokens stored only as hashes; every API call needs the token; Host and Origin are checked; the phone app runs under a strict CSP with no inline script. The phone can't change settings or rules, choose "always allow", or approve high-risk actions. Never expose Hangar with `tailscale funnel`.
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.
@@ -57,6 +73,7 @@ The sandbox covers shell commands only. File edits are covered by Hangar's own p
 - **One local port.** The proxy listens on 127.0.0.1 only and requires a per-run random token.
 - **Same-user programs can decrypt the stored key.** OS keychain encryption (DPAPI on Windows) protects against other users and stolen disks, not against programs running as you — including commands you approve. Another reason to use a dedicated, spend-limited key.
 - **Approved git config.** If you approve a repository whose git config defines filters, git commands that agents run (and you approve) will use them. Hangar itself still refuses to run git there.
+- **Playtest recordings** capture the Studio window's area of the screen; anything overlapping it (a notification, another window) is captured too.
 - **Logs on disk.** Agent feeds (`agents.json` in the app data folder) and engine transcripts may contain code and command output in plain text.
 - **Not yet run end to end.** These protections are unit-tested, but the first run with the real SDK, Studio and a packaged build happens on your machine. Builds are unsigned, Electron fuses are not yet set, and there is no committed lockfile until the first `npm install`.
 

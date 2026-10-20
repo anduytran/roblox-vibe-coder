@@ -33,6 +33,13 @@ export interface ProjectSettings {
   sandbox: boolean
   /** Network domains sandboxed commands may reach (e.g. "api.github.com"). Empty = no network. */
   sandboxAllowedDomains: string[]
+  /**
+   * Agents work without asking inside the fence: edits in the project, sandboxed commands and Studio
+   * playtest tools run freely. Each task runs on its own git branch and ends as a review.
+   */
+  autonomous: boolean
+  /** Private test place for "Publish to test place" (never the live game). */
+  testPlace: { universeId: string; placeId: string } | null
 }
 
 export interface Project {
@@ -55,6 +62,8 @@ export interface AppSettings {
   studioMcpArgs: string[]
   /** Give agents a session token through a local proxy instead of the real API key. */
   hideKeyFromAgents: boolean
+  /** Command used to run Rojo when publishing to a test place. */
+  rojoCommand: string
 }
 
 export type LogKind = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error' | 'result'
@@ -71,6 +80,34 @@ export interface QueuedTask {
   id: string
   prompt: string
   createdAt: number
+  /** Record a short clip of the agent's playtest for the review. */
+  record?: boolean
+}
+
+export type ReviewStatus = 'pending' | 'merged' | 'discarded'
+
+/** A finished autonomous task: its work lives on its own branch until you merge or discard it. */
+export interface Review {
+  id: string
+  projectId: string
+  agentId: string
+  title: string
+  branch: string
+  base: string
+  /** Commit the task started from, and the task's final commit: the review is exactly this range. */
+  baseSha: string
+  headSha: string
+  /** The agent's final message (what it did, how it tested). */
+  summary: string
+  files: string[]
+  status: ReviewStatus
+  /** Set when the run stopped or failed before finishing. */
+  incomplete: string | null
+  note: string | null
+  createdAt: number
+  /** Playtest clip: a video file, or screenshot frames when recording wasn't possible. */
+  clip: { kind: 'video' | 'frames'; files: string[] } | null
+  published: { versionNumber: number; at: number } | null
 }
 
 export interface AgentState {
@@ -130,6 +167,7 @@ export type AgentEvent =
   | { type: 'approval_resolved'; id: string }
   | { type: 'cost'; summary: CostSummary }
   | { type: 'reset'; projectId: string; agentId: string }
+  | { type: 'review'; review: Review }
 
 export interface Result<T> {
   ok: boolean

@@ -21,8 +21,14 @@ const CREDENTIAL_DIRS = [
   '~/.netrc', '~/.npmrc', '~/.pypirc', '~/.git-credentials', '~/Library/Keychains', '~/.claude'
 ]
 
-/** Hangar-protected files and folders at the project root that sandboxed commands may not write. */
+/**
+ * Paths sandboxed commands may not write, inside the project. `.git` is entirely off-limits: Hangar
+ * commits task work itself, so agents never need to change branches, refs or history. The rest are
+ * Hangar's protected names, at the root and (via **) at any depth.
+ */
+const ANY_DEPTH = ['.git', '.gitattributes', '.gitignore', '.gitmodules', '.claude', '.mcp.json', 'CLAUDE.md', '.vscode', '.envrc', '.npmrc']
 const PROJECT_DENY_WRITE = [
+  '.git',
   'CLAUDE.md', 'package.json', 'Makefile', '.envrc', '.npmrc', '.gitattributes', '.gitmodules', '.lfsconfig',
   'rokit.toml', 'aftman.toml', 'foreman.toml', 'wally.toml', 'mise.toml', '.mise.toml', '.tool-versions',
   '.pre-commit-config.yaml', '.github', '.husky', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs'
@@ -42,7 +48,10 @@ export function planSandbox(project: Project, opts: { platform?: NodeJS.Platform
   if (!sandboxSupported(platform)) {
     return { settings: null, active: false, reason: 'The sandbox is not available on Windows; approved commands run with your full permissions.' }
   }
-  const denyWrite = [...PROJECT_DENY_WRITE, ...serverScriptDirs(project.path)].map((p) => join(project.path, p))
+  const denyWrite = [
+    ...[...PROJECT_DENY_WRITE, ...serverScriptDirs(project.path)].map((p) => join(project.path, p)),
+    ...ANY_DEPTH.map((name) => join(project.path, '**', name))
+  ]
   return {
     active: true,
     reason: null,
@@ -53,9 +62,9 @@ export function planSandbox(project: Project, opts: { platform?: NodeJS.Platform
         failIfUnavailable: true,
         // Ignore the engine's "retry outside the sandbox" escape hatch.
         allowUnsandboxedCommands: false,
-        // Sandboxed commands run without a prompt only if this project already auto-approves edits;
-        // otherwise every command still asks, with the sandbox as a second layer.
-        autoAllowBashIfSandboxed: project.settings.autoApproveEdits,
+        // Sandboxed commands run without a prompt only in autonomous mode or when this project already
+        // auto-approves edits; otherwise every command still asks, with the sandbox as a second layer.
+        autoAllowBashIfSandboxed: project.settings.autoApproveEdits || project.settings.autonomous,
         filesystem: {
           denyWrite,
           // Hangar's own data folder holds the encrypted API key.
