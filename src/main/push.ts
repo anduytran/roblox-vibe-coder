@@ -42,12 +42,25 @@ export function validSubscription(s: unknown): s is PushSubscription {
   } catch {
     return false
   }
-  return (
-    typeof sub.keys?.p256dh === 'string' &&
-    fromB64u(sub.keys.p256dh).length === 65 &&
-    typeof sub.keys?.auth === 'string' &&
-    fromB64u(sub.keys.auth).length === 16
-  )
+  if (
+    !(
+      typeof sub.keys?.p256dh === 'string' &&
+      fromB64u(sub.keys.p256dh).length === 65 &&
+      typeof sub.keys?.auth === 'string' &&
+      fromB64u(sub.keys.auth).length === 16
+    )
+  ) {
+    return false
+  }
+  // The key must be a real point on the curve, or encryption would throw later.
+  try {
+    const probe = createECDH('prime256v1')
+    probe.generateKeys()
+    probe.computeSecret(fromB64u(sub.keys.p256dh))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -97,7 +110,12 @@ export function vapidAuthorization(endpoint: string, keys: VapidKeys, subject: s
 /** Send one notification. Resolves 'gone' when the subscription has expired and should be removed. */
 export function sendPush(sub: PushSubscription, payload: object, keys: VapidKeys, subject = 'mailto:hangar@localhost'): Promise<'ok' | 'gone' | 'failed'> {
   if (!validSubscription(sub)) return Promise.resolve('gone')
-  const body = encryptPayload(Buffer.from(JSON.stringify(payload).slice(0, 3000)), sub.keys)
+  let body: Buffer
+  try {
+    body = encryptPayload(Buffer.from(JSON.stringify(payload).slice(0, 3000)), sub.keys)
+  } catch {
+    return Promise.resolve('gone')
+  }
   const url = new URL(sub.endpoint)
   return new Promise((resolveSend) => {
     const req = request(

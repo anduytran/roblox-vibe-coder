@@ -96,12 +96,12 @@ test('remote: listens on 127.0.0.1 only, serves the phone app with a strict CSP,
 test('remote: pairing needs a live code, locks after 5 wrong tries, and issues a working device token', async () => {
   const t = await setup()
   try {
-    assert.equal((await call(t.port, '/api/pair', { body: { code: '123456' } })).status, 400, 'no pairing in progress')
+    assert.equal((await call(t.port, '/api/pair', { body: { code: '123456' } })).status, 401, 'no pairing in progress (same answer as a wrong code)')
     const { code } = t.server.startPairing()
     const wrong = code === '000000' ? '111111' : '000000'
     for (let i = 0; i < 4; i++) assert.equal((await call(t.port, '/api/pair', { body: { code: wrong } })).status, 401)
-    assert.match((await call(t.port, '/api/pair', { body: { code: wrong } })).json.error, /Too many/)
-    assert.equal((await call(t.port, '/api/pair', { body: { code } })).status, 400, 'code dead after lockout')
+    assert.equal((await call(t.port, '/api/pair', { body: { code: wrong } })).status, 401)
+    assert.equal((await call(t.port, '/api/pair', { body: { code } })).status, 401, 'code dead after lockout')
 
     const { code: code2 } = t.server.startPairing()
     const ok = await call(t.port, '/api/pair', { body: { code: code2, name: 'Test phone' } })
@@ -113,7 +113,7 @@ test('remote: pairing needs a live code, locks after 5 wrong tries, and issues a
     assert.equal(state.json.approvals.length, 2)
     assert.equal(state.json.approvals[0].inputJson, undefined, 'phone gets summaries, not raw tool input')
     assert.equal((await t.server.status()).devices[0]!.name, 'Test phone')
-    assert.equal((await call(t.port, '/api/pair', { body: { code: code2 } })).status, 400, 'codes are single-use')
+    assert.equal((await call(t.port, '/api/pair', { body: { code: code2 } })).status, 401, 'codes are single-use')
   } finally {
     t.server.stop()
   }
@@ -173,6 +173,28 @@ test('audit: unknown tailnet names, Funnel requests and malformed codes are refu
     assert.equal((await call(t.port, '/', { headers: { 'tailscale-funnel-request': '?1' } })).status, 403)
     t.server.startPairing()
     assert.equal((await call(t.port, '/api/pair', { body: { code: 'éééééé' } })).status, 401)
+  } finally {
+    t.server.stop()
+  }
+})
+
+test('audit: pairing never reveals whether it is active; device names are cleaned; idle phones are unpaired', async () => {
+  const t = await setup()
+  try {
+    const idle = await call(t.port, '/api/pair', { body: { code: '123456' } })
+    const { code } = t.server.startPairing()
+    const wrong = await call(t.port, '/api/pair', { body: { code: code === '000000' ? '111111' : '000000' } })
+    assert.deepEqual([idle.status, idle.json.error], [wrong.status, wrong.json.error])
+
+    const { code: c2 } = t.server.startPairing()
+    const ok = await call(t.port, '/api/pair', { body: { code: c2, name: 'My\u202e enohp\u200b\u0007' } })
+    assert.equal((await t.server.status()).devices[0]!.name, 'My enohp')
+
+    // A phone unused for over 30 days stops working and is removed.
+    const store = (t.server as unknown as { store: { update: (f: (d: any) => any) => void } }).store
+    store.update((d: any) => ({ ...d, devices: d.devices.map((x: any) => ({ ...x, lastSeen: Date.now() - 31 * 24 * 3600 * 1000 })) }))
+    assert.equal((await call(t.port, '/api/state', { token: ok.json.token })).status, 401)
+    assert.equal((await t.server.status()).devices.length, 0)
   } finally {
     t.server.stop()
   }

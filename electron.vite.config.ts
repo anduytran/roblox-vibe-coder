@@ -14,6 +14,14 @@ export default defineConfig({
   renderer: {
     root: resolve('src/renderer'),
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    plugins: [react()]
+    plugins: [
+      react(),
+      {
+        // The dev server needs a websocket for hot reload; the shipped app's CSP doesn't allow it.
+        name: 'hangar-production-csp',
+        apply: 'build',
+        transformIndexHtml: (html: string) => html.replace(' ws://localhost:*', '')
+      }
+    ]
   }
 })

@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { BlockList, connect, isIP, type AddressInfo, type Socket } from 'node:net'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 
 /**
  * The web researcher's only way out to the internet (its HTTPS_PROXY).
@@ -43,6 +44,28 @@ export class WebEgressProxy {
   private server: Server | null = null
   private port = 0
   private sockets = new Set<Socket>()
+  /** Per-run credentials: only a running researcher can use the tunnel, and only until its run ends. */
+  private tokens = new Set<string>()
+
+  /** A proxy URL for one researcher run (credentials included). Call the returned release when the run ends. */
+  async issue(): Promise<{ url: string; release: () => void }> {
+    await this.start()
+    const token = randomBytes(24).toString('hex')
+    this.tokens.add(token)
+    return { url: `http://run:${token}@127.0.0.1:${this.port}`, release: () => this.tokens.delete(token) }
+  }
+
+  private authorized(req: IncomingMessage): boolean {
+    const m = /^Basic ([A-Za-z0-9+/=]+)$/.exec(req.headers['proxy-authorization'] ?? '')
+    if (!m) return false
+    const pass = Buffer.from(m[1]!, 'base64').toString('utf8').split(':').slice(1).join(':')
+    const given = Buffer.from(pass)
+    for (const t of this.tokens) {
+      const want = Buffer.from(t)
+      if (want.length === given.length && timingSafeEqual(want, given)) return true
+    }
+    return false
+  }
 
   constructor(private readonly resolve: Resolver = (host) => lookup(host, { all: true, verbatim: true })) {}
 
@@ -91,6 +114,10 @@ export class WebEgressProxy {
     this.sockets.add(client)
     client.on('close', () => this.sockets.delete(client))
     client.on('error', () => client.destroy())
+    if (!this.authorized(req)) {
+      client.end('HTTP/1.1 407 Proxy Authentication Required\r\nproxy-authenticate: Basic realm="hangar"\r\nconnection: close\r\n\r\n')
+      return
+    }
     const m = /^([^:\s]+|\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(req.url ?? '')
     const port = m ? Number(m[2]) : 0
     const deny = (why: string): void => {

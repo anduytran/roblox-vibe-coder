@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createPublicKey, verify } from 'node:crypto'
 import { test } from 'node:test'
-import { encryptPayload, generateVapidKeys, validSubscription, vapidAuthorization } from '../src/main/push'
+import { encryptPayload, generateVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/main/push'
 
 test('Web Push encryption matches the RFC 8291 example exactly', () => {
   const body = encryptPayload(
@@ -36,4 +36,11 @@ test('only real push services are accepted as subscription endpoints', () => {
   assert.equal(validSubscription({ endpoint: 'http://fcm.googleapis.com/x', keys }), false)
   assert.equal(validSubscription({ endpoint: 'https://127.0.0.1/x', keys }), false)
   assert.equal(validSubscription({ endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: 'short', auth: keys.auth } }), false)
+})
+
+test('audit: a subscription key that is not a real curve point is refused, and sending never throws', async () => {
+  const junk = Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString('base64url')
+  const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/x', keys: { p256dh: junk, auth: 'BTBZMqHH6r4Tts7J_aSIgg' } }
+  assert.equal(validSubscription(sub), false)
+  assert.equal(await sendPush(sub, { title: 't' }, generateVapidKeys()), 'gone')
 })

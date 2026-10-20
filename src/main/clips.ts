@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { resolveCommand } from './testPlace'
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Review } from '@shared/types'
@@ -30,13 +31,29 @@ const PLAY_TOOL = /__start_stop_play$/
 
 type Platform = NodeJS.Platform
 
-function exec(cmd: string, args: string[], timeoutMs = 10_000): Promise<string> {
+/**
+ * Helper programs by absolute path only. On Windows a bare name is looked up in the current folder
+ * before PATH, so a project folder containing "ffmpeg.exe" could otherwise be run.
+ */
+export function helperPath(name: 'ffmpeg' | 'powershell' | 'osascript' | 'screencapture', platform: Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (name === 'osascript') return platform === 'darwin' ? '/usr/bin/osascript' : null
+  if (name === 'screencapture') return platform === 'darwin' ? '/usr/sbin/screencapture' : null
+  if (name === 'powershell') {
+    if (platform !== 'win32') return null
+    const root = env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows'
+    return `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+  }
+  return resolveCommand('ffmpeg', env, platform)
+}
+
+function exec(cmd: string | null, args: string[], timeoutMs = 10_000): Promise<string> {
   return new Promise((resolveExec, reject) => {
+    if (!cmd) return reject(new Error('Helper program not available.'))
     execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, out) => (err ? reject(err) : resolveExec(String(out))))
   })
 }
 
-async function hasCommand(cmd: string): Promise<boolean> {
+async function hasCommand(cmd: string | null): Promise<boolean> {
   try {
     await exec(cmd, ['-version'], 5000)
     return true
@@ -50,7 +67,7 @@ async function macStudioRect(): Promise<string | null> {
   const script =
     'tell application "System Events" to tell (first process whose name starts with "RobloxStudio") to get {position, size} of front window'
   try {
-    const out = (await exec('osascript', ['-e', script])).trim()
+    const out = (await exec(helperPath('osascript'), ['-e', script])).trim()
     const n = out.split(/\s*,\s*/).map((x) => Math.round(Number(x)))
     if (n.length !== 4 || n.some((x) => !Number.isFinite(x)) || n[2]! < 50 || n[3]! < 50) return null
     return n.join(',')
@@ -62,7 +79,7 @@ async function macStudioRect(): Promise<string | null> {
 /** Studio's window title on Windows, for ffmpeg's gdigrab. */
 async function windowsStudioTitle(): Promise<string | null> {
   try {
-    const out = await exec('powershell', [
+    const out = await exec(helperPath('powershell'), [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
@@ -120,13 +137,14 @@ class Session implements ClipSession {
       const rect = await macStudioRect()
       if (!rect) return
       this.recordingFile = join(this.dir, 'playtest.mov')
-      this.recorder = spawn('screencapture', ['-v', `-V${MAX_SECONDS}`, `-R${rect}`, '-x', this.recordingFile], { stdio: 'ignore' })
+      this.recorder = spawn(helperPath('screencapture') ?? '/usr/sbin/screencapture', ['-v', `-V${MAX_SECONDS}`, `-R${rect}`, '-x', this.recordingFile], { stdio: 'ignore' })
     } else if (this.platform === 'win32') {
       const [title, ok] = await Promise.all([windowsStudioTitle(), this.ffmpeg])
-      if (!title || !ok) return
+      const ffmpegPath = helperPath('ffmpeg', this.platform)
+      if (!title || !ok || !ffmpegPath) return
       this.recordingFile = join(this.dir, 'playtest.mp4')
       this.recorder = spawn(
-        'ffmpeg',
+        ffmpegPath,
         ['-y', '-f', 'gdigrab', '-framerate', '15', '-i', `title=${title}`, '-t', String(MAX_SECONDS), '-vf', 'scale=-2:720',
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', this.recordingFile],
         { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true }
@@ -172,7 +190,7 @@ class Session implements ClipSession {
     if (video && video.endsWith('.mov') && (await this.ffmpeg)) {
       const mp4 = join(this.dir, 'playtest.mp4')
       try {
-        await exec('ffmpeg', ['-y', '-i', video, '-vf', 'scale=-2:720', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', mp4], 120_000)
+        await exec(helperPath('ffmpeg'), ['-y', '-i', video, '-vf', 'scale=-2:720', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', mp4], 120_000)
         rmSync(video, { force: true })
         video = mp4
       } catch {
@@ -201,7 +219,7 @@ export class StudioClipRecorder implements ClipRecorder {
   ) {}
 
   begin(opts: { taskId: string }): ClipSession {
-    this.ffmpeg ??= hasCommand('ffmpeg')
+    this.ffmpeg ??= hasCommand(helperPath('ffmpeg', this.platform))
     const safe = opts.taskId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64)
     return new Session(join(this.clipsDir, safe), this.platform, this.ffmpeg)
   }

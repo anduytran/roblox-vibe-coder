@@ -18,6 +18,7 @@ import { ReviewStore } from '../src/main/reviews'
 import { installTemplates, listRoles } from '../src/main/roles'
 import { parseVerdict, TaskReviewer } from '../src/main/taskReviewer'
 import { createVault } from '../src/main/vault'
+import { helperPath } from '../src/main/clips'
 
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms))
@@ -428,13 +429,22 @@ test('audit: a researcher never resumes or keeps a session, and its web traffic 
   for (const a of ['93.184.216.34', '2606:4700::1111']) assert.equal(isPublicAddress(a), true, a)
   const url = await egress.start()
   const port = Number(new URL(url).port)
-  const reply = await new Promise<string>((resolveReply) => {
-    const sock = netConnect(port, '127.0.0.1', () => sock.write('CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n'))
-    let data = ''
-    sock.on('data', (d) => (data += d.toString()))
-    sock.on('close', () => resolveReply(data))
-  })
-  assert.match(reply, /^HTTP\/1\.1 403/)
+  const connectReply = (auth: string | null) =>
+    new Promise<string>((resolveReply) => {
+      const sock = netConnect(port, '127.0.0.1', () =>
+        sock.write(`CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n${auth ? `Proxy-Authorization: Basic ${Buffer.from(auth).toString('base64')}\r\n` : ''}\r\n`)
+      )
+      let data = ''
+      sock.on('data', (d) => (data += d.toString()))
+      sock.on('close', () => resolveReply(data))
+    })
+  assert.match(await connectReply(null), /^HTTP\/1\.1 407/, 'no credentials: refused')
+  assert.match(await connectReply('run:wrong-token'), /^HTTP\/1\.1 407/)
+  const grant = await egress.issue()
+  const pass = decodeURIComponent(new URL(grant.url).password)
+  assert.match(await connectReply(`run:${pass}`), /^HTTP\/1\.1 403/, 'with credentials: blocked because evil.example resolves to this computer')
+  grant.release()
+  assert.match(await connectReply(`run:${pass}`), /^HTTP\/1\.1 407/, 'credentials stop working when the run ends')
   const plain = await fetch(`${url}/`).then((r) => r.status)
   assert.equal(plain, 403)
   egress.stop()
@@ -446,7 +456,7 @@ test('audit: a researcher never resumes or keeps a session, and its web traffic 
       yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
     }
   })
-  ;(withProxy.runner as unknown as { deps: { researchProxy: () => Promise<string> } }).deps.researchProxy = async () => 'http://127.0.0.1:5555'
+  ;(withProxy.runner as unknown as { deps: { researchProxy: () => Promise<{ url: string; release: () => void }> } }).deps.researchProxy = async () => ({ url: 'http://127.0.0.1:5555', release: () => {} })
   withProxy.runner.send(withProxy.project.id, 'researcher', 'three')
   await until(() => withProxy.reviews.list().length === 1)
   const env = withProxy.calls[0]!.options.env as Record<string, string>
@@ -476,4 +486,14 @@ test('audit: the reviewer has no pre-approved tools; research and vault folders 
   await until(() => t.reviews.list().length === 1)
   await assert.rejects(t.actions.merge(t.reviews.list()[0]!.id), /link/)
   assert.deepEqual(readdirSync(outside), [])
+})
+
+test('audit: helper programs (ffmpeg, PowerShell, osascript) are only ever run by absolute path', () => {
+  const bin = tmp('hangar-x-ff-')
+  writeFileSync(join(bin, 'ffmpeg'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.equal(helperPath('ffmpeg', 'linux', { PATH: bin }), join(bin, 'ffmpeg'))
+  assert.equal(helperPath('ffmpeg', 'linux', { PATH: '.' }), null, 'relative PATH entries are ignored')
+  assert.equal(helperPath('powershell', 'win32', { SystemRoot: 'C:\\Windows' }), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+  assert.equal(helperPath('osascript', 'darwin'), '/usr/bin/osascript')
+  assert.equal(helperPath('screencapture', 'darwin'), '/usr/sbin/screencapture')
 })

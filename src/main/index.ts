@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, type QueryFn } from './agentRunner'
@@ -64,8 +64,20 @@ function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => win.show())
 
   // Never open new windows inside the app; send real web links to the default browser.
+  // Links can come from agent or web content (research sources), so say where it goes before opening.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(url)) void shell.openExternal(url)
+    let host = ''
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'https:' && !u.username && !u.password) host = u.host
+    } catch {
+      // not a URL
+    }
+    if (host) {
+      void dialog
+        .showMessageBox(win, { type: 'question', buttons: ['Open in browser', 'Cancel'], defaultId: 1, cancelId: 1, message: `Open ${host} in your browser?`, detail: url.slice(0, 500) })
+        .then((r) => r.response === 0 && shell.openExternal(url))
+    }
     return { action: 'deny' }
   })
   // Block navigation and redirects away from the app UI, and never allow embedded webviews.
@@ -132,6 +144,16 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
 }
 
 app.whenReady().then(() => {
+  // Never run with a project folder as the working directory: on Windows, programs started by name are
+  // looked up there first.
+  try {
+    process.chdir(dataDir())
+  } catch {
+    // keep the default
+  }
+  // The UI never needs the camera, microphone, notifications, location or similar; refuse them all.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
   const settings = new JsonStore<AppSettings>(join(dataDir(), 'settings.json'), DEFAULT_SETTINGS)
   const secrets = new SecretStore(join(dataDir(), 'anthropic-key.bin'))
   const registry = new ProjectRegistry(join(dataDir(), 'projects.json'))
@@ -167,7 +189,7 @@ app.whenReady().then(() => {
     costs,
     emit,
     onReview: (r) => void pipeline?.start(r),
-    researchProxy: () => webEgress.start(),
+    researchProxy: () => webEgress.issue(),
     getSettings: () => settings.get(),
     getApiKey: () => secrets.getKey(),
     engineAuth,

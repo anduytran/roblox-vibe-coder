@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
+import { resolveCommand } from './testPlace'
 import { execFile } from 'node:child_process'
 import { createReadStream, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -12,7 +13,7 @@ import type { ProjectRegistry } from './projects'
 import { generateVapidKeys, sendPush, validSubscription, type PushSubscription, type VapidKeys } from './push'
 import type { ReviewActions } from './reviewActions'
 import { listRoles } from './roles'
-import { shellWords } from './permissions'
+import { DECEPTIVE_CHARS, shellWords } from './permissions'
 
 /**
  * Phone remote. Hangar listens on 127.0.0.1 only; `tailscale serve` makes it reachable over HTTPS
@@ -60,8 +61,12 @@ export function phoneCanApprove(r: ApprovalRequest): boolean {
   return true
 }
 
+const DEVICE_IDLE_LIMIT_MS = 30 * 24 * 3600 * 1000
+
 function findTailscale(): Promise<string | null> {
-  const candidates = process.platform === 'darwin' ? ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'] : ['tailscale']
+  // Absolute paths only (never a program in the current folder).
+  const onPath = resolveCommand('tailscale')
+  const candidates = [onPath, process.platform === 'darwin' ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : null].filter((c): c is string => !!c)
   return new Promise((resolveFind) => {
     const tryNext = (i: number): void => {
       if (i >= candidates.length) return resolveFind(null)
@@ -190,7 +195,7 @@ export class RemoteServer {
     if (!d.vapid) return
     for (const dev of d.devices) {
       if (!dev.push) continue
-      const result = await sendPush(dev.push, { ...note, url: '/' }, d.vapid)
+      const result = await sendPush(dev.push, { ...note, url: '/' }, d.vapid).catch(() => 'gone' as const)
       if (result === 'gone') this.store.update((s) => ({ ...s, devices: s.devices.map((x) => (x.id === dev.id ? { ...x, push: null } : x)) }))
     }
   }
@@ -250,7 +255,14 @@ export class RemoteServer {
     const h = Buffer.from(hash(m[1]!))
     for (const d of this.store.get().devices) {
       const other = Buffer.from(d.tokenHash)
-      if (other.length === h.length && timingSafeEqual(other, h)) return d
+      if (other.length === h.length && timingSafeEqual(other, h)) {
+        // A phone that hasn't been used for 30 days is unpaired automatically (lost or forgotten phones).
+        if (Date.now() - (d.lastSeen ?? d.pairedAt) > DEVICE_IDLE_LIMIT_MS) {
+          this.store.update((s) => ({ ...s, devices: s.devices.filter((x) => x.id !== d.id) }))
+          return null
+        }
+        return d
+      }
     }
     return null
   }
@@ -280,18 +292,20 @@ export class RemoteServer {
     if (url.pathname === '/api/pair' && method === 'POST') {
       if (this.limited('pair', 10, 60_000)) return this.json(res, 429, { error: 'Too many attempts' })
       const p = this.pairing
-      if (!p || Date.now() > p.expiresAt) return this.json(res, 400, { error: 'No pairing in progress. Click "Pair a phone" in Hangar on your computer.' })
+      // Same answer whether or not pairing is active, so the endpoint doesn't reveal when you're pairing.
+      if (!p || Date.now() > p.expiresAt) return this.json(res, 401, { error: 'Wrong or expired code. Start pairing on your computer and try again.' })
       const body = await this.body(req)
       const code = typeof body.code === 'string' ? body.code.trim() : ''
       p.attempts++
       const ok = /^\d{6}$/.test(code) && timingSafeEqual(Buffer.from(code), Buffer.from(p.code))
       if (!ok) {
         if (p.attempts >= 5) this.pairing = null
-        return this.json(res, 401, { error: p.attempts >= 5 ? 'Too many wrong codes. Start pairing again on your computer.' : 'Wrong code.' })
+        return this.json(res, 401, { error: 'Wrong or expired code. Start pairing on your computer and try again.' })
       }
       this.pairing = null
       const token = randomBytes(32).toString('base64url')
-      const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 40) : 'Phone'
+      const cleanName = typeof body.name === 'string' ? body.name.replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : ''
+      const name = cleanName || 'Phone'
       const dev: Device = { id: randomUUID(), name, tokenHash: hash(token), pairedAt: Date.now(), lastSeen: Date.now(), push: null }
       this.store.update((d) => ({ ...d, devices: [...d.devices, dev] }))
       return this.json(res, 200, { token, deviceId: dev.id })

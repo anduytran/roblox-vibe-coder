@@ -111,8 +111,8 @@ export interface RunnerDeps {
   clips?: ClipRecorder
   /** Called with each new review (to start its checks and the reviewer agent). */
   onReview?: (review: Review) => void
-  /** Starts the web researcher's filtering proxy and returns its URL (see webEgress.ts). */
-  researchProxy?: () => Promise<string>
+  /** A per-run URL (with credentials) for the web researcher's filtering proxy (see webEgress.ts). */
+  researchProxy?: () => Promise<{ url: string; release: () => void }>
 }
 
 export interface ClipSession {
@@ -426,6 +426,7 @@ export class AgentRunner {
     const fetched: string[] = []
     const queries: string[] = []
     let researchDir: string | null = null
+    let proxyGrant: { url: string; release: () => void } | null = null
 
     try {
       // Anything in the folder that would launch programs (MCP servers, git config) needs approval first.
@@ -509,7 +510,7 @@ export class AgentRunner {
         mcpServers: research ? {} : mcpServersFor(project, settings, review.servers),
         maxBudgetUsd: settings.perRunBudgetUsd,
         maxTurns: MAX_TURNS,
-        env: research ? researchEnv(buildAgentEnv(auth.env), this.deps.researchProxy ? await this.deps.researchProxy() : null) : buildAgentEnv(auth.env),
+        env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
         canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, project, role)
       }
       if (research) {
@@ -582,6 +583,7 @@ export class AgentRunner {
       }
       releaseAuth?.()
       if (researchDir) rmSync(researchDir, { recursive: true, force: true })
+      proxyGrant?.release()
       this.controllers.delete(key)
       this.denyPendingFor(s.projectId, s.agentId, 'Run ended')
       if (taskBranch) {
