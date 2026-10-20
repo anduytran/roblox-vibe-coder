@@ -138,7 +138,8 @@ export function projectMcpServers(projectPath: string): Record<string, StdioServ
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, StdioServer> }
     for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
-      if (name.toLowerCase() === STUDIO_MCP_NAME.toLowerCase()) continue
+      // Any spelling that the engine could turn into the reserved name (Roblox-Studio, roblox studio, …).
+      if (name.toLowerCase().replace(/[^a-z0-9]/g, '') === STUDIO_MCP_NAME.toLowerCase().replace(/[^a-z0-9]/g, '')) continue
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue
       if (!cfg || typeof cfg.command !== 'string') continue
       servers[name] = {

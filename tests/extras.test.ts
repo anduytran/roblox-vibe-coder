@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { connect as netConnect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +11,16 @@ import { checksBlockedReason, checksFailed, runChecks, runsAsCode, sandboxComman
 import { mergeWarnings } from '../src/shared/reviewRules'
 import { isPublicAddress, WebEgressProxy } from '../src/main/webEgress'
 import { CostTracker } from '../src/main/costs'
-import { ProjectRegistry, sanitizeChecks } from '../src/main/projects'
+import { DEFAULT_PROJECT_SETTINGS, projectMcpServers, ProjectRegistry, sanitizeChecks } from '../src/main/projects'
+import { gitSafetyEnv, gitStatus } from '../src/main/git'
+import { evaluateToolUse, mayRevealSecrets } from '../src/main/permissions'
+import { scrubProcessEnv } from '../src/main/env'
+import { planSandbox } from '../src/main/sandbox'
+import { isProtectedPath } from '../src/main/pathScope'
+import { reviewProject } from '../src/main/projectTrust'
+import type { Project } from '../src/shared/types'
+
+const registryProject = (dir: string): Project => ({ id: 'p', name: 'p', path: dir, createdAt: 0, settings: { ...DEFAULT_PROJECT_SETTINGS } })
 import { ReviewActions } from '../src/main/reviewActions'
 import { ReviewPipeline } from '../src/main/reviewPipeline'
 import { ReviewStore } from '../src/main/reviews'
@@ -496,4 +505,156 @@ test('audit: helper programs (ffmpeg, PowerShell, osascript) are only ever run b
   assert.equal(helperPath('powershell', 'win32', { SystemRoot: 'C:\\Windows' }), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
   assert.equal(helperPath('osascript', 'darwin'), '/usr/bin/osascript')
   assert.equal(helperPath('screencapture', 'darwin'), '/usr/sbin/screencapture')
+})
+
+// ---------- second full audit (agent layer) ----------
+
+test('audit2: the forced hooks folder can never be created, so planted hooks never run', async () => {
+  const env = gitSafetyEnv()
+  const i = Object.entries(env).find(([k, v]) => k.startsWith('GIT_CONFIG_KEY_') && v === 'core.hooksPath')![0].replace('KEY', 'VALUE')
+  const hooks = env[i]!
+  assert.throws(() => mkdirSync(hooks, { recursive: true }))
+  // A repo where an agent tried to plant a post-checkout hook: Hangar's checkout doesn't run it.
+  const dir = tmp('hangar-x-hooks-')
+  const g = (...a: string[]) => execFileSync('git', a, { cwd: dir, env: { ...process.env, ...env } }).toString()
+  g('init', '-q', '-b', 'main')
+  g('-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'x')
+  const marker = join(dir, 'HOOK_RAN')
+  mkdirSync(join(dir, '.git', 'hooks'), { recursive: true })
+  writeFileSync(join(dir, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+  g('checkout', '-q', '-b', 'other')
+  assert.equal(existsSync(marker), false)
+})
+
+test('audit2: git refuses repos whose working tree is elsewhere, or a subfolder of a bigger repo', async () => {
+  const outer = tmp('hangar-x-outer-')
+  execFileSync('git', ['init', '-q'], { cwd: outer })
+  const sub = join(outer, 'game')
+  mkdirSync(sub)
+  await assert.rejects(gitStatus(sub), /bigger git repository/)
+
+  const home = tmp('hangar-x-fakehome-')
+  const proj = join(home, 'proj')
+  mkdirSync(proj)
+  writeFileSync(join(home, 'id_rsa'), 'secret')
+  execFileSync('git', ['init', '-q'], { cwd: proj })
+  execFileSync('git', ['config', 'core.worktree', '..'], { cwd: proj })
+  await assert.rejects(gitStatus(proj), /core\.worktree|bigger git repository/)
+})
+
+test('audit2: git-ignored files an autonomous task creates or changes are moved out of the project', async () => {
+  const t = setup({
+    script: async function* (_prompt, options) {
+      const cwd = options.cwd as string
+      writeFileSync(join(cwd, 'feature.luau'), '-- tracked change\n')
+      mkdirSync(join(cwd, 'Packages'), { recursive: true })
+      writeFileSync(join(cwd, 'Packages', 'Evil.luau'), 'require(123)')
+      writeFileSync(join(cwd, '.env'), 'CHANGED=1')
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    }
+  })
+  writeFileSync(join(t.dir, '.gitignore'), 'Packages/\n.env\nkeep.log\n')
+  writeFileSync(join(t.dir, '.env'), 'ORIGINAL=1')
+  writeFileSync(join(t.dir, 'keep.log'), 'untouched')
+  t.g('add', '.gitignore')
+  t.g('commit', '-qm', 'ignore')
+  t.runner.send(t.project.id, 'main', 'change things')
+  await until(() => t.reviews.list().length === 1)
+  const r = t.reviews.list()[0]!
+  assert.deepEqual(r.files, ['feature.luau'])
+  assert.equal(existsSync(join(t.dir, 'Packages', 'Evil.luau')), false, 'new ignored file moved out')
+  assert.equal(existsSync(join(t.dir, '.env')), false, 'changed ignored file moved out')
+  assert.equal(readFileSync(join(t.dir, 'keep.log'), 'utf8'), 'untouched', 'untouched ignored files stay')
+  assert.match(r.note ?? '', /git-ignored files .*Packages\/Evil\.luau/)
+  const qdir = /to (\S+quarantine\S+)\.$/.exec(r.note ?? '')
+  assert.ok(qdir && existsSync(join(qdir[1]!, 'Packages', 'Evil.luau')), 'kept in quarantine for inspection')
+})
+
+test('audit2: edits through links ask in red, and a write that ends up outside stops the run', async () => {
+  const outside = tmp('hangar-x-out2-')
+  const t = setup({ autonomous: false })
+  symlinkSync(outside, join(t.dir, 'src-link'))
+  const d = evaluateToolUse({ toolName: 'Write', input: { file_path: join(t.dir, 'src-link', 'x.luau') }, projectRoot: t.dir, settings: { ...t.project.settings, autoApproveEdits: true } })
+  assert.equal(d.action, 'ask')
+  assert.equal(d.action === 'ask' && d.dangerous, true)
+
+  const t2 = setup({
+    autonomous: false,
+    script: async function* (_p, options) {
+      const hook = (options.hooks as { PostToolUse: { matcher: string; hooks: ((i: unknown) => Promise<Record<string, unknown>>)[] }[] }).PostToolUse[0]!
+      assert.match(hook.matcher, /Write/)
+      const ok = await hook.hooks[0]!({ tool_input: { file_path: join(options.cwd as string, 'fine.luau') } })
+      assert.deepEqual(ok, {})
+      symlinkSync(outside, join(options.cwd as string, 'swapped'))
+      const bad = await hook.hooks[0]!({ tool_input: { file_path: join(options.cwd as string, 'swapped', 'x.luau') } })
+      assert.equal(bad.continue, false)
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    }
+  })
+  t2.runner.send(t2.project.id, 'main', 'write')
+  await until(() => t2.status('main') === 'stopped' || t2.status('main') === 'idle')
+  assert.equal(t2.status('main'), 'stopped')
+  assert.ok(t2.runner.snapshot(t2.project.id)[0]!.log.some((e) => /went through a link/.test(e.text)))
+})
+
+test('audit2: review actions hold the project, so no task can start in the middle of a merge', async () => {
+  const t = setup()
+  let release!: () => void
+  const held = t.runner.withProjectLock(t.project.id, () => new Promise<void>((r) => (release = r)))
+  t.runner.send(t.project.id, 'main', 'change while merging')
+  await tick(30)
+  assert.equal(t.calls.length, 0, 'task waits')
+  await assert.rejects(t.runner.withProjectLock(t.project.id, async () => 1), /working in this project/)
+  release()
+  await held
+  await until(() => t.calls.length === 1)
+})
+
+test('audit2: assorted hardening', async () => {
+  // Look-alike names for the Studio server are dropped.
+  const dir = tmp('hangar-x-mcp-')
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'Roblox-Studio': { command: 'x' }, roblox_studio: { command: 'y' }, blender: { command: 'z' } } }))
+  assert.deepEqual(Object.keys(projectMcpServers(dir)), ['blender'])
+  // More ways to print secrets.
+  for (const c of ['cat /proc/self/environ', 'node -p process.env', 'python -c "import os;print(os.environ)"', 'echo $GIT_CONFIG_VALUE_1']) assert.ok(mayRevealSecrets(c), c)
+  assert.equal(evaluateToolUse({ toolName: 'PowerShell', input: { command: 'Get-ChildItem env:' }, projectRoot: dir, settings: DEFAULT_PROJECT_SETTINGS }).action, 'ask')
+  // Credential-looking variables are removed from Hangar's own environment.
+  const env: NodeJS.ProcessEnv = { PATH: '/bin', GITHUB_TOKEN: 'x', AWS_SECRET_ACCESS_KEY: 'y', MY_API_KEY: 'z', ELECTRON_RENDERER_URL: 'u', LANG: 'en' }
+  assert.deepEqual(scrubProcessEnv(env).sort(), ['AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'MY_API_KEY'])
+  assert.deepEqual(Object.keys(env).sort(), ['ELECTRON_RENDERER_URL', 'LANG', 'PATH'])
+  // Sandbox write-denies nested package.json, node_modules and tool configs anywhere.
+  const plan = planSandbox({ ...registryProject(dir) }, { platform: 'darwin', appDataDir: '/a' })
+  const deny = (plan.settings!.sandbox as { filesystem: { denyWrite: string[] } }).filesystem.denyWrite
+  for (const n of ['package.json', 'node_modules', 'Makefile', 'rokit.toml', '.github']) assert.ok(deny.includes(join(dir, '**', n)), n)
+  // Edits inside node_modules ask in red.
+  const nm = evaluateToolUse({ toolName: 'Edit', input: { file_path: join(dir, 'node_modules', 'x', 'index.js') }, projectRoot: dir, settings: { ...DEFAULT_PROJECT_SETTINGS, autonomous: true } })
+  assert.equal(nm.action === 'ask' && nm.dangerous, true)
+  // A vault path through a link creates nothing outside.
+  const outside = tmp('hangar-x-vout-')
+  const proj = tmp('hangar-x-vproj-')
+  symlinkSync(outside, join(proj, 'notes'))
+  assert.throws(() => createVault(proj, 'notes/ui'), /link/)
+  assert.deepEqual(readdirSync(outside), [])
+})
+
+test('audit2: sandboxed auto-run hides the real key; `node .` MCP servers hash their main file', async () => {
+  const t = setup({ autonomous: false })
+  t.registry.update(t.project.id, { settings: { autoApproveEdits: true, sandbox: true } })
+  ;(t.runner as unknown as { deps: { platform: string } }).deps.platform = 'darwin'
+  t.runner.send(t.project.id, 'main', 'hello')
+  await until(() => t.calls.length === 1)
+  assert.deepEqual(t.auth.at(-1), { forceHideKey: true })
+
+  const dir = tmp('hangar-x-node-')
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ main: 'server/index.js' }))
+  mkdirSync(join(dir, 'server'))
+  writeFileSync(join(dir, 'server', 'index.js'), 'v1')
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { tool: { command: 'node', args: ['.'] } } }))
+  const p = registryProject(dir)
+  const before = (await reviewProject(p)).hash
+  writeFileSync(join(dir, 'server', 'index.js'), 'v2')
+  assert.notEqual((await reviewProject(p)).hash, before)
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ main: 'server/index.js', scripts: { x: 'y' } }))
+  assert.equal(isProtectedPath('server/index.js', dir), true)
 })

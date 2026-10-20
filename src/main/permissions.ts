@@ -1,5 +1,5 @@
 import type { ProjectSettings } from '@shared/types'
-import { isProtectedPath, patternEscapes, pathsFromToolInput, relativeInside } from './pathScope'
+import { isProtectedPath, patternEscapes, pathsFromToolInput, relativeInside, linkInPath } from './pathScope'
 
 export type PolicyDecision =
   | { action: 'allow' }
@@ -128,8 +128,12 @@ export function alwaysRuleFor(command: string): string | null {
 }
 
 /** Commands that could print environment variables (the API key lives there). */
-function mayRevealSecrets(command: string): boolean {
-  return /ANTHROPIC|API_KEY|_TOKEN|SECRET/.test(command) || /(^|[\s;&|(])(env|printenv|set|export)(\s|$)/.test(command) || /env:/i.test(command)
+export function mayRevealSecrets(command: string): boolean {
+  return (
+    /ANTHROPIC|API_KEY|_TOKEN|SECRET|GIT_CONFIG_/i.test(command) ||
+    /(^|[\s;&|(])(env|printenv|set|export|declare|compgen)(\s|$)/.test(command) ||
+    /env:|\/proc\/[^\s]*\/environ|process\.env|os\.environ|getenv|ENV\[|Environment\]::|GetEnvironmentVariable/i.test(command)
+  )
 }
 
 /**
@@ -196,6 +200,8 @@ export function evaluateToolUse(args: {
   }
 
   if (EDIT_TOOLS.has(toolName)) {
+    const link = paths.map((p) => linkInPath(projectRoot, p)).find((l): l is string => l !== null)
+    if (link) return ask(`Writes through ${link}, which is a link (it could point outside the project).`, true)
     const protectedRel = rels.find((r): r is string => r !== null && isProtectedPath(r, projectRoot))
     if (protectedRel) {
       return ask(`Edits ${protectedRel}, which controls how code or agents run. A change here could let an agent run commands later.`, true)
@@ -209,6 +215,10 @@ export function evaluateToolUse(args: {
     if (input.dangerouslyDisableSandbox === true) {
       return { action: 'deny', reason: 'Hangar does not allow commands to run outside the sandbox. Try a different approach that works inside the project folder.' }
     }
+  }
+
+  if (toolName === 'PowerShell' && mayRevealSecrets(typeof input.command === 'string' ? input.command : '')) {
+    return ask('This command may print environment variables or secrets, including your API key', true)
   }
 
   if (toolName === 'Bash') {

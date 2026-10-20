@@ -5,7 +5,8 @@ import { IPC } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, type QueryFn } from './agentRunner'
 import { CostTracker } from './costs'
-import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus } from './git'
+import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus, setNoHooksBase } from './git'
+import { scrubProcessEnv } from './env'
 import { JsonStore } from './jsonStore'
 import { KeyProxy } from './keyProxy'
 import { StudioClipRecorder } from './clips'
@@ -35,6 +36,10 @@ const DEFAULT_SETTINGS: AppSettings = {
 }
 
 let mainWindow: BrowserWindow | null = null
+
+// Credentials in Hangar's own environment (cloud, GitHub, npm tokens…) are removed before anything
+// starts, so no child process can inherit them however it builds its environment.
+scrubProcessEnv()
 
 // Single instance: a second launch focuses the existing window instead of running twice.
 if (!app.requestSingleInstanceLock()) {
@@ -151,6 +156,7 @@ app.whenReady().then(() => {
   } catch {
     // keep the default
   }
+  setNoHooksBase(dataDir())
   // The UI never needs the camera, microphone, notifications, location or similar; refuse them all.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)

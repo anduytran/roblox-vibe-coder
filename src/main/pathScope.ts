@@ -1,5 +1,5 @@
-import { existsSync, realpathSync } from 'node:fs'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** Resolve symlinks for the deepest part of the path that exists, so links can't escape the project. */
 function realish(p: string): string {
@@ -79,7 +79,9 @@ export function patternEscapes(pattern: string): boolean {
  * Edits to these always ask, with a warning, whatever the project settings say.
  */
 const PROTECTED_DIRS = new Set([
-  '.git', '.claude', '.vscode', '.github', '.husky', '.idea', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs', '.obsidian'
+  '.git', '.claude', '.vscode', '.github', '.husky', '.idea', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs', '.obsidian',
+  // Code that tools and MCP servers load and run (agents shouldn't install or change packages).
+  'node_modules'
 ])
 const PROTECTED_FILES = new Set([
   '.mcp.json', 'claude.md', '.gitattributes', '.gitmodules', '.npmrc', 'package.json', '.envrc', 'makefile',
@@ -94,6 +96,26 @@ export function setServerScriptDirs(projectRoot: string, relDirs: string[]): voi
 }
 export function serverScriptDirs(projectRoot: string): string[] {
   return [...(extraProtectedDirs.get(projectRoot) ?? [])]
+}
+
+/**
+ * The first part of `target`'s path (inside the project) that is a symbolic link, or null. A link can be
+ * swapped between Hangar's check and the actual write, so edits through links always ask.
+ */
+export function linkInPath(root: string, target: string): string | null {
+  const abs = isAbsolute(target) ? resolve(target) : resolve(root, target)
+  const rel = relative(resolve(root), abs)
+  if (rel.startsWith('..') || isAbsolute(rel)) return null
+  let cur = resolve(root)
+  for (const seg of rel.split(/[\\/]/).filter(Boolean)) {
+    cur = join(cur, seg)
+    try {
+      if (lstatSync(cur).isSymbolicLink()) return relative(resolve(root), cur).split(/[\\/]/).join('/')
+    } catch {
+      return null // the rest doesn't exist yet
+    }
+  }
+  return null
 }
 
 export function isProtectedPath(rel: string, projectRoot?: string): boolean {

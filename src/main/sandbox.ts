@@ -26,7 +26,12 @@ export const CREDENTIAL_DIRS = [
  * commits task work itself, so agents never need to change branches, refs or history. The rest are
  * Hangar's protected names, at the root and (via **) at any depth.
  */
-const ANY_DEPTH = ['.git', '.gitattributes', '.gitignore', '.gitmodules', '.claude', '.mcp.json', 'CLAUDE.md', '.vscode', '.envrc', '.npmrc', '.obsidian']
+const ANY_DEPTH = [
+  '.git', '.gitattributes', '.gitignore', '.gitmodules', '.claude', '.mcp.json', 'CLAUDE.md', 'claude.md', '.vscode', '.envrc', '.npmrc', '.obsidian',
+  'package.json', 'Makefile', 'makefile', 'GNUmakefile', 'rokit.toml', 'aftman.toml', 'foreman.toml', 'wally.toml', 'mise.toml', '.mise.toml',
+  '.tool-versions', '.lfsconfig', '.pre-commit-config.yaml', '.github', '.husky', '.idea', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs',
+  'node_modules'
+]
 const PROJECT_DENY_WRITE = [
   '.git',
   'CLAUDE.md', 'package.json', 'Makefile', '.envrc', '.npmrc', '.gitattributes', '.gitmodules', '.lfsconfig',

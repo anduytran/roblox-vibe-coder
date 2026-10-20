@@ -82,6 +82,39 @@ Design:
 | The researcher could reach local services through names that resolve to this computer; sessions could carry web content across runs | Low-Medium | Egress proxy with resolve-then-connect; research sessions are never resumed or saved. |
 | `research/` or a vault folder that is a link could make Hangar write outside the project | Low | Both must be real folders inside the project. |
 
+## Full re-audit (2026-10-20, two independent reviewers)
+
+Agent execution, policy and git:
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| The forced "no hooks" folder was in temp and its path was visible to agents; an agent could create it, plant a hook, and Hangar's own git (unsandboxed) would run it | Critical | The hooks path can never exist (inside `/dev/null` on macOS/Linux; inside a regular file in Hangar's data folder on Windows). Hangar's git runs with a minimal environment. |
+| Git-ignored files an autonomous task created or changed (`Packages/`, `node_modules/`, `.env`, build output) stayed in the project after switching back, never reviewed | High | Ignored files are fingerprinted when a task starts; anything new or changed is moved out to a quarantine folder and listed on the review. `node_modules` is protected and sandbox write-denied. |
+| A repository whose config sets `core.worktree` (or a project inside a bigger repository) let `git add -A`/checkout reach files outside the project | High | Git only runs when the repository's top folder is exactly the project and its git data is inside it; `core.worktree`, credential helpers and `alternateRefsCommand` are flagged. |
+| A link swapped in between Hangar's path check and the write could send an edit outside the project | Medium | Edits through any link ask in red; after every write Hangar re-checks the path and stops the run if it left the project. |
+| A merge or checkout could interleave with a task starting in the same project | Medium-Low | Review actions hold the project; no task starts until they finish. |
+| Assorted: sandbox denies narrower than the edit rules; auto-run Bash with key hiding off; more ways to print env vars; `node .` MCP servers not hashed; look-alike Studio server names; vault folders created through links | Low | Sandbox denies the same names at any depth; any auto-run mode forces key hiding; more secret patterns (also for PowerShell); `node .`/npm servers hash `package.json` and its main file, folder arguments hash the folder; names normalising to `Roblox_Studio` are dropped; vault paths are checked before anything is created. Hangar also removes credential-looking variables from its own environment at startup. |
+
+Network, Electron and phone remote:
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| A paired phone could register an invalid push key that broke notifications for every phone and threw in the main process | Medium | Keys must be real curve points; sending never throws. |
+| Helper programs (ffmpeg, PowerShell, tailscale) were started by name; on Windows that searches the current folder first | Medium | Absolute paths only; Hangar's working folder is its own data folder. |
+| The researcher's egress proxy was an open tunnel for anything on the machine | Low-Medium | Per-run credentials that stop working when the run ends. |
+| Lost phones stayed paired forever; pairing revealed when it was active; phone names could contain hidden characters | Low | Unused phones are unpaired after 30 days; uniform pairing answers; names cleaned. |
+| Electron granted permission requests by default; links opened without saying where; dev websocket in the shipped CSP | Low | All permission requests refused; links show their host and ask; production CSP has no websocket. |
+
+### Verify on first real run (SDK behaviour Hangar relies on)
+
+These can't be tested without the real Agent SDK and are worth checking once:
+- The SDK uses the `env` Hangar passes (not merged with the full environment). Hangar now strips credential variables from its own environment either way.
+- The OS sandbox is really applied (`settings.sandbox`): with a sandboxed project, ask an agent to run `touch ~/hangar-probe` — it must fail.
+- Subagent tool calls go through Hangar's approvals and count toward the per-task budget.
+- `Read` of a file outside the project shows a red approval card.
+- `PostToolUse` hooks run (the link check after writes).
+- The researcher's web fetches use `HTTPS_PROXY` with credentials (otherwise its fetches fail; the host-name rules still apply).
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.

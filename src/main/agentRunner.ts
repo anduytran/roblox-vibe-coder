@@ -23,6 +23,8 @@ import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } fro
 import { readClaudeMd, reviewProject, TrustStore } from './projectTrust'
 import { planSandbox } from './sandbox'
 import { createVault, vaultInstructions } from './vault'
+import { minimalEnv } from './env'
+import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
@@ -39,25 +41,13 @@ const MAX_DETAILS = 20_000
  * Only these environment variables reach the Claude engine (and so every command and tool
  * server it starts). Everything else in your environment, like cloud or GitHub tokens, stays out.
  */
-const ENV_ALLOWLIST = [
-  'PATH', 'Path', 'PATHEXT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
-  'PROGRAMDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'SystemRoot',
-  'SYSTEMROOT', 'SystemDrive', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'USER', 'USERNAME', 'LOGNAME',
-  'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
-  'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY',
-  'https_proxy', 'http_proxy', 'no_proxy', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'
-]
 
 /**
  * `auth` is either { ANTHROPIC_API_KEY: <real key> } or, with key hiding on, the proxy's
  * { ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY: <session token> }.
  */
 export function buildAgentEnv(auth: Record<string, string>, source: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const k of ENV_ALLOWLIST) {
-    const v = source[k]
-    if (typeof v === 'string') env[k] = v
-  }
+  const env = minimalEnv(source)
   // No telemetry, error reporting or auto-update traffic from the engine.
   return { ...env, ...gitSafetyEnv(), CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', ...auth }
 }
@@ -193,6 +183,8 @@ export class AgentRunner {
   private seq = 0
   /** Projects whose finished task is still being committed and switched back to the base branch. */
   private wrapping = new Set<string>()
+  /** Projects a review action (merge, discard, checkout…) is working on; no task may start meanwhile. */
+  private locked = new Set<string>()
   private persisted: JsonStore<Persisted>
   private trust: TrustStore
 
@@ -267,8 +259,23 @@ export class AgentRunner {
 
   /** True while any agent in the project is running (the working tree may be changing). */
   projectBusy(projectId: string): boolean {
-    if (this.wrapping.has(projectId)) return true
+    if (this.wrapping.has(projectId) || this.locked.has(projectId)) return true
     return [...this.states.values()].some((s) => s.projectId === projectId && (s.status === 'working' || s.status === 'awaiting_approval'))
+  }
+
+  /**
+   * Run `fn` with the project folder reserved: refuses if an agent is working there, and no task can
+   * start in the project until `fn` finishes (so a merge or checkout can't interleave with a new task).
+   */
+  async withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    if (this.projectBusy(projectId)) throw new Error('An agent is working in this project. Wait for it to finish (or stop it) first.')
+    this.locked.add(projectId)
+    try {
+      return await fn()
+    } finally {
+      this.locked.delete(projectId)
+      this.schedule()
+    }
   }
 
   send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean } = {}): void {
@@ -370,7 +377,7 @@ export class AgentRunner {
     const max = Math.max(1, this.deps.getSettings().maxConcurrentRuns)
     while (this.runningCount() < max) {
       const next = [...this.states.values()]
-        .filter((s) => s.status === 'queued' && s.queue.length > 0)
+        .filter((s) => s.status === 'queued' && s.queue.length > 0 && !this.locked.has(s.projectId))
         // In autonomous mode a project works on one branch at a time, so its tasks run one after another.
         .filter((s) => !(this.isAutonomous(s.projectId) && this.projectBusy(s.projectId)))
         .sort((a, b) => (this.order.get(a.queue[0]!) ?? 0) - (this.order.get(b.queue[0]!) ?? 0))[0]
@@ -474,7 +481,9 @@ export class AgentRunner {
           : `Not sandboxed: ${sandbox.reason}`
       })
       // Unattended agents never hold the real API key.
-      const auth = await this.deps.engineAuth(apiKey, { forceHideKey: project.settings.autonomous || research })
+      // Whenever commands can run without a click (autonomous, or sandboxed auto-run), agents never hold the real key.
+      const autoRun = sandbox.active && (project.settings.autoApproveEdits || project.settings.autonomous)
+      const auth = await this.deps.engineAuth(apiKey, { forceHideKey: project.settings.autonomous || research || autoRun })
       releaseAuth = auth.release
       const allRoles = listRoles(project.path)
       const claudeMd = readClaudeMd(project.path)
@@ -519,6 +528,29 @@ export class AgentRunner {
         options.cwd = researchDir
         options.disallowedTools = RESEARCH_BLOCKED
       } else if (sandbox.settings) options.settings = sandbox.settings
+      if (!research) {
+        // After every file write, check the path again: a link swapped in after Hangar's check (a race with a
+        // background command) would have sent the write outside the project. If so, stop the run at once.
+        options.hooks = {
+          PostToolUse: [
+            {
+              matcher: 'Edit|Write|MultiEdit|NotebookEdit',
+              hooks: [
+                async (hookInput: { tool_input?: Record<string, unknown> }) => {
+                  const ti = hookInput?.tool_input ?? {}
+                  const p = typeof ti.file_path === 'string' ? ti.file_path : typeof ti.notebook_path === 'string' ? ti.notebook_path : null
+                  if (p && (linkInPath(project.path, p) !== null || relativeInside(project.path, p) === null)) {
+                    this.log(s, { kind: 'error', text: `Stopped: a file write went through a link or outside the project (${p}). Check that file and your project folder.` })
+                    controller.abort()
+                    return { continue: false, stopReason: 'A file write left the project folder.' }
+                  }
+                  return {}
+                }
+              ]
+            }
+          ]
+        }
+      }
       if (!research && role?.tools?.length) options.disallowedTools = [...EDIT_TOOLS, 'Bash'].filter((t) => !role.tools!.includes(t))
       // A researcher never resumes or keeps a session, so web content can't carry over into another run
       // (or into a normal agent if the role's kind is changed later), and project context can't flow in.
@@ -616,7 +648,14 @@ export class AgentRunner {
     const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
     const title = task.prompt.split('\n')[0]!.slice(0, 120)
     try {
-      const { files, headSha, note } = await finishTaskBranch(project.path, branch.name, branch.from, roleName, `${roleName}: ${title}`)
+      const { files, headSha, note } = await finishTaskBranch(
+        project.path,
+        branch.name,
+        branch.from,
+        roleName,
+        `${roleName}: ${title}`,
+        join(this.deps.appDataDir, 'quarantine', task.id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64))
+      )
       const clipResult = clip ? await clip.finish().catch(() => null) : null
       if (files.length === 0 || !headSha) {
         if (clipResult) StudioClipRecorder.remove(clipResult.files)

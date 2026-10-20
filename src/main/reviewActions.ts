@@ -82,19 +82,21 @@ export class ReviewActions {
     if (warnings.length && !opts.force) throw new Error(`${warnings.join(' ')} Choose "Merge anyway" to merge regardless.`)
     const unseen = warnings.filter((w) => !(opts.acknowledged ?? []).includes(w))
     if (unseen.length) throw new Error(`Something changed since you looked: ${unseen.join(' ')} Look again before merging.`)
-    this.idle(review.projectId)
-    await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
-    if (review.clip) StudioClipRecorder.remove(review.clip.files)
-    return this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
+    return this.deps.runner.withProjectLock(review.projectId, async () => {
+      await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
+      if (review.clip) StudioClipRecorder.remove(review.clip.files)
+      return this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
+    })
   }
 
   async discard(id: string): Promise<Review> {
     const { review, root } = this.pending(id)
     if (review.kind === 'research') return this.changed(this.deps.reviews.update(id, { status: 'discarded' }))
-    this.idle(review.projectId)
-    await deleteTaskBranch(root, review.branch)
-    if (review.clip) StudioClipRecorder.remove(review.clip.files)
-    return this.changed(this.deps.reviews.update(id, { status: 'discarded', clip: null }))
+    return this.deps.runner.withProjectLock(review.projectId, async () => {
+      await deleteTaskBranch(root, review.branch)
+      if (review.clip) StudioClipRecorder.remove(review.clip.files)
+      return this.changed(this.deps.reviews.update(id, { status: 'discarded', clip: null }))
+    })
   }
 
   /** Run a task's checks (and, if asked, the reviewer agent) again. */
@@ -114,7 +116,10 @@ export class ReviewActions {
   private async approveResearch(review: Review, root: string): Promise<Review> {
     const findings = review.research
     if (!findings) throw new Error('This research has no report.')
-    this.idle(review.projectId)
+    return this.deps.runner.withProjectLock(review.projectId, () => this.saveResearch(review, findings, root))
+  }
+
+  private async saveResearch(review: Review, findings: NonNullable<Review['research']>, root: string): Promise<Review> {
     const branch = await currentBranch(root)
     if (branch?.startsWith('hangar/')) throw new Error(`Your project folder is on a task branch (${branch}). Switch back to your main branch first.`)
     const slug = review.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'research'
@@ -151,16 +156,14 @@ export class ReviewActions {
   async checkout(id: string): Promise<void> {
     const { review, root } = this.pending(id)
     if (review.kind === 'research') throw new Error('Research has no branch.')
-    this.idle(review.projectId)
-    await checkoutBranch(root, review.branch)
+    await this.deps.runner.withProjectLock(review.projectId, () => checkoutBranch(root, review.branch))
   }
 
   async checkoutBase(projectId: string): Promise<void> {
-    this.idle(projectId)
     const root = this.deps.registry.get(projectId).path
-    const base = this.deps.reviews.list(projectId)[0]?.base
+    const base = this.deps.reviews.list(projectId).find((r) => r.kind !== 'research')?.base
     if (!base) throw new Error('No task branches yet for this project.')
-    await checkoutBranch(root, base)
+    await this.deps.runner.withProjectLock(projectId, () => checkoutBranch(root, base))
   }
 
   private publishing = false

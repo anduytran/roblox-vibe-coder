@@ -43,9 +43,12 @@ function referencedPaths(projectPath: string, words: string[]): string[] {
     if (!word || word.startsWith('-')) continue
     const target = isAbsolute(word) ? word : resolve(projectPath, word)
     const rel = relativeInside(projectPath, target)
-    if (rel === null || rel === '') continue
+    if (rel === null) continue
     try {
-      if (statSync(target).isFile()) out.push(rel)
+      const st = statSync(target)
+      // A folder (e.g. `node .`) means everything in it can run: hash and protect the whole folder.
+      if (st.isFile()) out.push(rel)
+      else if (st.isDirectory()) out.push(rel === '' ? '.' : `${rel}/`)
     } catch {
       // not a file
     }
@@ -63,7 +66,7 @@ function hashTree(root: string, rel: string, parts: string[], budget: { files: n
     return
   }
   for (const name of entries) {
-    if (name === '.git' || name === 'node_modules') continue
+    if (name === '.git') continue
     const childRel = rel ? `${rel}/${name}` : name
     const full = join(root, childRel)
     let st
@@ -101,7 +104,30 @@ export async function reviewProject(project: Project): Promise<ProjectReview> {
     items.push(line)
     // Scripts the server runs from inside the project, and everything in their folders, are part of
     // what is approved: editing any of them asks again, and agent edits there always ask in red.
-    for (const rel of referencedPaths(project.path, [cfg.command, ...(cfg.args ?? [])])) {
+    const refs = referencedPaths(project.path, [cfg.command, ...(cfg.args ?? [])])
+    // npm/pnpm/yarn/bun/node run what package.json says.
+    if (['npm', 'pnpm', 'yarn', 'bun', 'node', 'npx', 'pnpx', 'bunx'].includes(runner) && existsSync(join(project.path, 'package.json'))) refs.push('package.json')
+    for (const rel of refs) {
+      if (rel === '.') {
+        // `node .` runs package.json's "main" file: hash and protect that (the whole project can't be frozen).
+        try {
+          const main = (JSON.parse(readFileSync(join(project.path, 'package.json'), 'utf8')) as { main?: unknown }).main
+          const mainRel = typeof main === 'string' ? relativeInside(project.path, resolve(project.path, main)) : null
+          if (mainRel && existsSync(join(project.path, mainRel))) {
+            scriptDirs.add(dirname(mainRel) === '.' ? mainRel : dirname(mainRel))
+            hashParts.push(`${mainRel}:${sha(readFileSync(join(project.path, mainRel)))}`)
+          }
+        } catch {
+          // no package.json main
+        }
+        continue
+      }
+      if (rel.endsWith('/')) {
+        const dir = rel.slice(0, -1)
+        scriptDirs.add(dir)
+        hashTree(project.path, dir, hashParts, { files: MAX_HASH_FILES, bytes: MAX_HASH_BYTES })
+        continue
+      }
       const dir = dirname(rel)
       if (dir === '.' || dir === '') {
         scriptDirs.add(rel)

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VaultKind } from '@shared/types'
 import { relativeInside } from './pathScope'
@@ -290,7 +290,13 @@ export function vaultStatus(projectRoot: string, folder: string): VaultStatus {
 export function createVault(projectRoot: string, folder: string, kind: VaultKind = 'ui'): string[] {
   if (!validVaultFolder(folder)) throw new Error('Invalid vault folder name.')
   const created: string[] = []
-  // The vault must be a real folder inside the project, not a link to somewhere else.
+  // The vault must be a real folder inside the project, not a link to somewhere else: check every
+  // existing part of the path before creating anything.
+  let cur = projectRoot
+  for (const seg of folder.split('/')) {
+    cur = join(cur, seg)
+    if (existsSync(cur) && lstatSync(cur).isSymbolicLink()) throw new Error(`${folder} is a link to somewhere outside the project.`)
+  }
   mkdirSync(join(projectRoot, folder), { recursive: true })
   if (relativeInside(projectRoot, join(projectRoot, folder)) !== folder) throw new Error(`${folder} is a link to somewhere outside the project.`)
   for (const [rel, body] of Object.entries(TEMPLATES[kind] ?? UI_TEMPLATES)) {

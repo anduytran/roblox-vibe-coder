@@ -1,12 +1,35 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { GitFile, GitStatus } from '@shared/types'
 import { isInsideRoot } from './pathScope'
+import { minimalEnv } from './env'
 
-/** A hooks folder that never exists, so git finds no hooks to run. */
-const NO_HOOKS_DIR = join(tmpdir(), `hangar-no-hooks-${randomUUID()}`)
+/**
+ * A hooks folder that can never exist, so git finds no hooks to run — and that nothing (including an
+ * agent that reads this value from its environment) can create: on macOS/Linux it's inside /dev/null;
+ * on Windows it's inside a regular file in Hangar's data folder (a file can't contain folders), which
+ * agents can't write to. See setNoHooksBase.
+ */
+let NO_HOOKS_DIR = process.platform === 'win32' ? join(tmpdir(), `hangar-no-hooks-${randomUUID()}`, 'hooks') : '/dev/null/hangar-no-hooks'
+
+/** On Windows, call once at startup with Hangar's data folder. */
+export function setNoHooksBase(dataDir: string): void {
+  if (process.platform !== 'win32') return
+  const blocker = join(dataDir, 'no-hooks')
+  try {
+    if (!existsSync(blocker) || !statSync(blocker).isFile()) {
+      rmSync(blocker, { recursive: true, force: true })
+      writeFileSync(blocker, 'This file stops git hooks from running. Do not replace it with a folder.\n')
+    }
+    NO_HOOKS_DIR = join(blocker, 'hooks')
+    FORCED_CONFIG[1] = ['core.hooksPath', NO_HOOKS_DIR]
+  } catch {
+    // keep the temp-based default
+  }
+}
 
 /**
  * Config forced onto every git process Hangar starts, and onto the agents' environment.
@@ -40,7 +63,8 @@ export function gitSafetyEnv(): Record<string, string> {
 /** Run git with an argument array (never through a shell), inside the project folder, with forced safe config. */
 function git(cwd: string, args: string[], opts: { okExitCodes?: number[] } = {}): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    const env = { ...process.env, ...gitSafetyEnv() }
+    // Minimal environment: no tokens, and no GIT_DIR/GIT_WORK_TREE or similar from the user's shell.
+    const env = { ...minimalEnv(), ...gitSafetyEnv() }
     execFile('git', args, { cwd, env, maxBuffer: 20 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       const code = err && typeof (err as NodeJS.ErrnoException).code === 'number' ? Number((err as NodeJS.ErrnoException).code) : null
       if (err && !(code !== null && opts.okExitCodes?.includes(code))) reject(new Error((stderr || err.message).trim()))
@@ -77,7 +101,8 @@ const DANGEROUS_KEY = [
   /^diff\.external$/,
   /^merge\..+\.driver$/,
   /^gpg\.(.+\.)?program$/,
-  /^core\.(fsmonitor|hookspath|pager|editor|sshcommand|askpass|gitproxy)$/,
+  /^core\.(fsmonitor|hookspath|pager|editor|sshcommand|askpass|gitproxy|worktree|alternaterefscommand)$/,
+  /^credential(\..+)?\.helper$/,
   /^include\.path$/,
   /^includeif\..+\.path$/,
   /^uploadpack\.packobjectshook$/
@@ -115,6 +140,27 @@ export async function dangerousGitConfig(root: string): Promise<string[]> {
   return found
 }
 
+/**
+ * The repository must be exactly this project folder: not a subfolder of a bigger repository, and not
+ * one whose config points its working tree (or git folder) somewhere else — otherwise "git add -A" or a
+ * checkout could reach files outside the project.
+ */
+async function assertRepoIsProject(root: string): Promise<void> {
+  const real = (p: string): string => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return p
+    }
+  }
+  const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
+  if (real(top).toLowerCase() !== real(root).toLowerCase()) {
+    throw new Error(`This folder is part of a bigger git repository (${top}). Add that repository's top folder to Hangar instead, so git never touches files outside the project.`)
+  }
+  const gitDir = (await git(root, ['rev-parse', '--absolute-git-dir'])).trim()
+  if (!isInsideRoot(root, gitDir)) throw new Error(`This repository keeps its git data outside the project (${gitDir}), so Hangar won't run git here.`)
+}
+
 async function assertSafeRepo(root: string): Promise<void> {
   const bad = await dangerousGitConfig(root)
   if (bad.length) {
@@ -122,6 +168,7 @@ async function assertSafeRepo(root: string): Promise<void> {
       `This repository's git config can make git run other programs, so Hangar won't run git here:\n${bad.join('\n')}\nReview .git/config and remove these entries if you didn't add them.`
     )
   }
+  await assertRepoIsProject(root)
 }
 
 export async function gitStatus(root: string): Promise<GitStatus> {
@@ -238,6 +285,59 @@ export interface TaskBase {
   baseSha: string
   /** Every ref (branch, tag, ...) and the commit it pointed to when the task started. */
   refs: Record<string, string>
+  /** Git-ignored files when the task started (path → size:mtime), or null if there were too many to track. */
+  ignored: Record<string, string> | null
+}
+
+const MAX_IGNORED = 200_000
+
+/** Fingerprints of every git-ignored file (they never show up in a diff, so they're checked separately). */
+async function ignoredFiles(root: string): Promise<Record<string, string> | null> {
+  const out = await git(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'])
+  const list = out.split('\0').filter(Boolean)
+  if (list.length > MAX_IGNORED) return null
+  const map: Record<string, string> = {}
+  for (const rel of list) {
+    try {
+      const st = lstatSync(join(root, rel))
+      map[rel] = st.isSymbolicLink() ? 'link' : `${st.size}:${Math.round(st.mtimeMs)}`
+    } catch {
+      // vanished meanwhile
+    }
+  }
+  return map
+}
+
+/**
+ * Ignored files the task created or changed (Packages/, node_modules/, build output, .env…) would
+ * otherwise stay in your project after switching back, unreviewed. Move them out to `quarantineDir`.
+ */
+async function quarantineIgnored(root: string, before: Record<string, string> | null, quarantineDir: string): Promise<{ moved: string[]; skipped: boolean }> {
+  if (before === null) return { moved: [], skipped: true }
+  const after = await ignoredFiles(root)
+  if (after === null) return { moved: [], skipped: true }
+  const moved: string[] = []
+  for (const [rel, print] of Object.entries(after)) {
+    if (before[rel] === print) continue
+    const src = join(root, rel)
+    // Never follow a planted link out of the project while moving.
+    if (!isInsideRoot(root, dirname(src))) continue
+    try {
+      const st = lstatSync(src)
+      if (st.isSymbolicLink()) {
+        rmSync(src, { force: true })
+      } else {
+        const dest = join(quarantineDir, rel)
+        mkdirSync(dirname(dest), { recursive: true })
+        cpSync(src, dest)
+        rmSync(src, { force: true })
+      }
+      moved.push(rel)
+    } catch {
+      // leave it; it's listed as not moved below
+    }
+  }
+  return { moved, skipped: false }
 }
 
 async function snapshotRefs(root: string): Promise<Record<string, string>> {
@@ -264,7 +364,7 @@ export async function prepareTaskBase(root: string): Promise<TaskBase> {
     throw new Error('There are uncommitted changes. Commit or discard them in the Changes tab first, so a task branch only holds the agent\'s work.')
   }
   const baseSha = (await git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
-  return { base, baseSha, refs: await snapshotRefs(root) }
+  return { base, baseSha, refs: await snapshotRefs(root), ignored: await ignoredFiles(root) }
 }
 
 export function taskBranchName(agentId: string, prompt: string, id: string): string {
@@ -318,7 +418,14 @@ export interface FinishedTask {
  * the base branch. Refuses to commit anywhere but the task branch, and undoes any change the agent
  * made to other branches or tags.
  */
-export async function finishTaskBranch(root: string, branch: string, from: TaskBase, agentName: string, message: string): Promise<FinishedTask> {
+export async function finishTaskBranch(
+  root: string,
+  branch: string,
+  from: TaskBase,
+  agentName: string,
+  message: string,
+  quarantineDir?: string
+): Promise<FinishedTask> {
   assertTaskBranch(branch)
   await assertSafeRepo(root)
   const notes: string[] = []
@@ -353,6 +460,15 @@ export async function finishTaskBranch(root: string, branch: string, from: TaskB
   const files = (await git(root, ['diff', '--name-only', '-z', from.baseSha, headSha])).split('\0').filter(Boolean)
   if (files.length === 0) await git(root, ['branch', '-D', branch]).catch(() => undefined)
   if (files.some((f) => /(^|\/)\.gitignore$/.test(f))) notes.push('This change edits .gitignore — check it doesn\'t hide or expose files you care about.')
+  if (quarantineDir) {
+    const q = await quarantineIgnored(root, from.ignored ?? null, quarantineDir)
+    if (q.moved.length) {
+      notes.push(
+        `The agent created or changed ${q.moved.length} git-ignored file${q.moved.length === 1 ? '' : 's'} (${q.moved.slice(0, 5).join(', ')}${q.moved.length > 5 ? '…' : ''}), which wouldn't show in this review. Hangar moved ${q.moved.length === 1 ? 'it' : 'them'} out of your project to ${quarantineDir}.`
+      )
+    }
+    if (q.skipped) notes.push('This project has too many git-ignored files for Hangar to check what the agent changed outside git.')
+  }
   return { files, headSha: files.length ? headSha : null, note: notes.length ? notes.join(' ') : null }
 }
 
