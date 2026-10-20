@@ -51,7 +51,7 @@ label.check{display:flex;gap:10px;align-items:center;font-size:15px}label.check 
 .diff{overflow:auto;max-height:60vh;background:var(--bg);border-radius:8px;padding:6px 0}
 .d-add{background:var(--add)}.d-del{background:var(--del)}.d-hunk{color:var(--info)}.d-meta{color:var(--muted);font-weight:600}
 video,img.frame{width:100%;border-radius:8px;background:#000}
-.frames{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory}.frames img{flex:0 0 85%;scroll-snap-align:center;border-radius:8px}
+.frames{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start}.frames img{flex:0 0 85%;width:85%;height:auto;scroll-snap-align:center;border-radius:8px}
 .toast{position:fixed;left:16px;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px;z-index:9}
 .toast.err{border-color:var(--err);color:var(--err)}
 .empty{color:var(--muted);text-align:center;padding:32px 0}
@@ -195,7 +195,12 @@ function reviewView(r) {
     } else {
       const strip = h('div', { class: 'frames' })
       clipBox.append(strip)
-      for (let i = 0; i < r.clip.count; i++) blobUrl('/api/reviews/' + r.id + '/clip/' + i).then((u) => strip.append(h('img', { src: u, alt: 'Playtest screenshot ' + (i + 1) }))).catch(() => {})
+      for (let i = 0; i < r.clip.count; i++) {
+        // Placeholders first, so screenshots stay in order however fast each one loads.
+        const img = h('img', { alt: 'Playtest screenshot ' + (i + 1) })
+        strip.append(img)
+        blobUrl('/api/reviews/' + r.id + '/clip/' + i).then((u) => { img.src = u }).catch(() => img.remove())
+      }
     }
   }
   const diffBox = h('div', {}, h('button', { class: 'btn', onclick: async (e) => {
