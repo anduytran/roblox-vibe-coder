@@ -1,5 +1,5 @@
 import { addProject, attempt, selectProject, toast, useStore } from '../store'
-import { Button, usd } from './ui'
+import { Avatar, Icon, usd } from './ui'
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const projects = useStore((s) => s.projects)
@@ -17,9 +17,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-mark" aria-hidden>
-          ◢◣
-        </span>
+        <svg className="brand-mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+          <path d="M2 16 10 4l8 12h-4.2L10 10.2 6.2 16Z" fill="currentColor" />
+        </svg>
         Hangar
       </div>
       <div className="side-label">Projects</div>
@@ -32,7 +32,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           return (
             <li key={p.id}>
               <button className={`project-item ${selected === p.id ? 'project-item-active' : ''}`} onClick={() => selectProject(p.id)}>
-                <span className={`dot ${waiting ? 'dot-warn' : working ? 'dot-live' : errored ? 'dot-err' : ''}`} />
+                <span className="avatar-wrap">
+                  <Avatar name={p.name} />
+                  {(waiting > 0 || working > 0 || errored) && <span className={`dot avatar-dot ${waiting ? 'dot-warn' : working ? 'dot-live' : 'dot-err'}`} />}
+                </span>
                 <span className="project-item-name">{p.name}</span>
                 {waiting > 0 ? (
                   <span className="badge badge-warn" title="Actions waiting for your approval">
@@ -48,8 +51,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           )
         })}
       </ul>
-      <button className="add-project" onClick={() => void addProject()}>
-        + Add project
+      <button className="side-btn" onClick={() => void addProject()}>
+        <Icon name="plus" />
+        Add project
       </button>
 
       <div className="side-foot">
@@ -65,11 +69,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <div className="meter-fill" style={{ width: `${Math.min(100, (costs.todayUsd / limit) * 100)}%` }} />
           </div>
         )}
-        <Button tone="ghost" onClick={onOpenSettings}>
+        <button className="side-btn" onClick={onOpenSettings}>
+          <Icon name="gear" />
           Settings
-        </Button>
-        <Button
-          tone="danger"
+        </button>
+        <button
+          className="side-btn side-btn-danger"
           disabled={!anyRunning}
           title="Stop every running agent and clear all queues"
           onClick={() =>
@@ -79,8 +84,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             })
           }
         >
+          <Icon name="stop" />
           Stop all agents
-        </Button>
+        </button>
       </div>
     </aside>
   )

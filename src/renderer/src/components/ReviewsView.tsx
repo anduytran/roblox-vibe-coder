@@ -101,7 +101,7 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         {isPending && (
           <div className="row gap-xs">
             <Button
-              tone="primary"
+              tone={mergeWarnings(review).length ? 'default' : 'primary'}
               disabled={!!busy}
               onClick={() => {
                 const warnings = mergeWarnings(review)

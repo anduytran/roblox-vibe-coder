@@ -13,6 +13,7 @@ Built for personal use first; packaging for a downloadable installer is set up b
 - **Approvals** — anything that changes things asks first (see *Safety model*). "Always allow" is saved per project and can be removed in Project settings.
 - **Changes tab** — git diff of everything agents changed, commit all, or revert a single file (new files go to the OS trash, never hard-deleted).
 - **Spending controls** — per-task limit, daily limit across projects, optional daily limit per project, and a **Stop all agents** button.
+- **Light and dark themes** — follows your OS, or pick one in Settings → Appearance.
 - **Sessions resume** — each agent continues its conversation across tasks and app restarts until you click *New session*.
 
 ## Autonomous mode

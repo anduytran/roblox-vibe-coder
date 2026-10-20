@@ -3,7 +3,7 @@ import type { AgentState, LogEntry, Project, Role } from '@shared/types'
 import { attempt, EMPTY_AGENTS, EMPTY_ROLES, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { RoleEditor } from './RoleEditor'
-import { Button, StatusPill, timeAgo, usd } from './ui'
+import { Button, Icon, StatusPill, timeAgo, usd } from './ui'
 
 const MAIN_AGENT: Role = {
   id: 'main',
@@ -56,9 +56,21 @@ export function AgentsView({ project }: { project: Project }) {
           const a = agents[r.id]
           const waiting = approvals.filter((x) => x.projectId === project.id && x.agentId === r.id).length
           return (
-            <button key={r.id} className={`agent-card ${selected === r.id ? 'agent-card-active' : ''}`} onClick={() => setSelected(r.id)}>
+            <button
+              key={r.id}
+              className={`agent-card agent-card-${waiting ? 'awaiting_approval' : (a?.status ?? 'idle')} ${selected === r.id ? 'agent-card-active' : ''}`}
+              aria-current={selected === r.id ? 'true' : undefined}
+              onClick={() => setSelected(r.id)}
+            >
               <div className="agent-card-top">
-                <span className="agent-name">{r.name}</span>
+                <span className="agent-name">
+                  {r.name}
+                  {r.mode === 'research' && (
+                    <span className="agent-kind" title="Web researcher">
+                      <Icon name="globe" size={13} />
+                    </span>
+                  )}
+                </span>
                 <StatusPill status={a?.status ?? 'idle'} />
               </div>
               <div className="agent-activity">{waiting ? `${waiting} action${waiting > 1 ? 's need' : ' needs'} approval` : (a?.activity ?? r.description)}</div>

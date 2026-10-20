@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { attempt, setKey, setSettings, toast, useStore } from '../store'
 import { PhoneRemoteSection } from './PhoneRemoteSection'
-import { Button, Field, Modal, Toggle } from './ui'
+import { Button, Field, Icon, Modal, Toggle } from './ui'
+import { getTheme, setTheme, type ThemeChoice } from '../theme'
 
 const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 
@@ -17,6 +18,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [studioArgs, setStudioArgs] = useState((settings?.studioMcpArgs ?? []).join(' '))
   const [hideKey, setHideKey] = useState(settings?.hideKeyFromAgents ?? true)
   const [rojo, setRojo] = useState(settings?.rojoCommand ?? 'rojo')
+  const [theme, setThemeState] = useState<ThemeChoice>(getTheme())
 
   const saveKey = (): void => {
     void attempt(async () => {
@@ -61,6 +63,33 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         </>
       }
     >
+      <section className="card">
+        <h3>Appearance</h3>
+        <div className="segmented" role="radiogroup" aria-label="Theme">
+          {(
+            [
+              ['system', 'System', 'monitor'],
+              ['light', 'Light', 'sun'],
+              ['dark', 'Dark', 'moon']
+            ] as const
+          ).map(([value, label, icon]) => (
+            <button
+              key={value}
+              role="radio"
+              aria-checked={theme === value}
+              className={`segment ${theme === value ? 'segment-on' : ''}`}
+              onClick={() => {
+                setTheme(value)
+                setThemeState(value)
+              }}
+            >
+              <Icon name={icon} />
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="card">
         <h3>Anthropic API key</h3>
         <p className="small">
