@@ -88,7 +88,9 @@ function createWindow(): BrowserWindow {
     if (host) {
       void dialog
         .showMessageBox(win, { type: 'question', buttons: ['Open in browser', 'Cancel'], defaultId: 1, cancelId: 1, message: `Open ${host} in your browser?`, detail: url.slice(0, 500) })
-        .then((r) => r.response === 0 && shell.openExternal(url))
+        .then((r) => {
+          if (r.response === 0) void shell.openExternal(url)
+        })
     }
     return { action: 'deny' }
   })

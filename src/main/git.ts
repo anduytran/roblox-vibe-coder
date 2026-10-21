@@ -322,16 +322,20 @@ async function ignoredFiles(root: string): Promise<Record<string, string> | null
  * Ignored files the task created or changed (Packages/, node_modules/, build output, .env…) would
  * otherwise stay in your project after switching back, unreviewed. Move them out to `quarantineDir`.
  */
-async function quarantineIgnored(root: string, before: Record<string, string> | null, quarantineDir: string): Promise<{ moved: string[]; skipped: boolean }> {
-  if (before === null) return { moved: [], skipped: true }
+async function quarantineIgnored(root: string, before: Record<string, string> | null, quarantineDir: string): Promise<{ moved: string[]; failed: string[]; skipped: boolean }> {
+  if (before === null) return { moved: [], failed: [], skipped: true }
   const after = await ignoredFiles(root)
-  if (after === null) return { moved: [], skipped: true }
+  if (after === null) return { moved: [], failed: [], skipped: true }
   const moved: string[] = []
+  const failed: string[] = []
   for (const [rel, print] of Object.entries(after)) {
     if (before[rel] === print) continue
     const src = join(root, rel)
     // Never follow a planted link out of the project while moving.
-    if (!isInsideRoot(root, dirname(src))) continue
+    if (!isInsideRoot(root, dirname(src))) {
+      failed.push(rel)
+      continue
+    }
     try {
       const st = lstatSync(src)
       if (st.isSymbolicLink()) {
@@ -344,10 +348,11 @@ async function quarantineIgnored(root: string, before: Record<string, string> | 
       }
       moved.push(rel)
     } catch {
-      // leave it; it's listed as not moved below
+      // leave it; it's listed as not moved
+      failed.push(rel)
     }
   }
-  return { moved, skipped: false }
+  return { moved, failed, skipped: false }
 }
 
 async function snapshotRefs(root: string): Promise<Record<string, string>> {
@@ -475,6 +480,11 @@ export async function finishTaskBranch(
     if (q.moved.length) {
       notes.push(
         `The agent created or changed ${q.moved.length} git-ignored file${q.moved.length === 1 ? '' : 's'} (${q.moved.slice(0, 5).join(', ')}${q.moved.length > 5 ? '…' : ''}), which wouldn't show in this review. Hangar moved ${q.moved.length === 1 ? 'it' : 'them'} out of your project to ${quarantineDir}.`
+      )
+    }
+    if (q.failed.length) {
+      notes.push(
+        `Warning: the agent also created or changed ${q.failed.length} git-ignored file${q.failed.length === 1 ? '' : 's'} that Hangar couldn't move out (${q.failed.slice(0, 5).join(', ')}${q.failed.length > 5 ? '…' : ''}). ${q.failed.length === 1 ? 'It is' : 'They are'} still in your project and not part of this review — check or delete ${q.failed.length === 1 ? 'it' : 'them'} before running the game.`
       )
     }
     if (q.skipped) notes.push('This project has too many git-ignored files for Hangar to check what the agent changed outside git.')

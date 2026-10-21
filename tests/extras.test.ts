@@ -45,7 +45,7 @@ function t0Sandbox(registry: ProjectRegistry, id: string): void {
 }
 
 /** A git project with roles, an autonomous runner driven by `script`, review actions and a pipeline. */
-function setup(opts: { autonomous?: boolean; script?: (prompt: string, options: Record<string, unknown>) => AsyncGenerator<unknown> } = {}) {
+function setup(opts: { autonomous?: boolean; appDataDir?: string; script?: (prompt: string, options: Record<string, unknown>) => AsyncGenerator<unknown> } = {}) {
   const dir = tmp('hangar-x-')
   const g = (...a: string[]) => execFileSync('git', a, { cwd: dir }).toString()
   g('init', '-q', '-b', 'main')
@@ -74,6 +74,7 @@ function setup(opts: { autonomous?: boolean; script?: (prompt: string, options: 
     return (opts.script ?? defaultScript)(prompt, options)
   }
   let pipeline: ReviewPipeline | null = null
+  const appDataDir = opts.appDataDir ?? tmp('hangar-x-appdata-')
   const runner: AgentRunner = new AgentRunner({
     registry,
     costs: new CostTracker(join(tmp('hangar-x-c-'), 'costs.json')),
@@ -90,7 +91,7 @@ function setup(opts: { autonomous?: boolean; script?: (prompt: string, options: 
     },
     persistFile: join(tmp('hangar-x-p-'), 'agents.json'),
     trustFile: join(tmp('hangar-x-t-'), 'trust.json'),
-    appDataDir: '/fake/appdata',
+    appDataDir,
     platform: 'linux',
     reviews,
     onReview: (r) => void pipeline?.start(r)
@@ -99,10 +100,11 @@ function setup(opts: { autonomous?: boolean; script?: (prompt: string, options: 
   // No bubblewrap on this test machine: checks run unsandboxed unless a test turns the sandbox on.
   t0Sandbox(registry, project.id)
   const checkEnv: NodeJS.ProcessEnv = { ...process.env }
-  pipeline = new ReviewPipeline({ registry, reviews, emit: (e) => events.push(e), runChecks: (p, r) => runChecks(p, r, { workDir, appDataDir: '/fake/appdata', env: checkEnv }), reviewer: null })
+  const checkOpts: { platform?: NodeJS.Platform } = {}
+  pipeline = new ReviewPipeline({ registry, reviews, emit: (e) => events.push(e), runChecks: (p, r) => runChecks(p, r, { workDir, appDataDir, env: checkEnv, platform: checkOpts.platform }), reviewer: null })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null, pipeline })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
-  return { dir, g, registry, project, runner, reviews, actions, events, calls, auth, status, workDir, checkEnv, setPipeline: (p: ReviewPipeline) => (pipeline = p) }
+  return { dir, g, registry, project, runner, reviews, actions, events, calls, auth, status, workDir, checkEnv, checkOpts, setPipeline: (p: ReviewPipeline) => (pipeline = p) }
 }
 
 // ---------- checks ----------
@@ -388,6 +390,7 @@ test('audit: checks run in the OS sandbox on macOS/Linux, and refuse to run unsa
   // Sandbox on, Linux, no bubblewrap: the check reports it instead of running unsandboxed.
   const t = setup()
   t.registry.update(t.project.id, { settings: { sandbox: true, checks: [{ name: 'List', command: 'ls' }] } })
+  t.checkOpts.platform = 'linux'
   t.checkEnv.PATH = (process.env.PATH ?? '').split(':').filter((d) => !existsSync(join(d, 'bwrap'))).join(':')
   t.runner.send(t.project.id, 'main', 'change it')
   await until(() => t.reviews.list()[0]?.checks?.status === 'done')
@@ -569,6 +572,28 @@ test('audit2: git-ignored files an autonomous task creates or changes are moved 
   assert.match(r.note ?? '', /git-ignored files .*Packages\/Evil\.luau/)
   const qdir = /to (\S+quarantine\S+)\.$/.exec(r.note ?? '')
   assert.ok(qdir && existsSync(join(qdir[1]!, 'Packages', 'Evil.luau')), 'kept in quarantine for inspection')
+})
+
+test('audit2: ignored files that cannot be moved out are named in the review', async () => {
+  // App data is a file, so the quarantine folder can't be created.
+  const blocked = join(tmp('hangar-x-blocked-'), 'not-a-folder')
+  writeFileSync(blocked, '')
+  const t = setup({
+    appDataDir: blocked,
+    script: async function* (_prompt, options) {
+      const cwd = options.cwd as string
+      writeFileSync(join(cwd, 'feature.luau'), '-- tracked change\n')
+      mkdirSync(join(cwd, 'Packages'), { recursive: true })
+      writeFileSync(join(cwd, 'Packages', 'Evil.luau'), 'require(123)')
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    }
+  })
+  writeFileSync(join(t.dir, '.gitignore'), 'Packages/\n')
+  t.g('add', '.gitignore')
+  t.g('commit', '-qm', 'ignore')
+  t.runner.send(t.project.id, 'main', 'change things')
+  await until(() => t.reviews.list().length === 1)
+  assert.match(t.reviews.list()[0]!.note ?? '', /couldn't move out \(Packages\/Evil\.luau\)/)
 })
 
 test('audit2: edits through links ask in red, and a write that ends up outside stops the run', async () => {
