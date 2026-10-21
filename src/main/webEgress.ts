@@ -22,7 +22,8 @@ for (const [net, prefix] of [
   blocked.addSubnet(net, prefix, 'ipv4')
 }
 for (const [net, prefix] of [
-  ['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8], ['64:ff9b::', 96], ['2001:db8::', 32], ['100::', 64]
+  ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8], ['64:ff9b::', 96], ['64:ff9b:1::', 48],
+  ['2001:db8::', 32], ['100::', 64]
 ] as const) {
   blocked.addSubnet(net, prefix, 'ipv6')
 }
@@ -31,9 +32,18 @@ export function isPublicAddress(address: string): boolean {
   const family = isIP(address)
   if (family === 4) return !blocked.check(address, 'ipv4')
   if (family === 6) {
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)
-    if (mapped) return !blocked.check(mapped[1]!, 'ipv4')
-    return !blocked.check(address, 'ipv6')
+    // Normalised (lower-case, compressed, hex only), so ::ffff:127.0.0.1 and ::ffff:7f00:1 look the same.
+    const v6 = new URL(`http://[${address}]`).hostname.slice(1, -1)
+    // Addresses that embed an IPv4 one: IPv4-mapped (::ffff:a.b.c.d) is judged as that IPv4 address;
+    // the old IPv4-compatible form (::a.b.c.d, including :: and ::1) is never public.
+    const embedded = /^::(ffff:)?(?:([0-9a-f]{1,4}):)?([0-9a-f]{1,4})?$/.exec(v6)
+    if (embedded) {
+      if (!embedded[1]) return false
+      const hi = parseInt(embedded[2] ?? '0', 16)
+      const lo = parseInt(embedded[3] ?? '0', 16)
+      return !blocked.check(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`, 'ipv4')
+    }
+    return !blocked.check(v6, 'ipv6')
   }
   return false
 }

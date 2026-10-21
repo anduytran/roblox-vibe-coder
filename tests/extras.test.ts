@@ -435,10 +435,10 @@ test('audit: a researcher never resumes or keeps a session, and its web traffic 
   assert.equal(await egress.check('127.0.0.1.nip.io'), null, 'a public-looking name that resolves to this computer')
   assert.equal(await egress.check('localhost'), null)
   assert.equal(await egress.check('10.0.0.1'), null)
-  for (const a of ['127.0.0.1', '10.1.2.3', '192.168.0.10', '172.20.0.1', '100.100.1.1', '169.254.169.254', '::1', 'fd7a:115c:a1e0::1', 'fe80::1', '::ffff:127.0.0.1', '0.0.0.0']) {
+  for (const a of ['127.0.0.1', '10.1.2.3', '192.168.0.10', '172.20.0.1', '100.100.1.1', '169.254.169.254', '::1', 'fd7a:115c:a1e0::1', 'fe80::1', '::ffff:127.0.0.1', '0.0.0.0', '::7f00:1', '::ffff:7f00:1', '::ffff:a00:1', 'fec0::1', '64:ff9b:1::a00:1']) {
     assert.equal(isPublicAddress(a), false, a)
   }
-  for (const a of ['93.184.216.34', '2606:4700::1111']) assert.equal(isPublicAddress(a), true, a)
+  for (const a of ['93.184.216.34', '2606:4700::1111', '::ffff:93.184.216.34', '::ffff:5db8:d822']) assert.equal(isPublicAddress(a), true, a)
   const url = await egress.start()
   const port = Number(new URL(url).port)
   const connectReply = (auth: string | null) =>
