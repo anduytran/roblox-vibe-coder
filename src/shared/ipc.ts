@@ -14,7 +14,8 @@ import type {
   AutopilotConfig,
   AutopilotState,
   NewGameInput,
-  TrendsSnapshot
+  TrendsSnapshot,
+  IdeaChatMessage
 } from './types'
 
 export const IPC = {
@@ -81,6 +82,9 @@ export const IPC = {
   trendsGet: 'trends:get',
   trendsRefresh: 'trends:refresh',
   trendsIdeas: 'trends:ideas',
+  ideaChatGet: 'ideaChat:get',
+  ideaChatSend: 'ideaChat:send',
+  ideaChatClear: 'ideaChat:clear',
   agentEvent: 'agent:event'
 } as const
 
@@ -152,6 +156,12 @@ export interface HangarApi {
     get(): Promise<TrendsSnapshot>
     refresh(): Promise<TrendsSnapshot>
     ideas(): Promise<TrendsSnapshot>
+  }
+  ideaChat: {
+    get(): Promise<IdeaChatMessage[]>
+    /** Resolves with the whole conversation, including Claude's reply. */
+    send(text: string): Promise<IdeaChatMessage[]>
+    clear(): Promise<IdeaChatMessage[]>
   }
   roles: {
     list(projectId: string): Promise<Role[]>

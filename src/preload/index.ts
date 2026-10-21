@@ -46,6 +46,11 @@ const api: HangarApi = {
     refresh: () => invoke(IPC.trendsRefresh),
     ideas: () => invoke(IPC.trendsIdeas)
   },
+  ideaChat: {
+    get: () => invoke(IPC.ideaChatGet),
+    send: (text) => invoke(IPC.ideaChatSend, text),
+    clear: () => invoke(IPC.ideaChatClear)
+  },
   roles: {
     list: (id) => invoke(IPC.rolesList, id),
     installTemplates: (id) => invoke(IPC.rolesInstallTemplates, id),

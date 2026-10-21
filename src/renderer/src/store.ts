@@ -21,6 +21,8 @@ export interface StoreState {
   trends: TrendsSnapshot | null
   /** The "New game" wizard, optionally prefilled (from a trending suggestion). */
   wizard: { idea?: string; name?: string; genre?: string } | null
+  /** The idea brainstorm chat, if open, with text to start the message box with. */
+  ideaChat: { draft: string } | null
 }
 
 let state: StoreState = {
@@ -37,7 +39,8 @@ let state: StoreState = {
   toast: null,
   autopilot: {},
   trends: null,
-  wizard: null
+  wizard: null,
+  ideaChat: null
 }
 
 /** Stable empty values so selectors never return a fresh object (which would re-render forever). */
@@ -183,7 +186,15 @@ export function selectProject(id: string | null): void {
 }
 
 export function openWizard(prefill: StoreState['wizard'] = {}): void {
-  set({ wizard: prefill ?? {} })
+  set({ wizard: prefill ?? {}, ideaChat: null })
+}
+
+export function openIdeaChat(draft = ''): void {
+  set({ ideaChat: { draft } })
+}
+
+export function closeIdeaChat(): void {
+  set({ ideaChat: null })
 }
 
 export function closeWizard(): void {

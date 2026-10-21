@@ -5,6 +5,7 @@ import { ProjectSettingsView } from './components/ProjectSettingsView'
 import { ReviewsView } from './components/ReviewsView'
 import { SettingsModal } from './components/SettingsModal'
 import { Dashboard } from './components/Dashboard'
+import { IdeaChat } from './components/IdeaChat'
 import { NewGameWizard } from './components/NewGameWizard'
 import { OverviewView } from './components/OverviewView'
 import { Sidebar } from './components/Sidebar'
@@ -22,6 +23,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const wizardOpen = useStore((s) => s.wizard !== null)
+  const ideaChatOpen = useStore((s) => s.ideaChat !== null)
   const projectId = project?.id
   // Each project opens on its Overview.
   useEffect(() => setTab('overview'), [projectId])
@@ -76,6 +78,7 @@ export function App() {
       </main>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {wizardOpen && <NewGameWizard />}
+      {ideaChatOpen && <IdeaChat />}
       {toast && (
         <div className={`toast toast-${toast.tone}`} role="status">
           {toast.text}

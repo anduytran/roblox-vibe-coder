@@ -475,6 +475,9 @@ app.whenReady().then(() => {
   handle(IPC.trendsGet, () => trends.current())
   handle(IPC.trendsRefresh, () => trends.refresh())
   handle(IPC.trendsIdeas, () => trends.generateIdeas())
+  handle(IPC.ideaChatGet, () => trends.chat())
+  handle(IPC.ideaChatSend, (text: unknown) => trends.sendChat(str(text, 'message')))
+  handle(IPC.ideaChatClear, () => trends.clearChat())
 
   // Phone remote
   handle(IPC.remoteStatus, () => remote!.status())

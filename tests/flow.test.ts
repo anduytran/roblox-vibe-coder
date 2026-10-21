@@ -190,6 +190,53 @@ test('trends: AI ideas are scored by the demand they ride and the saturation of 
   assert.equal(costs.summary().todayUsd, 0.02)
 })
 
+test('idea chat: replies see the trends and the whole conversation, with no tools; a brief becomes an idea', async () => {
+  const { get } = fakeRoblox()
+  const prompts: string[] = []
+  const options: Record<string, unknown>[] = []
+  let reply = 'What do you enjoy playing?'
+  let gate: Promise<void> = Promise.resolve()
+  const query: QueryFn = ({ prompt, options: o }) =>
+    (async function* () {
+      prompts.push(prompt)
+      options.push(o)
+      await gate
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const auth: unknown[] = []
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey' }
+  const file = join(tmp('hangar-chat-'), 't.json')
+  const trends = new Trends(file, { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async (_k, o) => (auth.push(o), { env: {}, release: () => {} }) })
+
+  let chat = await trends.sendChat('  I like obbies  ')
+  assert.deepEqual(chat.map((m) => [m.role, m.text]), [['user', 'I like obbies'], ['assistant', 'What do you enjoy playing?']])
+  assert.match(prompts[0]!, /Trending Roblox experiences right now/)
+  assert.match(prompts[0]!, /Cloud Parkour/)
+  assert.deepEqual(auth, [{ forceHideKey: true }])
+  assert.deepEqual(options[0]!.mcpServers, {})
+  for (const tool of ['Bash', 'Read', 'Write', 'WebFetch']) assert.ok((options[0]!.disallowedTools as string[]).includes(tool))
+  assert.equal(options[0]!.resume, undefined, 'each reply is a fresh run')
+
+  reply = 'Cloud Couriers fits.\n```json\n' + JSON.stringify([{ title: 'Cloud Couriers', pitch: 'Parkour deliveries.', coreLoop: 'Grab, run, deliver', whyNow: 'Open obby space', genre: 'Obby', scope: 'small', inspiredBy: ['Cloud Parkour'] }]) + '\n```'
+  chat = await trends.sendChat('Make it a brief')
+  assert.match(prompts[1]!, /User: I like obbies[\s\S]*You: What do you enjoy playing\?[\s\S]*User: Make it a brief/)
+  const last = chat[chat.length - 1]!
+  assert.equal(last.text, 'Cloud Couriers fits.', 'the JSON block is not shown as text')
+  assert.equal(last.idea?.title, 'Cloud Couriers')
+
+  // Kept across restarts; one message at a time; start over clears it.
+  assert.equal(new Trends(file).chat().length, 4)
+  let open!: () => void
+  gate = new Promise((r) => (open = r))
+  const first = trends.sendChat('one')
+  await assert.rejects(trends.sendChat('two'), /still answering/)
+  open()
+  await first
+  assert.deepEqual(trends.clearChat(), [])
+  assert.deepEqual(await trends.sendChat('   '), [])
+})
+
 // ---------- autopilot (unit) ----------
 
 function autopilotSetup() {

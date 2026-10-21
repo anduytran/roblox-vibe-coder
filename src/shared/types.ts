@@ -340,6 +340,16 @@ export interface GameIdea {
   score: number
 }
 
+/** One message in the idea brainstorm chat on Home. */
+export interface IdeaChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  at: number
+  /** A game brief Claude proposed in this reply, ready for the New game wizard. */
+  idea?: GameIdea
+}
+
 export interface TrendsSnapshot {
   fetchedAt: number | null
   games: TrendingGame[]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AutopilotState, GameIdea, Project, TrendingGame } from '@shared/types'
-import { attempt, openWizard, selectProject, setTrends, toast, useStore } from '../store'
+import { attempt, openIdeaChat, openWizard, selectProject, setTrends, toast, useStore } from '../store'
 import { Avatar, Button, Icon, timeAgo, usd } from './ui'
 
 const STALE_MS = 6 * 3600 * 1000
@@ -118,9 +118,14 @@ export function Dashboard() {
           <div className="trend-col">
             <div className="row between">
               <h3>Ideas for you</h3>
-              <Button size="sm" tone={trends?.ideas.length ? 'ghost' : 'default'} disabled={loading !== null || !trends?.games.length} onClick={ideas}>
-                {loading === 'ideas' ? 'Thinking…' : trends?.ideas.length ? 'New ideas' : 'Generate ideas'}
-              </Button>
+              <div className="row gap-xs">
+                <Button size="sm" tone="ghost" disabled={!trends?.games.length} onClick={() => openIdeaChat()} title="Chat with Claude about game ideas, using what's trending">
+                  Brainstorm
+                </Button>
+                <Button size="sm" tone={trends?.ideas.length ? 'ghost' : 'default'} disabled={loading !== null || !trends?.games.length} onClick={ideas}>
+                  {loading === 'ideas' ? 'Thinking…' : trends?.ideas.length ? 'New ideas' : 'Generate ideas'}
+                </Button>
+              </div>
             </div>
             {trends?.ideas.length ? (
               trends.ideas.map((idea, i) => <IdeaCard key={idea.id} idea={idea} rank={i + 1} />)
@@ -253,7 +258,7 @@ function TrendRow({ game, rank }: { game: TrendingGame; rank: number }) {
   )
 }
 
-function IdeaCard({ idea, rank }: { idea: GameIdea; rank: number }) {
+export function IdeaCard({ idea, rank }: { idea: GameIdea; rank?: number }) {
   const create = (): void =>
     openWizard({
       name: idea.title,
@@ -263,7 +268,7 @@ function IdeaCard({ idea, rank }: { idea: GameIdea; rank: number }) {
   return (
     <article className="idea-card">
       <div className="row between gap-sm">
-        <span className="idea-rank">{rank}</span>
+        {rank !== undefined && <span className="idea-rank">{rank}</span>}
         <h4 className="idea-title">{idea.title}</h4>
         <ScoreBar value={idea.score} />
       </div>
@@ -278,9 +283,16 @@ function IdeaCard({ idea, rank }: { idea: GameIdea; rank: number }) {
         <span className="small muted">
           {idea.genre} · {idea.scope} scope
         </span>
-        <Button size="sm" onClick={create}>
-          Create this game
-        </Button>
+        <span className="row gap-xs">
+          {rank !== undefined && (
+            <Button size="sm" tone="ghost" onClick={() => openIdeaChat(`Let's develop idea ${rank}, “${idea.title}”. `)}>
+              Discuss
+            </Button>
+          )}
+          <Button size="sm" onClick={create}>
+            Create this game
+          </Button>
+        </span>
       </div>
     </article>
   )
