@@ -39,7 +39,7 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
   registry.update(project.id, { settings: { autonomous: true } })
   const reviews = new ReviewStore(join(tmp('hangar-auto-rv-'), 'reviews.json'))
   const events: AgentEvent[] = []
-  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 3, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo' }
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 3, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey' }
   const gates: (() => void)[] = []
   const authCalls: unknown[] = []
   const prompts: string[] = []

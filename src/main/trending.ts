@@ -368,7 +368,7 @@ export class Trends {
     if (!snap.games.length) snap = await this.refresh()
     if (!snap.games.length) throw new Error(snap.error ?? 'No trending games to work from yet.')
     const apiKey = getApiKey()
-    if (!apiKey) throw new Error('Add your Anthropic API key in Settings first.')
+    if (!apiKey) throw new Error('Add your Anthropic API key (or Claude Max token) in Settings first.')
     const settings = getSettings()
     const blocked = costs?.budgetBlock('hangar:ideas', null, settings.globalDailyBudgetUsd, Date.now(), 0, 0)
     if (blocked) throw new Error(blocked)

@@ -88,7 +88,7 @@ export interface RunnerDeps {
    * Credentials for one run's engine environment (the real key, or a per-run proxy token and URL).
    * `release` is called when the run ends, revoking the token.
    */
-  engineAuth: (apiKey: string, opts: { forceHideKey: boolean }) => Promise<{ env: Record<string, string>; release: () => void }>
+  engineAuth: (apiKey: string, opts: { forceHideKey: boolean }) => Promise<{ env: Record<string, string>; release: () => void; note?: string }>
   loadQuery: () => Promise<QueryFn>
   emit: (event: AgentEvent) => void
   persistFile: string
@@ -430,7 +430,7 @@ export class AgentRunner {
     }
     const settings = this.deps.getSettings()
     const apiKey = this.deps.getApiKey()
-    if (!apiKey) return this.fail(s, 'Add your Anthropic API key in Settings first.')
+    if (!apiKey) return this.fail(s, 'Add your Anthropic API key (or Claude Max token) in Settings first.')
     // Reserve the worst case for runs already in progress, so parallel runs can't overshoot the daily limit.
     const others = [...this.states.values()].filter((x) => x !== s && (x.status === 'working' || x.status === 'awaiting_approval'))
     const reserved = others.length * settings.perRunBudgetUsd
@@ -506,6 +506,7 @@ export class AgentRunner {
       const autoRun = sandbox.active && (project.settings.autoApproveEdits || project.settings.autonomous)
       const auth = await this.deps.engineAuth(apiKey, { forceHideKey: project.settings.autonomous || research || autoRun })
       releaseAuth = auth.release
+      if (auth.note) this.log(s, { kind: 'system', text: auth.note })
       const allRoles = listRoles(project.path)
       const claudeMd = readClaudeMd(project.path)
       let append = ''
@@ -838,6 +839,9 @@ function researchCanUseTool(fetched: string[], queries: string[]): CanUseTool {
 
 function friendlyError(message: string): string {
   if (/hangar_proxy_error|Invalid session token/i.test(message)) return `Hangar's key-hiding proxy refused the request: ${message}. If this keeps happening, turn off "Hide API key from agents" in Settings.`
+  if (/OAuth/i.test(message) && /invalid|expired|revoked|401/i.test(message)) {
+    return 'Your Claude Max token was rejected. Run `claude setup-token` again and paste the new token in Settings (as one line, with nothing cut off).'
+  }
   if (/invalid x-api-key|authentication_error|401/i.test(message)) return 'Your API key was rejected. Check it in Settings (or try turning off "Hide API key from agents").'
   if (/credit balance|billing/i.test(message)) return 'Your Anthropic account is out of credits.'
   if (/sandbox/i.test(message) && /(unavailable|bubblewrap|bwrap|socat|not supported|failed to start)/i.test(message)) {

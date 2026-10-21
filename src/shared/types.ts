@@ -85,6 +85,8 @@ export interface AppSettings {
   hideKeyFromAgents: boolean
   /** Command used to run Rojo when publishing to a test place. */
   rojoCommand: string
+  /** Which credential agents use. 'max' (a Claude subscription token) works only in development builds. */
+  authMode: 'apiKey' | 'max'
 }
 
 export type LogKind = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error' | 'result'

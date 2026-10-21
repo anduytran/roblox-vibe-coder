@@ -33,7 +33,7 @@ let state: StoreState = {
   approvals: [],
   costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} },
   settings: null,
-  key: { hasKey: false, encryptionAvailable: true },
+  key: { hasKey: false, encryptionAvailable: true, maxAvailable: false, hasMaxToken: false, ready: false },
   toast: null,
   autopilot: {},
   trends: null,

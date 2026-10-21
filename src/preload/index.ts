@@ -15,7 +15,9 @@ const api: HangarApi = {
   key: {
     status: () => invoke(IPC.keyStatus),
     set: (key) => invoke(IPC.keySet, key),
-    clear: () => invoke(IPC.keyClear)
+    clear: () => invoke(IPC.keyClear),
+    setMaxToken: (token) => invoke(IPC.maxTokenSet, token),
+    clearMaxToken: () => invoke(IPC.maxTokenClear)
   },
   projects: {
     list: () => invoke(IPC.projectsList),

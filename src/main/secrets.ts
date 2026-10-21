@@ -1,7 +1,13 @@
 import { existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
-import type { KeyStatus } from '@shared/ipc'
+import { validateApiKey } from './engineCredentials'
+
+export interface StoredSecretStatus {
+  hasKey: boolean
+  /** False when the OS cannot encrypt secrets; the key is then not saved to disk. */
+  encryptionAvailable: boolean
+}
 
 /** On Linux, safeStorage can fall back to a fixed password ("basic_text"), which is not real protection. */
 function canEncrypt(): boolean {
@@ -25,18 +31,17 @@ export class SecretStore {
 
   constructor(
     private readonly file: string,
-    private readonly validate: (key: string) => string | null = (k) =>
-      /^sk-ant-[A-Za-z0-9_\-]{10,}$/.test(k) ? null : 'That does not look like an Anthropic API key (it should start with "sk-ant-").'
+    private readonly validate: (key: string) => string | null = validateApiKey
   ) {}
 
-  status(): KeyStatus {
+  status(): StoredSecretStatus {
     return {
       hasKey: this.memoryOnlyKey !== null || existsSync(this.file),
       encryptionAvailable: canEncrypt()
     }
   }
 
-  setKey(key: string): KeyStatus {
+  setKey(key: string): StoredSecretStatus {
     const trimmed = key.trim()
     const problem = this.validate(trimmed)
     if (problem) throw new Error(problem)
@@ -60,7 +65,7 @@ export class SecretStore {
     }
   }
 
-  clear(): KeyStatus {
+  clear(): StoredSecretStatus {
     this.memoryOnlyKey = null
     rmSync(this.file, { force: true })
     return this.status()

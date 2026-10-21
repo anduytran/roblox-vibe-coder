@@ -23,6 +23,8 @@ export const IPC = {
   keyStatus: 'key:status',
   keySet: 'key:set',
   keyClear: 'key:clear',
+  maxTokenSet: 'maxToken:set',
+  maxTokenClear: 'maxToken:clear',
   projectsList: 'projects:list',
   projectsAdd: 'projects:add',
   projectsRemove: 'projects:remove',
@@ -86,6 +88,12 @@ export interface KeyStatus {
   hasKey: boolean
   /** False when the OS cannot encrypt secrets; the key is then not saved to disk. */
   encryptionAvailable: boolean
+  /** Claude Max mode (personal use) can be turned on: development builds only. */
+  maxAvailable: boolean
+  /** A Claude subscription token is saved. */
+  hasMaxToken: boolean
+  /** The credential for the active mode is saved, so agents can run. */
+  ready: boolean
 }
 
 export interface RemoteStatus {
@@ -110,6 +118,8 @@ export interface HangarApi {
     status(): Promise<KeyStatus>
     set(key: string): Promise<KeyStatus>
     clear(): Promise<KeyStatus>
+    setMaxToken(token: string): Promise<KeyStatus>
+    clearMaxToken(): Promise<KeyStatus>
   }
   projects: {
     list(): Promise<Project[]>

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
-import { IPC } from '@shared/ipc'
+import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, type QueryFn } from './agentRunner'
 import { CostTracker } from './costs'
@@ -30,6 +30,7 @@ import { createVault, vaultStatus } from './vault'
 import { ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, saveRole } from './roles'
 import { SecretStore } from './secrets'
+import { EngineCredentials, validateMaxToken, type EngineAuth } from './engineCredentials'
 
 const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: 'claude-sonnet-5-5',
@@ -39,7 +40,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   studioMcpCommand: '',
   studioMcpArgs: [],
   hideKeyFromAgents: true,
-  rojoCommand: 'rojo'
+  rojoCommand: 'rojo',
+  authMode: 'apiKey'
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -153,6 +155,8 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   if (typeof patch.studioMcpCommand === 'string') next.studioMcpCommand = patch.studioMcpCommand.trim()
   if (Array.isArray(patch.studioMcpArgs)) next.studioMcpArgs = patch.studioMcpArgs.filter((a): a is string => typeof a === 'string')
   if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
+  // Claude Max mode is for the owner's own use while developing; packaged builds never turn it on.
+  if (patch.authMode === 'apiKey' || (patch.authMode === 'max' && !app.isPackaged)) next.authMode = patch.authMode
   if (typeof patch.rojoCommand === 'string' && patch.rojoCommand.trim()) next.rojoCommand = patch.rojoCommand.trim().slice(0, 500)
   return next
 }
@@ -173,7 +177,20 @@ app.whenReady().then(() => {
   const secrets = new SecretStore(join(dataDir(), 'anthropic-key.bin'))
   const registry = new ProjectRegistry(join(dataDir(), 'projects.json'))
   const costs = new CostTracker(join(dataDir(), 'costs.json'))
+  const maxToken = new SecretStore(join(dataDir(), 'claude-max-token.bin'), validateMaxToken)
   const keyProxy = new KeyProxy(() => secrets.getKey())
+  const credentials = new EngineCredentials({
+    personalModeAllowed: !app.isPackaged,
+    getSettings: () => settings.get(),
+    getApiKey: () => secrets.getKey(),
+    getMaxToken: () => maxToken.getKey(),
+    keyProxy
+  })
+  const keyStatus = (): KeyStatus => {
+    const api = secrets.status()
+    const hasMaxToken = !app.isPackaged && maxToken.status().hasKey
+    return { ...api, maxAvailable: !app.isPackaged, hasMaxToken, ready: credentials.usingMax() ? hasMaxToken : api.hasKey }
+  }
   const webEgress = new WebEgressProxy()
 
   const reviews = new ReviewStore(join(dataDir(), 'reviews.json'), (r) => r.clip && StudioClipRecorder.remove(r.clip.files))
@@ -187,15 +204,8 @@ app.whenReady().then(() => {
     if (event.type === 'review') autopilot?.onReview(event.review)
   }
 
-  const engineAuth = async (apiKey: string, opts: { forceHideKey: boolean }): Promise<{ env: Record<string, string>; release: () => void }> => {
-    if (!settings.get().hideKeyFromAgents && !opts.forceHideKey) return { env: { ANTHROPIC_API_KEY: apiKey }, release: () => {} }
-    await keyProxy.start()
-    const token = keyProxy.issueToken()
-    return {
-      env: { ANTHROPIC_BASE_URL: keyProxy.baseUrl(), ANTHROPIC_API_KEY: token },
-      release: () => keyProxy.revokeToken(token)
-    }
-  }
+  const engineAuth = (credential: string, opts: { forceHideKey: boolean }): Promise<EngineAuth> => credentials.auth(credential, opts)
+  const getCredential = (): string | null => credentials.get()
   const loadQuery = async (): Promise<QueryFn> => {
     const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
     return sdk.query
@@ -209,7 +219,7 @@ app.whenReady().then(() => {
     onTaskDone: (o) => autopilot?.onTaskDone(o),
     researchProxy: () => webEgress.issue(),
     getSettings: () => settings.get(),
-    getApiKey: () => secrets.getKey(),
+    getApiKey: getCredential,
     engineAuth,
     persistFile: join(dataDir(), 'agents.json'),
     trustFile: join(dataDir(), 'trusted-project-config.json'),
@@ -224,7 +234,7 @@ app.whenReady().then(() => {
     reviews,
     emit,
     runChecks: (project, review) => runChecks(project, review, { workDir: join(dataDir(), 'builds'), appDataDir: dataDir() }),
-    reviewer: new TaskReviewer({ loadQuery, engineAuth, getApiKey: () => secrets.getKey(), getSettings: () => settings.get(), costs, workDir: join(dataDir(), 'builds') })
+    reviewer: new TaskReviewer({ loadQuery, engineAuth, getApiKey: getCredential, getSettings: () => settings.get(), costs, workDir: join(dataDir(), 'builds') })
   })
 
   const reviewActions = new ReviewActions({
@@ -244,7 +254,7 @@ app.whenReady().then(() => {
     send: (projectId, agentId, prompt, opts) => runner.send(projectId, agentId, prompt, opts),
     merge: (id) => reviewActions.merge(id)
   })
-  const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: () => secrets.getKey(), getSettings: () => settings.get(), engineAuth, costs })
+  const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot })
   void remote.start().catch(() => undefined)
 
@@ -255,9 +265,24 @@ app.whenReady().then(() => {
   // Settings and key
   handle(IPC.settingsGet, () => settings.get())
   handle(IPC.settingsSet, (patch: Partial<AppSettings>) => settings.set(sanitizeAppSettings(patch ?? {}, settings.get())))
-  handle(IPC.keyStatus, () => secrets.status())
-  handle(IPC.keySet, (key: unknown) => secrets.setKey(str(key, 'key')))
-  handle(IPC.keyClear, () => secrets.clear())
+  handle(IPC.keyStatus, () => keyStatus())
+  handle(IPC.keySet, (key: unknown) => {
+    secrets.setKey(str(key, 'key'))
+    return keyStatus()
+  })
+  handle(IPC.keyClear, () => {
+    secrets.clear()
+    return keyStatus()
+  })
+  handle(IPC.maxTokenSet, (token: unknown) => {
+    if (app.isPackaged) throw new Error('Claude Max mode is only available in development builds.')
+    maxToken.setKey(str(token, 'token'))
+    return keyStatus()
+  })
+  handle(IPC.maxTokenClear, () => {
+    maxToken.clear()
+    return keyStatus()
+  })
 
   // Projects
   handle(IPC.projectsList, () => registry.list())
@@ -420,7 +445,7 @@ app.whenReady().then(() => {
     let started = false
     let note: string | null = null
     if (input.startNow) {
-      if (!secrets.getKey()) note = 'Add your Anthropic API key in Settings, then start autopilot from the project Overview.'
+      if (!getCredential()) note = 'Add your Anthropic API key (or Claude Max token) in Settings, then start autopilot from the project Overview.'
       else {
         autopilot!.start(project.id)
         started = true

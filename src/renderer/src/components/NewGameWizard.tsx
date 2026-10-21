@@ -16,7 +16,7 @@ const STEPS = ['Your game', 'Setup', 'Start'] as const
 export function NewGameWizard() {
   const prefill = useStore((s) => s.wizard) ?? {}
   const settings = useStore((s) => s.settings)
-  const hasKey = useStore((s) => s.key.hasKey)
+  const hasKey = useStore((s) => s.key.ready)
   const [step, setStep] = useState(0)
   const [name, setName] = useState(prefill.name ?? '')
   const [idea, setIdea] = useState(prefill.idea ?? '')

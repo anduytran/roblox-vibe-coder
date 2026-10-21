@@ -107,6 +107,11 @@ Network, Electron and phone remote:
 
 ### Verify on first real run (SDK behaviour Hangar relies on)
 
+**Verified 2026-10-20 on macOS** (Agent SDK 0.3.304, Claude Max mode) with `scripts/first-run-checks.ts`: all six pass.
+Re-run it after SDK upgrades. `touch ~/hangar-probe` failed with "Operation not permitted"; the engine saw only Hangar's
+minimal environment plus its own variables; a subagent's `Write` raised an approval card; the `PostToolUse` hook stopped
+a write through a link; and the researcher's fetches (and its engine's API calls) went through the egress proxy.
+
 These can't be tested without the real Agent SDK and are worth checking once:
 - The SDK uses the `env` Hangar passes (not merged with the full environment). Hangar now strips credential variables from its own environment either way.
 - The OS sandbox is really applied (`settings.sandbox`): with a sandboxed project, ask an agent to run `touch ~/hangar-probe` — it must fail.
@@ -122,6 +127,12 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - **Idea generation** runs Claude with no tools, no project, behind the key-hiding proxy; its output is shown to you and only becomes a brief if you click "Create this game" (you see it in the wizard first).
 - **New projects** are created only inside a folder you choose, never into a non-empty folder; the game name is sanitised before it's written into code.
 - **Phone**: a paired phone can start the next sprint, pause/resume and add notes (spending stays within the sprint, project and daily limits).
+
+## Claude Max mode (personal use, development builds only)
+
+- Agents can sign in with the owner's Claude subscription (`claude setup-token`) instead of an API key. Anthropic doesn't allow apps to offer claude.ai sign-in or to hold subscription credentials for other people, so this is for the owner's own use: packaged builds ignore the setting and refuse to store a token (`app.isPackaged`).
+- The token is stored like the API key (OS keychain), but it is **not** hidden behind the key proxy — proxying it would mean Hangar intermediates subscription credentials. The engine gets it as `CLAUDE_CODE_OAUTH_TOKEN`, so in autonomous or auto-run projects, commands an agent runs might reach it. (On the 2026-10-20 check, shell commands did not inherit it, but it still sits in the engine process.) Each such run says so in its feed. The token lasts a year; revoke it at claude.ai if it leaks.
+- Spending limits still apply, but to the SDK's estimated cost; the subscription's own usage limits apply on top.
 
 ## Remaining risks (be aware)
 

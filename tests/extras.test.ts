@@ -38,7 +38,7 @@ async function until(cond: () => boolean, ms = 4000): Promise<void> {
     await tick()
   }
 }
-const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 3, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo' }
+const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 3, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey' }
 
 function t0Sandbox(registry: ProjectRegistry, id: string): void {
   registry.update(id, { settings: { sandbox: false } })

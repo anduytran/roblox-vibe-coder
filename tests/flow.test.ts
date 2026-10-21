@@ -180,7 +180,7 @@ test('trends: AI ideas are scored by the demand they ride and the saturation of 
     })()
   const auth: unknown[] = []
   const costs = new CostTracker(join(tmp('hangar-ideas-c-'), 'c.json'))
-  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo' }
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey' }
   const trends = new Trends(join(tmp('hangar-ideas-'), 't.json'), { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async (_k, o) => (auth.push(o), { env: {}, release: () => {} }), costs })
   const snap = await trends.generateIdeas()
   assert.equal(snap.ideas[0]!.title, 'Cloud Couriers')
@@ -325,7 +325,7 @@ test('autopilot end to end: tasks run on branches, approved work lands on main, 
   const project = registry.update(registry.add(root).id, { settings: { autonomous: true, reviewer: true, checks: [], sandbox: false } })
   const reviews = new ReviewStore(join(tmp('hangar-e2e-rv-'), 'r.json'))
   const costs = new CostTracker(join(tmp('hangar-e2e-c-'), 'c.json'))
-  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 2, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo' }
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 2, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey' }
   let n = 0
   const query: QueryFn = ({ prompt, options }) =>
     (async function* () {
