@@ -1965,7 +1965,8 @@ button.file-item {
 /* trends */
 .trend-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.9fr) 1.4fr;
+  /* minmax(0, …): the table column never grows past its share to fit its content. */
+  grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.4fr);
   gap: 18px;
   margin-top: 14px;
   align-items: start;
@@ -2070,6 +2071,9 @@ button.file-item {
   border-radius: var(--r-lg);
   background: var(--surface);
   padding: 12px 6px 6px;
+  min-width: 0;
+  /* Last resort on very narrow windows: scroll inside the card instead of spilling out of it. */
+  overflow-x: auto;
 }
 .trend-table-wrap > h3 {
   padding: 0 10px 4px;
@@ -2103,11 +2107,15 @@ button.file-item {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The game column takes the space left over; long names end in "…" instead of widening the table. */
+.trend-table .trend-game {
+  width: 100%;
+  max-width: 0;
+}
 .trend-name {
   display: block;
   font-weight: 600;
   color: var(--text);
-  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2118,7 +2126,15 @@ button.file-item {
   font-size: var(--fs-xs);
 }
 .trend-genre {
+  display: block;
   color: var(--text-2);
+  white-space: nowrap;
+  margin-bottom: 3px;
+}
+.trend-table .score-bar {
+  width: 40px;
+}
+.trend-table td:last-child {
   white-space: nowrap;
 }
 
@@ -2300,7 +2316,7 @@ button.file-item {
   margin-top: 8px;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1320px) {
   .trend-layout {
     grid-template-columns: 1fr;
   }

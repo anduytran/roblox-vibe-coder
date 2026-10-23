@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
-import type { AgentStatus } from '@shared/types'
+import type { AgentStatus, PlanUsage } from '@shared/types'
 
 export function Button(props: {
   children: ReactNode
@@ -132,6 +132,24 @@ export function Avatar({ name }: { name: string }) {
 export function usd(n: number | undefined): string {
   const v = n ?? 0
   return v < 0.01 && v > 0 ? '<$0.01' : `$${v.toFixed(2)}`
+}
+
+/** "resets in 2h 10m", or "resets Fri 9:00 AM" when it's more than a day away. */
+export function resetsText(ts: number | null): string {
+  if (ts === null) return ''
+  const ms = ts - Date.now()
+  if (ms <= 0) return 'resetting now'
+  if (ms > 24 * 3600 * 1000) return `resets ${new Date(ts).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+  const h = Math.floor(ms / 3600000)
+  const m = Math.round((ms % 3600000) / 60000)
+  return `resets in ${h ? `${h}h ` : ''}${m}m`
+}
+
+/** Short Claude plan usage line: "5-hour 34% · week 12%". */
+export function planLine(plan: PlanUsage | null): string {
+  if (!plan || (!plan.fiveHour && !plan.weekly)) return 'Claude plan usage shows after the first run'
+  if (plan.blocked) return `Claude plan ${plan.blocked.window} limit reached`
+  return [plan.fiveHour && `5-hour ${plan.fiveHour.usedPct}%`, plan.weekly && `week ${plan.weekly.usedPct}%`].filter(Boolean).join(' · ')
 }
 
 export function timeAgo(ts: number): string {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AutopilotState, GameIdea, Project, TrendingGame } from '@shared/types'
 import { attempt, openIdeaChat, openWizard, selectProject, setTrends, toast, useStore } from '../store'
-import { Avatar, Button, Icon, timeAgo, usd } from './ui'
+import { Avatar, Button, Icon, planLine, timeAgo, usd } from './ui'
 
 const STALE_MS = 6 * 3600 * 1000
 
@@ -20,6 +20,7 @@ export function Dashboard() {
   const approvals = useStore((s) => s.approvals)
   const trends = useStore((s) => s.trends)
   const costs = useStore((s) => s.costs)
+  const onMax = useStore((s) => s.settings?.authMode === 'max')
   const [loading, setLoading] = useState<'refresh' | 'ideas' | null>(null)
 
   useEffect(() => {
@@ -58,7 +59,7 @@ export function Dashboard() {
         <div>
           <h1>Home</h1>
           <p className="muted">
-            {usd(costs.todayUsd)} spent today across {projects.length} game{projects.length === 1 ? '' : 's'}
+            {onMax ? `Claude plan: ${planLine(costs.plan)}` : `${usd(costs.todayUsd)} spent today`} across {projects.length} game{projects.length === 1 ? '' : 's'}
           </p>
         </div>
         <Button tone="primary" onClick={() => openWizard()}>
@@ -235,8 +236,10 @@ function TrendRow({ game, rank }: { game: TrendingGame; rank: number }) {
   return (
     <tr>
       <td className="muted num">{rank}</td>
-      <td>
-        <span className="trend-name">{game.name}</span>
+      <td className="trend-game">
+        <span className="trend-name" title={game.name}>
+          {game.name}
+        </span>
         <span className="trend-sub">
           {game.lists.map((l) => (l.list === 'top-trending' ? `Trending #${l.rank}` : l.list === 'up-and-coming' ? `Up-and-coming #${l.rank}` : `Top playing #${l.rank}`)).join(' · ')}
           {game.growth !== null ? ` · ${game.growth >= 0 ? '+' : ''}${Math.round(game.growth * 100)}% today` : ''}
@@ -244,7 +247,8 @@ function TrendRow({ game, rank }: { game: TrendingGame; rank: number }) {
       </td>
       <td className="num">{game.players.toLocaleString()}</td>
       <td>
-        <span className="trend-genre">{game.genre}</span> <SaturationTag value={game.parts.saturation} />
+        <span className="trend-genre">{game.genre}</span>
+        <SaturationTag value={game.parts.saturation} />
       </td>
       <td className="num" title={`Demand ${game.demand} (momentum ${game.parts.momentum}, charts ${game.parts.placement}, freshness ${game.parts.freshness}, likes ${game.parts.approval}, players ${game.parts.scale}) · saturation ${game.parts.saturation}`}>
         <ScoreBar value={game.score} />

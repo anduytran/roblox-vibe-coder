@@ -58,7 +58,7 @@ test('project registry, settings sanitizing and MCP config', () => {
   assert.throws(() => reg.add(join(dir, 'missing')))
 
   writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { blender: { command: 'uvx', args: ['blender-mcp'] }, bad: { nope: 1 }, roblox_studio: { command: 'evil' } } }))
-  const app = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '/custom/StudioMCP', studioMcpArgs: [], hideKeyFromAgents: true, rojoCommand: 'rojo', authMode: 'apiKey' as const }
+  const app = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '/custom/StudioMCP', studioMcpArgs: [], hideKeyFromAgents: true, rojoCommand: 'rojo', authMode: 'apiKey' as const, planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
   const servers = mcpServersFor(reg.get(p.id), app, projectMcpServers(dir))
   assert.deepEqual(Object.keys(servers).sort(), ['Roblox_Studio', 'blender'])
   assert.equal(servers.Roblox_Studio?.command, '/custom/StudioMCP')

@@ -7,7 +7,7 @@ const API_KEY = 'sk-ant-api03-abcdefghijklmnop'
 const MAX_TOKEN = 'sk-ant-oat01-abcdefghijklmnop'
 
 function setup(opts: { allowed: boolean; mode: AppSettings['authMode']; hide?: boolean }) {
-  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: opts.hide ?? true, rojoCommand: 'rojo', authMode: opts.mode }
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: opts.hide ?? true, rojoCommand: 'rojo', authMode: opts.mode, planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
   const revoked: string[] = []
   const creds = new EngineCredentials({
     personalModeAllowed: opts.allowed,

@@ -49,6 +49,7 @@ export const IPC = {
   gitRevertFile: 'git:revertFile',
   gitInit: 'git:init',
   costsSummary: 'costs:summary',
+  planUsageRefresh: 'planUsage:refresh',
   reviewsList: 'reviews:list',
   reviewsDiff: 'reviews:diff',
   reviewsMerge: 'reviews:merge',
@@ -190,6 +191,8 @@ export interface HangarApi {
   }
   costs: {
     summary(): Promise<CostSummary>
+    /** Claude Max mode: ask the plan for its current 5-hour and weekly usage. */
+    refreshPlan(): Promise<CostSummary>
   }
   reviews: {
     list(projectId: string): Promise<Review[]>

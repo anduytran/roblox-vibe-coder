@@ -3,8 +3,9 @@ import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
-import { AgentRunner, type QueryFn } from './agentRunner'
-import { CostTracker } from './costs'
+import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
+import { probePlanUsage } from './planUsageProbe'
+import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
 import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus, setNoHooksBase } from './git'
 import { scrubProcessEnv } from './env'
 import { JsonStore } from './jsonStore'
@@ -41,7 +42,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   studioMcpArgs: [],
   hideKeyFromAgents: true,
   rojoCommand: 'rojo',
-  authMode: 'apiKey'
+  authMode: 'apiKey',
+  planLimits: DEFAULT_PLAN_LIMITS
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -155,6 +157,13 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   if (typeof patch.studioMcpCommand === 'string') next.studioMcpCommand = patch.studioMcpCommand.trim()
   if (Array.isArray(patch.studioMcpArgs)) next.studioMcpArgs = patch.studioMcpArgs.filter((a): a is string => typeof a === 'string')
   if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
+  if (patch.planLimits && typeof patch.planLimits === 'object') {
+    const cur = current.planLimits ?? DEFAULT_PLAN_LIMITS
+    next.planLimits = {
+      fiveHourPct: Math.round(num(patch.planLimits.fiveHourPct, 5, 100, cur.fiveHourPct)),
+      weeklyPct: Math.round(num(patch.planLimits.weeklyPct, 5, 100, cur.weeklyPct))
+    }
+  }
   // Claude Max mode is for the owner's own use while developing; packaged builds never turn it on.
   if (patch.authMode === 'apiKey' || (patch.authMode === 'max' && !app.isPackaged)) next.authMode = patch.authMode
   if (typeof patch.rojoCommand === 'string' && patch.rojoCommand.trim()) next.rojoCommand = patch.rojoCommand.trim().slice(0, 500)
@@ -174,6 +183,8 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
   const settings = new JsonStore<AppSettings>(join(dataDir(), 'settings.json'), DEFAULT_SETTINGS)
+  // A settings file can't switch a shipped build into Claude Max mode (it would also swap the dollar limits out).
+  if (app.isPackaged && settings.get().authMode === 'max') settings.set({ ...settings.get(), authMode: 'apiKey' })
   const secrets = new SecretStore(join(dataDir(), 'anthropic-key.bin'))
   const registry = new ProjectRegistry(join(dataDir(), 'projects.json'))
   const costs = new CostTracker(join(dataDir(), 'costs.json'))
@@ -206,10 +217,70 @@ app.whenReady().then(() => {
 
   const engineAuth = (credential: string, opts: { forceHideKey: boolean }): Promise<EngineAuth> => credentials.auth(credential, opts)
   const getCredential = (): string | null => credentials.get()
+  let loggedPlanUsage = false
   const loadQuery = async (): Promise<QueryFn> => {
     const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: QueryFn }
-    return sdk.query
+    // Every engine run reports Claude plan usage (Claude Max mode) as it changes; keep it for limits and the UI.
+    return (args) =>
+      (async function* () {
+        try {
+          yield* costs.watch(sdk.query(args), (info) => {
+            if (!loggedPlanUsage) {
+              loggedPlanUsage = true
+              console.log(`[plan usage] first report from a run: ${info.rateLimitType} utilization=${info.utilization} resetsAt=${info.resetsAt} status=${info.status}`)
+            }
+            emit({ type: 'cost', summary: costs.summary() })
+          })
+        } finally {
+          schedulePlanRefresh()
+        }
+      })()
   }
+
+  // Claude Max mode: ask the plan for its exact 5-hour and weekly usage (what /usage shows). Sends no prompt.
+  let planRefreshing: Promise<void> | null = null
+  let planRefreshTimer: NodeJS.Timeout | null = null
+  const refreshPlanUsage = (): Promise<void> => {
+    planRefreshing ??= (async () => {
+      const token = credentials.usingMax() ? credentials.get() : null
+      if (!token) return
+      const auth = await credentials.auth(token, { forceHideKey: false })
+      try {
+        const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as { query: Parameters<typeof probePlanUsage>[0] }
+        // A `claude setup-token` token can only run models, not read usage. The owner's own Claude Code
+        // login (`claude auth login`) can; the engine reads that login itself, so Hangar never sees it.
+        const { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: _quiet, CLAUDE_CODE_OAUTH_TOKEN: _token, ...ownLogin } = buildAgentEnv(auth.env)
+        const attempts: [string, Record<string, string>][] = [
+          ['your Claude Code login', ownLogin],
+          ['the Max token', buildAgentEnv(auth.env)]
+        ]
+        const failures: string[] = []
+        for (const [label, env] of attempts) {
+          const { answer, reason } = await probePlanUsage(sdk.query, env)
+          if (!answer?.rate_limits) {
+            failures.push(`${label}: ${reason}`)
+            continue
+          }
+          if (costs.recordPlanAnswer(answer.rate_limits)) emit({ type: 'cost', summary: costs.summary() })
+          return
+        }
+        console.log(`[plan usage] couldn't read plan usage. Sign in with \`claude auth login\` to show it. (${failures.join('; ')})`)
+      } finally {
+        auth.release()
+      }
+    })().finally(() => (planRefreshing = null))
+    return planRefreshing
+  }
+  // After a run ends, check again shortly (several runs ending together share one check).
+  const schedulePlanRefresh = (): void => {
+    if (planRefreshTimer || !credentials.usingMax()) return
+    planRefreshTimer = setTimeout(() => {
+      planRefreshTimer = null
+      void refreshPlanUsage()
+    }, 15_000)
+  }
+  void refreshPlanUsage()
+  setInterval(() => void refreshPlanUsage(), 10 * 60 * 1000).unref()
 
   const runner = new AgentRunner({
     registry,
@@ -264,7 +335,11 @@ app.whenReady().then(() => {
 
   // Settings and key
   handle(IPC.settingsGet, () => settings.get())
-  handle(IPC.settingsSet, (patch: Partial<AppSettings>) => settings.set(sanitizeAppSettings(patch ?? {}, settings.get())))
+  handle(IPC.settingsSet, (patch: Partial<AppSettings>) => {
+    const next = settings.set(sanitizeAppSettings(patch ?? {}, settings.get()))
+    if (patch?.authMode === 'max') void refreshPlanUsage()
+    return next
+  })
   handle(IPC.keyStatus, () => keyStatus())
   handle(IPC.keySet, (key: unknown) => {
     secrets.setKey(str(key, 'key'))
@@ -370,6 +445,10 @@ app.whenReady().then(() => {
 
   // Costs
   handle(IPC.costsSummary, () => costs.summary())
+  handle(IPC.planUsageRefresh, async () => {
+    await refreshPlanUsage()
+    return costs.summary()
+  })
 
   // Reviews (autonomous task branches)
   handle(IPC.reviewsList, (id: unknown) => reviewActions.list(str(id, 'project')))

@@ -14,7 +14,7 @@ import type {
   Review,
   Role
 } from '@shared/types'
-import type { CostTracker } from './costs'
+import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
 import { finishTaskBranch, gitSafetyEnv, prepareTaskBase, startTaskBranch, taskBranchName, type TaskBase } from './git'
 import type { ReviewStore } from './reviews'
@@ -435,7 +435,7 @@ export class AgentRunner {
     const others = [...this.states.values()].filter((x) => x !== s && (x.status === 'working' || x.status === 'awaiting_approval'))
     const reserved = others.length * settings.perRunBudgetUsd
     const reservedHere = others.filter((x) => x.projectId === project.id).length * settings.perRunBudgetUsd
-    const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), reserved, reservedHere)
+    const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), reserved, reservedHere, planLimitsFor(settings))
     if (blocked) return this.fail(s, blocked)
 
     const role: Role | undefined = s.agentId === MAIN_AGENT_ID ? undefined : listRoles(project.path).find((r) => r.id === s.agentId)

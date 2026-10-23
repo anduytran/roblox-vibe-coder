@@ -77,7 +77,8 @@ const api: HangarApi = {
     init: (id) => invoke(IPC.gitInit, id)
   },
   costs: {
-    summary: () => invoke(IPC.costsSummary)
+    summary: () => invoke(IPC.costsSummary),
+    refreshPlan: () => invoke(IPC.planUsageRefresh)
   },
   reviews: {
     list: (id) => invoke(IPC.reviewsList, id),

@@ -43,7 +43,7 @@ process.env.HANGAR_PROBE_CANARY = CANARY
 const MODEL = process.env.HANGAR_CHECK_MODEL ?? 'claude-haiku-5-5'
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
 const appData = tmp('hangar-check-appdata-')
-const settings: AppSettings = { defaultModel: MODEL, maxConcurrentRuns: 2, perRunBudgetUsd: 0.5, globalDailyBudgetUsd: 3, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: true, rojoCommand: 'rojo', authMode: maxToken ? 'max' : 'apiKey' }
+const settings: AppSettings = { defaultModel: MODEL, maxConcurrentRuns: 2, perRunBudgetUsd: 0.5, globalDailyBudgetUsd: 3, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: true, rojoCommand: 'rojo', authMode: maxToken ? 'max' : 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
 
 class SpyEgress extends WebEgressProxy {
   hosts: string[] = []

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AiFinding, AiReview, AppSettings, Project, Review, ReviewChecks } from '@shared/types'
 import { buildAgentEnv, type CanUseTool, type QueryFn } from './agentRunner'
-import type { CostTracker } from './costs'
+import { planLimitsFor, type CostTracker } from './costs'
 import { addTempWorktree, removeTempWorktree, reviewDiff } from './git'
 import { DECEPTIVE_CHARS, evaluateToolUse } from './permissions'
 import { convertMessage, type StreamMessage } from './sdkMessages'
@@ -96,7 +96,7 @@ export class TaskReviewer {
     const settings = this.deps.getSettings()
     const apiKey = this.deps.getApiKey()
     if (!apiKey) return { status: 'error', verdict: null, summary: '', findings: [], costUsd: 0, error: 'No API key.' }
-    const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), 0, 0)
+    const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), 0, 0, planLimitsFor(settings))
     if (blocked) return { status: 'error', verdict: null, summary: '', findings: [], costUsd: 0, error: blocked }
 
     const diff = await reviewDiff(project.path, review.baseSha, review.headSha)

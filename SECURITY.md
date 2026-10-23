@@ -132,7 +132,7 @@ These can't be tested without the real Agent SDK and are worth checking once:
 
 - Agents can sign in with the owner's Claude subscription (`claude setup-token`) instead of an API key. Anthropic doesn't allow apps to offer claude.ai sign-in or to hold subscription credentials for other people, so this is for the owner's own use: packaged builds ignore the setting and refuse to store a token (`app.isPackaged`).
 - The token is stored like the API key (OS keychain), but it is **not** hidden behind the key proxy — proxying it would mean Hangar intermediates subscription credentials. The engine gets it as `CLAUDE_CODE_OAUTH_TOKEN`, so in autonomous or auto-run projects, commands an agent runs might reach it. (On the 2026-10-20 check, shell commands did not inherit it, but it still sits in the engine process.) Each such run says so in its feed. The token lasts a year; revoke it at claude.ai if it leaks.
-- Spending limits still apply, but to the SDK's estimated cost; the subscription's own usage limits apply on top.
+- Limits in Max mode are the plan's own 5-hour and weekly usage (percentages you set), not dollars. A `setup-token` token can't read usage, so Hangar asks the engine for it (the numbers behind `/usage`) using the owner's own Claude Code login (`claude auth login`). The engine reads that login from the keychain itself; Hangar never handles it, and the check sends no prompt. Runs also report usage as they go.
 
 ## Remaining risks (be aware)
 

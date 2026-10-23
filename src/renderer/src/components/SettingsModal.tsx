@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { attempt, setKey, setSettings, toast, useStore } from '../store'
+import { attempt, setCosts, setKey, setSettings, toast, useStore } from '../store'
 import { PhoneRemoteSection } from './PhoneRemoteSection'
-import { Button, Field, Icon, Modal, Toggle } from './ui'
+import { Button, Field, Icon, Modal, resetsText, Toggle } from './ui'
 import { getTheme, setTheme, type ThemeChoice } from '../theme'
 
 const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
@@ -20,6 +20,18 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [rojo, setRojo] = useState(settings?.rojoCommand ?? 'rojo')
   const [authMode, setAuthMode] = useState<'apiKey' | 'max'>(settings?.authMode ?? 'apiKey')
   const [maxDraft, setMaxDraft] = useState('')
+  const [fiveHourPct, setFiveHourPct] = useState(String(settings?.planLimits?.fiveHourPct ?? 90))
+  const [weeklyPct, setWeeklyPct] = useState(String(settings?.planLimits?.weeklyPct ?? 80))
+  const plan = useStore((s) => s.costs.plan)
+  const [checkingPlan, setCheckingPlan] = useState(false)
+  const refreshPlan = (): void => {
+    setCheckingPlan(true)
+    void attempt(async () => {
+      const c = await window.hangar.costs.refreshPlan()
+      setCosts(c)
+      if (!c.plan?.weekly) toast("Couldn't read your plan usage. Run `claude auth login` in a terminal, then try again.", 'error')
+    }).finally(() => setCheckingPlan(false))
+  }
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme())
 
   const saveKey = (): void => {
@@ -63,7 +75,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         studioMcpArgs: studioArgs.trim() ? studioArgs.trim().split(/\s+/) : [],
         hideKeyFromAgents: hideKey,
         rojoCommand: rojo,
-        authMode: key.maxAvailable ? authMode : 'apiKey'
+        authMode: key.maxAvailable ? authMode : 'apiKey',
+        planLimits: { fiveHourPct: parseFloat(fiveHourPct), weeklyPct: parseFloat(weeklyPct) }
       })
       setSettings(next)
       toast('Settings saved.')
@@ -208,8 +221,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           {authMode === 'max' && (
             <p className="small warn">
               The token can't be hidden behind Hangar's proxy, so agents hold it directly. In autonomous or auto-run projects, commands an agent runs
-              could read it. It lasts a year: revoke it at claude.ai if it ever leaks. Spending limits below count estimated cost, not real charges, and
-              busy autopilot runs will reach your plan's usage limits sooner.
+              could read it. It lasts a year: revoke it at claude.ai if it ever leaks. Busy autopilot runs use your plan's limits faster than chatting does.
             </p>
           )}
         </section>
@@ -233,18 +245,54 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         </div>
       </section>
 
-      <section className="card">
-        <h3>Spending limits</h3>
-        <div className="grid-2">
-          <Field label="Per-task limit (USD)" hint="A single run stops when it reaches this.">
+      {authMode === 'max' ? (
+        <section className="card">
+          <div className="row between">
+            <h3>Claude plan limits</h3>
+            <Button size="sm" tone="ghost" disabled={checkingPlan} onClick={refreshPlan}>
+              {checkingPlan ? 'Checking…' : 'Refresh'}
+            </Button>
+          </div>
+          <p className="small">
+            {plan?.fiveHour || plan?.weekly ? (
+              <>
+                Now: 5-hour window {plan.fiveHour ? `${plan.fiveHour.usedPct}% used${plan.fiveHour.resetsAt ? `, ${resetsText(plan.fiveHour.resetsAt)}` : ''}` : 'unknown'} · week{' '}
+                {plan.weekly ? `${plan.weekly.usedPct}% used${plan.weekly.resetsAt ? `, ${resetsText(plan.weekly.resetsAt)}` : ''}` : 'unknown'}.
+              </>
+            ) : (
+              <>
+                No usage yet. Hangar reads it through your Claude Code login: run <code>claude auth login</code> in a terminal once, then click
+                Refresh.
+              </>
+            )}
+          </p>
+          <div className="grid-2">
+            <Field label="Stop at, 5-hour window (%)" hint="No new tasks start past this. Running ones finish.">
+              <input inputMode="numeric" value={fiveHourPct} onChange={(e) => setFiveHourPct(e.target.value)} />
+            </Field>
+            <Field label="Stop at, this week (%)" hint="Keeps some of the week for you to use Claude yourself.">
+              <input inputMode="numeric" value={weeklyPct} onChange={(e) => setWeeklyPct(e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Per-task safety stop (estimated USD)" hint="Stops one runaway task. On Max it's an estimate, not a charge.">
             <input inputMode="decimal" value={perRun} onChange={(e) => setPerRun(e.target.value)} />
           </Field>
-          <Field label="Daily limit, all projects (USD)" hint="Empty = no daily limit.">
-            <input inputMode="decimal" value={daily} placeholder="No limit" onChange={(e) => setDaily(e.target.value)} />
-          </Field>
-        </div>
-        <p className="muted small">Costs are the SDK's own estimates; check the Claude Console for exact billing.</p>
-      </section>
+          <p className="muted small">With Claude Max, these replace the daily dollar limits. Autopilot pauses when a limit is reached and tells you when it resets.</p>
+        </section>
+      ) : (
+        <section className="card">
+          <h3>Spending limits</h3>
+          <div className="grid-2">
+            <Field label="Per-task limit (USD)" hint="A single run stops when it reaches this.">
+              <input inputMode="decimal" value={perRun} onChange={(e) => setPerRun(e.target.value)} />
+            </Field>
+            <Field label="Daily limit, all projects (USD)" hint="Empty = no daily limit.">
+              <input inputMode="decimal" value={daily} placeholder="No limit" onChange={(e) => setDaily(e.target.value)} />
+            </Field>
+          </div>
+          <p className="muted small">Costs are the SDK's own estimates; check the Claude Console for exact billing.</p>
+        </section>
+      )}
 
       <PhoneRemoteSection />
 

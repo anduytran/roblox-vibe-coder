@@ -272,6 +272,12 @@ Reply with only these sections, short and concrete:
       this.evaluate(o.reviewId)
       return
     }
+    if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+      // A spending or plan limit: retrying can't help until it resets, so pause at once and say why.
+      this.record(o.projectId, title, 'failed')
+      this.pause(o.projectId, `${o.error} Resume once there's room again.`)
+      return
+    }
     if (!o.ok) {
       st = this.record(o.projectId, title, 'failed')
       st = this.put({ ...st, consecutiveFailures: st.consecutiveFailures + 1 })

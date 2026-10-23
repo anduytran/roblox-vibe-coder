@@ -87,6 +87,8 @@ export interface AppSettings {
   rojoCommand: string
   /** Which credential agents use. 'max' (a Claude subscription token) works only in development builds. */
   authMode: 'apiKey' | 'max'
+  /** Claude Max mode: no new work starts once plan usage reaches these percentages. */
+  planLimits: { fiveHourPct: number; weeklyPct: number }
 }
 
 export type LogKind = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error' | 'result'
@@ -227,6 +229,24 @@ export interface CostSummary {
   todayUsd: number
   projectTodayUsd: Record<string, number>
   projectTotalUsd: Record<string, number>
+  /** Claude plan usage (Claude Max mode), from what the engine last reported; null until it reports any. */
+  plan: PlanUsage | null
+}
+
+export interface PlanUsageWindow {
+  /** Percent of the window used, 0–100. */
+  usedPct: number
+  /** When the window resets (ms since epoch), if known. */
+  resetsAt: number | null
+  /** When Hangar last heard about it. */
+  at: number
+}
+
+export interface PlanUsage {
+  fiveHour: PlanUsageWindow | null
+  weekly: PlanUsageWindow | null
+  /** Set while the plan refuses requests (a limit was hit): which window and when it lifts. */
+  blocked: { window: string; until: number | null } | null
 }
 
 export interface GitFile {

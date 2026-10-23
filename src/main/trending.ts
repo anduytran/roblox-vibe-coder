@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AppSettings, GameIdea, IdeaChatMessage, TrendingGame, TrendsSnapshot } from '@shared/types'
 import { buildAgentEnv, type QueryFn } from './agentRunner'
-import type { CostTracker } from './costs'
+import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
 import { DECEPTIVE_CHARS } from './permissions'
 import { convertMessage, type StreamMessage } from './sdkMessages'
@@ -451,7 +451,7 @@ export class Trends {
     const apiKey = getApiKey()
     if (!apiKey) throw new Error('Add your Anthropic API key (or Claude Max token) in Settings first.')
     const settings = getSettings()
-    const blocked = costs?.budgetBlock('hangar:ideas', null, settings.globalDailyBudgetUsd, Date.now(), 0, 0)
+    const blocked = costs?.budgetBlock('hangar:ideas', null, settings.globalDailyBudgetUsd, Date.now(), 0, 0, planLimitsFor(settings))
     if (blocked) throw new Error(blocked)
     const cwd = mkdtempSync(join(tmpdir(), 'hangar-ideas-'))
     const auth = await engineAuth(apiKey, { forceHideKey: true })

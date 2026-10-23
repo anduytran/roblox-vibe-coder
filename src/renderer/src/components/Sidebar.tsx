@@ -1,5 +1,6 @@
 import { addProject, attempt, openWizard, selectProject, toast, useStore } from '../store'
-import { Avatar, Icon, usd } from './ui'
+import type { AppSettings, PlanUsage } from '@shared/types'
+import { Avatar, Icon, resetsText, usd } from './ui'
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const projects = useStore((s) => s.projects)
@@ -67,17 +68,23 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </button>
 
       <div className="side-foot">
-        <div className="spend" title="Spent today across all projects">
-          <span>Today</span>
-          <strong>
-            {usd(costs.todayUsd)}
-            {limit !== null && <span className="muted"> / {usd(limit)}</span>}
-          </strong>
-        </div>
-        {limit !== null && (
-          <div className="meter" aria-hidden>
-            <div className="meter-fill" style={{ width: `${Math.min(100, (costs.todayUsd / limit) * 100)}%` }} />
-          </div>
+        {settings?.authMode === 'max' ? (
+          <PlanMeters plan={costs.plan} limits={settings.planLimits} />
+        ) : (
+          <>
+            <div className="spend" title="Spent today across all projects">
+              <span>Today</span>
+              <strong>
+                {usd(costs.todayUsd)}
+                {limit !== null && <span className="muted"> / {usd(limit)}</span>}
+              </strong>
+            </div>
+            {limit !== null && (
+              <div className="meter" aria-hidden>
+                <div className="meter-fill" style={{ width: `${Math.min(100, (costs.todayUsd / limit) * 100)}%` }} />
+              </div>
+            )}
+          </>
         )}
         <button className="side-btn" onClick={onOpenSettings}>
           <Icon name="gear" />
@@ -99,5 +106,32 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </button>
       </div>
     </aside>
+  )
+}
+
+/** Claude Max mode: how much of the plan's 5-hour and weekly windows is used, against your limits. */
+function PlanMeters({ plan, limits }: { plan: PlanUsage | null; limits: AppSettings['planLimits'] }) {
+  const rows = [
+    { label: '5-hour', w: plan?.fiveHour ?? null, limit: limits.fiveHourPct },
+    { label: 'Week', w: plan?.weekly ?? null, limit: limits.weeklyPct }
+  ]
+  return (
+    <>
+      {rows.map(({ label, w, limit }) => (
+        <div key={label} title={w ? `${w.usedPct}% of your Claude plan's ${label.toLowerCase()} usage; agents stop starting work at ${limit}%. ${resetsText(w.resetsAt)}` : 'Shows after the first run'}>
+          <div className="spend">
+            <span>{label}</span>
+            <strong>
+              {w ? `${w.usedPct}%` : '—'}
+              <span className="muted"> / {limit}%</span>
+            </strong>
+          </div>
+          <div className="meter" aria-hidden>
+            <div className="meter-fill" style={{ width: `${Math.min(100, ((w?.usedPct ?? 0) / limit) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+      {plan?.blocked && <p className="small warn">Plan limit reached{plan.blocked.until ? `, ${resetsText(plan.blocked.until)}` : ''}.</p>}
+    </>
   )
 }

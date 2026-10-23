@@ -38,7 +38,7 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
     studioMcpArgs: [],
     hideKeyFromAgents: false,
     rojoCommand: 'rojo',
-    authMode: 'apiKey'
+    authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 }
   }
   const events: AgentEvent[] = []
   const calls: { prompt: string; options: Record<string, unknown>; release: () => void }[] = []

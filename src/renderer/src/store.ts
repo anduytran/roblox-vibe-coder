@@ -33,7 +33,7 @@ let state: StoreState = {
   roles: {},
   reviews: {},
   approvals: [],
-  costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} },
+  costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {}, plan: null },
   settings: null,
   key: { hasKey: false, encryptionAvailable: true, maxAvailable: false, hasMaxToken: false, ready: false },
   toast: null,
@@ -199,6 +199,10 @@ export function closeIdeaChat(): void {
 
 export function closeWizard(): void {
   set({ wizard: null })
+}
+
+export function setCosts(costs: CostSummary): void {
+  set({ costs })
 }
 
 export function setTrends(trends: TrendsSnapshot): void {
