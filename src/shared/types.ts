@@ -358,6 +358,8 @@ export interface GameIdea {
   scope: 'small' | 'medium' | 'large'
   inspiredBy: string[]
   score: number
+  /** The version before the last refine, for Undo. */
+  previous?: Omit<GameIdea, 'previous'>
 }
 
 /** One message in the idea brainstorm chat on Home. */

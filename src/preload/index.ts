@@ -44,7 +44,9 @@ const api: HangarApi = {
   trends: {
     get: () => invoke(IPC.trendsGet),
     refresh: () => invoke(IPC.trendsRefresh),
-    ideas: () => invoke(IPC.trendsIdeas)
+    ideas: () => invoke(IPC.trendsIdeas),
+    refineIdea: (id, request) => invoke(IPC.trendsRefineIdea, id, request),
+    undoRefine: (id) => invoke(IPC.trendsUndoRefine, id)
   },
   ideaChat: {
     get: () => invoke(IPC.ideaChatGet),

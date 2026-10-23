@@ -83,6 +83,8 @@ export const IPC = {
   trendsGet: 'trends:get',
   trendsRefresh: 'trends:refresh',
   trendsIdeas: 'trends:ideas',
+  trendsRefineIdea: 'trends:refineIdea',
+  trendsUndoRefine: 'trends:undoRefine',
   ideaChatGet: 'ideaChat:get',
   ideaChatSend: 'ideaChat:send',
   ideaChatClear: 'ideaChat:clear',
@@ -157,6 +159,9 @@ export interface HangarApi {
     get(): Promise<TrendsSnapshot>
     refresh(): Promise<TrendsSnapshot>
     ideas(): Promise<TrendsSnapshot>
+    /** Rewrite one idea as asked; the previous version is kept for undoRefine. */
+    refineIdea(id: string, request: string): Promise<TrendsSnapshot>
+    undoRefine(id: string): Promise<TrendsSnapshot>
   }
   ideaChat: {
     get(): Promise<IdeaChatMessage[]>

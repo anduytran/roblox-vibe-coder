@@ -237,6 +237,47 @@ test('idea chat: replies see the trends and the whole conversation, with no tool
   assert.deepEqual(await trends.sendChat('   '), [])
 })
 
+test('refine: an idea is rewritten in place as asked, with no tools, and can be undone', async () => {
+  const { get } = fakeRoblox()
+  const brief = (title: string, genre: string) => '```json\n' + JSON.stringify([{ title, pitch: `${title} pitch.`, coreLoop: 'Loop', whyNow: 'Now', genre, scope: 'small', inspiredBy: ['Cloud Parkour'] }]) + '\n```'
+  let reply = '```json\n' + JSON.stringify([
+    { title: 'Cloud Couriers', pitch: 'Parkour deliveries.', coreLoop: 'Grab, run, deliver', whyNow: 'Open obby space', genre: 'Obby', scope: 'small', inspiredBy: ['Cloud Parkour'] },
+    { title: 'Tower Rush', pitch: 'Tower defense.', coreLoop: 'Place, defend', whyNow: 'TD', genre: 'Tower Defense', scope: 'medium', inspiredBy: ['Tower Game 1'] }
+  ]) + '\n```'
+  const prompts: string[] = []
+  const options: Record<string, unknown>[] = []
+  const query: QueryFn = ({ prompt, options: o }) =>
+    (async function* () {
+      prompts.push(prompt)
+      options.push(o)
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
+  const trends = new Trends(join(tmp('hangar-refine-'), 't.json'), { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async () => ({ env: {}, release: () => {} }) })
+  const ideas = (await trends.generateIdeas()).ideas
+  const target = ideas.find((i) => i.title === 'Tower Rush')!
+
+  reply = brief('Tower Rush Co-op', 'Tower Defense')
+  const after = await trends.refineIdea(target.id, '  make it co-op  ')
+  assert.match(prompts[1]!, /Current concept:[\s\S]*Tower Rush[\s\S]*The user's request: make it co-op$/)
+  assert.ok(!/"score"|"id"/.test(prompts[1]!), 'only the concept is sent')
+  for (const tool of ['Bash', 'Read', 'Write', 'WebFetch']) assert.ok((options[1]!.disallowedTools as string[]).includes(tool))
+  assert.deepEqual(after.ideas.map((i) => i.id), ideas.map((i) => i.id), 'same ideas, same order')
+  const refined = after.ideas.find((i) => i.id === target.id)!
+  assert.equal(refined.title, 'Tower Rush Co-op')
+  assert.equal(refined.previous?.title, 'Tower Rush')
+
+  const undone = trends.undoRefine(target.id).ideas.find((i) => i.id === target.id)!
+  assert.equal(undone.title, 'Tower Rush')
+  assert.equal(undone.previous, undefined)
+
+  await assert.rejects(trends.refineIdea(target.id, '   '), /how to change/)
+  await assert.rejects(trends.refineIdea('missing', 'x'), /no longer on the dashboard/)
+  reply = 'not json'
+  await assert.rejects(trends.refineIdea(target.id, 'x'), /expected format/)
+})
+
 // ---------- autopilot (unit) ----------
 
 function autopilotSetup() {

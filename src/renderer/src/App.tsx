@@ -6,6 +6,7 @@ import { ReviewsView } from './components/ReviewsView'
 import { SettingsModal } from './components/SettingsModal'
 import { Dashboard } from './components/Dashboard'
 import { IdeaChat } from './components/IdeaChat'
+import { IdeaRefine } from './components/IdeaRefine'
 import { NewGameWizard } from './components/NewGameWizard'
 import { OverviewView } from './components/OverviewView'
 import { Sidebar } from './components/Sidebar'
@@ -24,6 +25,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const wizardOpen = useStore((s) => s.wizard !== null)
   const ideaChatOpen = useStore((s) => s.ideaChat !== null)
+  const refineOpen = useStore((s) => s.refineIdeaId !== null)
   const projectId = project?.id
   // Each project opens on its Overview.
   useEffect(() => setTab('overview'), [projectId])
@@ -64,7 +66,7 @@ export function App() {
                 ))}
               </nav>
             </header>
-            <section className="view">
+            <section className="view" key={`${project.id}-${tab}`}>
               {tab === 'overview' && <OverviewView project={project} onOpenReviews={() => setTab('reviews')} />}
               {tab === 'agents' && <AgentsView project={project} />}
               {tab === 'reviews' && <ReviewsView project={project} />}
@@ -79,8 +81,9 @@ export function App() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {wizardOpen && <NewGameWizard />}
       {ideaChatOpen && <IdeaChat />}
+      {refineOpen && <IdeaRefine />}
       {toast && (
-        <div className={`toast toast-${toast.tone}`} role="status">
+        <div key={toast.id} className={`toast toast-${toast.tone}`} role="status">
           {toast.text}
         </div>
       )}

@@ -25,3 +25,31 @@ export function setTheme(choice: ThemeChoice): void {
   }
   applyTheme(choice)
 }
+
+/** Animations: follow the OS's "reduce motion" setting, or force them on or off. Stored per computer. */
+export type MotionChoice = 'system' | 'on' | 'off'
+const MOTION_KEY = 'hangar-motion'
+
+export function getMotion(): MotionChoice {
+  try {
+    const v = localStorage.getItem(MOTION_KEY)
+    return v === 'on' || v === 'off' ? v : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+export function applyMotion(choice: MotionChoice = getMotion()): void {
+  if (choice === 'system') delete document.documentElement.dataset.motion
+  else document.documentElement.dataset.motion = choice
+}
+
+export function setMotion(choice: MotionChoice): void {
+  try {
+    if (choice === 'system') localStorage.removeItem(MOTION_KEY)
+    else localStorage.setItem(MOTION_KEY, choice)
+  } catch {
+    // storage unavailable: the choice lasts for this session only
+  }
+  applyMotion(choice)
+}

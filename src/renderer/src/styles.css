@@ -1760,10 +1760,17 @@ button.file-item {
   }
 }
 
+/* Animations off: chosen in Settings, or the OS asks for reduced motion (unless Settings says on). */
+:root[data-motion='off'] *,
+:root[data-motion='off'] *::before,
+:root[data-motion='off'] *::after {
+  animation: none !important;
+  transition: none !important;
+}
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root:not([data-motion='on']) *,
+  :root:not([data-motion='on']) *::before,
+  :root:not([data-motion='on']) *::after {
     animation: none !important;
     transition: none !important;
   }
@@ -2394,4 +2401,264 @@ button.file-item {
   resize: none;
   border-radius: var(--r-lg);
   padding: 10px 13px;
+}
+
+/* Idea cards open the refine screen */
+.idea-card-click {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.idea-card-click:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--raised) 40%, var(--surface));
+}
+.idea-card-click:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.idea-foot {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.refine-idea {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: opacity 0.2s;
+}
+.refine-busy {
+  opacity: 0.55;
+}
+.refine-title {
+  font-size: var(--fs-lg);
+  margin: 0;
+}
+.refine-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.refine-facts dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+.refine-facts dd {
+  margin: 0;
+  color: var(--text-2);
+}
+.refine-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.refine-ask textarea {
+  resize: none;
+  border-radius: var(--r-lg);
+  padding: 10px 13px;
+}
+.refine-row {
+  align-items: flex-end;
+}
+.refine-suggestions {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+/* Settings: categories on the left, their settings on the right */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  min-height: 420px;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.settings-tab-on,
+.settings-tab-on:hover {
+  background: var(--press);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .settings-tab {
+    white-space: nowrap;
+  }
+}
+
+/* ---------- motion ----------
+   Short, quiet movement: things arrive with a small rise, lists come in one after another, and
+   values glide when they change. All of it is switched off by Settings → General → Animations. */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+@keyframes grow-x {
+  from {
+    scale: 0 1;
+  }
+}
+
+/* Views and panes fade up when they open or switch. */
+.view,
+.settings-pane,
+.refine-idea {
+  animation: rise 0.24s var(--ease-out);
+}
+.home > * {
+  animation: rise 0.32s var(--ease-out) both;
+}
+.home > *:nth-child(2) {
+  animation-delay: 0.04s;
+}
+.home > *:nth-child(3) {
+  animation-delay: 0.08s;
+}
+.home > *:nth-child(4) {
+  animation-delay: 0.12s;
+}
+
+/* Lists arrive one after another. */
+.game-card,
+.idea-card,
+.needs-item,
+.trend-table tbody tr,
+.space-row {
+  animation: rise 0.3s var(--ease-out) both;
+}
+:is(.game-card, .idea-card, .needs-item, .trend-table tbody tr, .space-row):nth-child(2) {
+  animation-delay: 0.03s;
+}
+:is(.game-card, .idea-card, .needs-item, .trend-table tbody tr, .space-row):nth-child(3) {
+  animation-delay: 0.06s;
+}
+:is(.game-card, .idea-card, .needs-item, .trend-table tbody tr, .space-row):nth-child(4) {
+  animation-delay: 0.09s;
+}
+:is(.game-card, .idea-card, .needs-item, .trend-table tbody tr, .space-row):nth-child(5) {
+  animation-delay: 0.12s;
+}
+:is(.game-card, .idea-card, .needs-item, .trend-table tbody tr, .space-row):nth-child(n + 6) {
+  animation-delay: 0.15s;
+}
+
+/* Cards lift a little under the pointer. */
+.game-card,
+.idea-card-click,
+.needs-item {
+  transition: border-color 0.15s, background 0.15s, translate 0.15s var(--ease-out), box-shadow 0.15s;
+}
+.game-card:hover,
+.idea-card-click:hover,
+.needs-item:hover {
+  translate: 0 -2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+/* Buttons and tabs respond to presses. */
+.btn,
+.side-btn,
+.tab,
+.settings-tab,
+.segment,
+.chat-starter {
+  transition: background 0.14s, color 0.14s, border-color 0.14s, scale 0.1s;
+}
+.btn:active:not(:disabled),
+.chat-starter:active:not(:disabled) {
+  scale: 0.97;
+}
+
+/* Feeds and chat: new entries slide in. */
+.entry {
+  animation: rise 0.22s var(--ease-out);
+}
+.chat-msg {
+  animation: pop 0.22s var(--ease-out);
+}
+.chat-thinking {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* Bars grow in and glide to new values. */
+.score-bar span,
+.meter-fill {
+  transform-origin: left;
+  animation: grow-x 0.6s var(--ease-out) both;
+  transition: width 0.5s var(--ease-out);
+}
+
+/* Toasts pop up. */
+.toast {
+  animation: pop 0.2s var(--ease-out);
+}
+
+/* Settings keeps one size whichever category is open; only the right-hand pane scrolls. */
+.modal:has(.settings-layout) {
+  height: min(680px, calc(100vh - 48px));
+}
+.modal-body:has(.settings-layout) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-layout {
+  height: 100%;
+  min-height: 0;
+}
+.settings-pane {
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+@media (max-width: 700px) {
+  .settings-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
 }

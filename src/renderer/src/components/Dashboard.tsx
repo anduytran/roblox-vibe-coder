@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AutopilotState, GameIdea, Project, TrendingGame } from '@shared/types'
-import { attempt, openIdeaChat, openWizard, selectProject, setTrends, toast, useStore } from '../store'
+import { attempt, openIdeaChat, openIdeaRefine, openWizard, selectProject, setTrends, toast, useStore } from '../store'
 import { Avatar, Button, Icon, planLine, timeAgo, usd } from './ui'
 
 const STALE_MS = 6 * 3600 * 1000
@@ -262,15 +262,37 @@ function TrendRow({ game, rank }: { game: TrendingGame; rank: number }) {
   )
 }
 
+/** The New game wizard's starting text for an idea. */
+export function ideaBrief(idea: GameIdea): { name: string; genre: string; idea: string } {
+  return {
+    name: idea.title,
+    genre: idea.genre,
+    idea: `${idea.pitch}\n\nCore loop: ${idea.coreLoop}\n\nWhy now: ${idea.whyNow}${idea.inspiredBy.length ? `\n\nSpace it plays in (be original, don't copy): ${idea.inspiredBy.join(', ')}` : ''}`
+  }
+}
+
+/** An idea. Dashboard ideas (with a rank) open the refine screen when clicked; chat briefs are refined by chatting. */
 export function IdeaCard({ idea, rank }: { idea: GameIdea; rank?: number }) {
-  const create = (): void =>
-    openWizard({
-      name: idea.title,
-      genre: idea.genre,
-      idea: `${idea.pitch}\n\nCore loop: ${idea.coreLoop}\n\nWhy now: ${idea.whyNow}${idea.inspiredBy.length ? `\n\nSpace it plays in (be original, don't copy): ${idea.inspiredBy.join(', ')}` : ''}`
-    })
+  const clickable = rank !== undefined
+  const open = (): void => openIdeaRefine(idea.id)
   return (
-    <article className="idea-card">
+    <article
+      className={`idea-card ${clickable ? 'idea-card-click' : ''}`}
+      {...(clickable
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            title: 'Open to refine this idea',
+            onClick: open,
+            onKeyDown: (e: KeyboardEvent) => {
+              if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault()
+                open()
+              }
+            }
+          }
+        : {})}
+    >
       <div className="row between gap-sm">
         {rank !== undefined && <span className="idea-rank">{rank}</span>}
         <h4 className="idea-title">{idea.title}</h4>
@@ -283,17 +305,18 @@ export function IdeaCard({ idea, rank }: { idea: GameIdea; rank?: number }) {
       <p className="small muted">
         <strong>Why now:</strong> {idea.whyNow}
       </p>
-      <div className="row between">
+      <div className="row between idea-foot">
         <span className="small muted">
-          {idea.genre} · {idea.scope} scope
+          {idea.genre} · {idea.scope} scope{idea.previous ? ' · refined' : ''}
         </span>
-        <span className="row gap-xs">
+        {/* The card itself opens the refine screen; these buttons do their own thing. */}
+        <span className="row gap-xs" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           {rank !== undefined && (
             <Button size="sm" tone="ghost" onClick={() => openIdeaChat(`Let's develop idea ${rank}, “${idea.title}”. `)}>
               Discuss
             </Button>
           )}
-          <Button size="sm" onClick={create}>
+          <Button size="sm" onClick={() => openWizard(ideaBrief(idea))}>
             Create this game
           </Button>
         </span>

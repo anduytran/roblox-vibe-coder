@@ -82,7 +82,7 @@ export function IdeaChat() {
         ))}
         {busy && (
           <div className="chat-msg chat-assistant">
-            <div className="chat-bubble muted">Thinking…</div>
+            <div className="chat-bubble muted chat-thinking">Thinking…</div>
           </div>
         )}
         <div ref={end} />

@@ -104,7 +104,12 @@ const ICONS: Record<string, string> = {
   moon: 'M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6Z',
   monitor: 'M2.5 3.5h11v7h-11zM6 13h4m-2-2.5V13',
   home: 'M2.5 7.5 8 3l5.5 4.5M4 6.5V13h3V10h2v3h3V6.5',
-  folder: 'M2.5 4.5h4l1.5 1.5h5.5v6.5h-11z'
+  folder: 'M2.5 4.5h4l1.5 1.5h5.5v6.5h-11z',
+  key: 'M5.5 10.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm2.3-1.9 5.7 0M11 8.6v2M13.5 8.6v1.5',
+  gauge: 'M2.5 11.5a5.5 5.5 0 1 1 11 0M8 11.5l2.5-3.5M8 11.5h0',
+  cube: 'M8 2.5 13 5v6l-5 2.5L3 11V5l5-2.5Zm0 0M3 5l5 2.5L13 5M8 7.5v6',
+  phone: 'M5 2h6v12H5zM7.3 12h1.4',
+  shield: 'M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4l5-2Zm-2 6 1.5 1.5L10.5 6.5'
 }
 
 /** Small line icons drawn at 16px on a 16-unit grid; they inherit the text colour. */

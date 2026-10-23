@@ -23,6 +23,8 @@ export interface StoreState {
   wizard: { idea?: string; name?: string; genre?: string } | null
   /** The idea brainstorm chat, if open, with text to start the message box with. */
   ideaChat: { draft: string } | null
+  /** The dashboard idea open on the refine screen. */
+  refineIdeaId: string | null
 }
 
 let state: StoreState = {
@@ -40,7 +42,8 @@ let state: StoreState = {
   autopilot: {},
   trends: null,
   wizard: null,
-  ideaChat: null
+  ideaChat: null,
+  refineIdeaId: null
 }
 
 /** Stable empty values so selectors never return a fresh object (which would re-render forever). */
@@ -186,11 +189,19 @@ export function selectProject(id: string | null): void {
 }
 
 export function openWizard(prefill: StoreState['wizard'] = {}): void {
-  set({ wizard: prefill ?? {}, ideaChat: null })
+  set({ wizard: prefill ?? {}, ideaChat: null, refineIdeaId: null })
 }
 
 export function openIdeaChat(draft = ''): void {
-  set({ ideaChat: { draft } })
+  set({ ideaChat: { draft }, refineIdeaId: null })
+}
+
+export function openIdeaRefine(id: string): void {
+  set({ refineIdeaId: id })
+}
+
+export function closeIdeaRefine(): void {
+  set({ refineIdeaId: null })
 }
 
 export function closeIdeaChat(): void {
