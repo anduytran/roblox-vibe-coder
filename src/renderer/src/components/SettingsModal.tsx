@@ -30,11 +30,24 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     })
   }
 
+  // The sign-in choice applies at once (like the theme), so it can't be lost by closing without Save.
+  const applyAuthMode = async (mode: 'apiKey' | 'max'): Promise<void> => {
+    setAuthMode(mode)
+    setSettings(await window.hangar.settings.set({ authMode: mode }))
+    setKey(await window.hangar.key.status())
+  }
+  const chooseAuthMode = (mode: 'apiKey' | 'max'): void => {
+    void attempt(async () => {
+      await applyAuthMode(mode)
+      toast(mode === 'max' ? 'Agents now use your Claude Max subscription.' : 'Agents now use your API key.')
+    })
+  }
   const saveMaxToken = (): void => {
     void attempt(async () => {
-      setKey(await window.hangar.key.setMaxToken(maxDraft))
+      await window.hangar.key.setMaxToken(maxDraft)
       setMaxDraft('')
-      toast('Claude Max token saved securely.')
+      await applyAuthMode('max')
+      toast('Claude Max token saved. Agents now use your subscription.')
     })
   }
 
@@ -158,7 +171,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 ['max', 'Claude Max']
               ] as const
             ).map(([value, label]) => (
-              <button key={value} role="radio" aria-checked={authMode === value} className={`segment ${authMode === value ? 'segment-on' : ''}`} onClick={() => setAuthMode(value)}>
+              <button key={value} role="radio" aria-checked={authMode === value} className={`segment ${authMode === value ? 'segment-on' : ''}`} onClick={() => chooseAuthMode(value)}>
                 {label}
               </button>
             ))}
