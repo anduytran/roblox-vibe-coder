@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { IdeaChatMessage } from '@shared/types'
+import type { IdeaCategory, IdeaChatMessage } from '@shared/types'
+import { IDEA_CATEGORIES } from '@shared/ideas'
 import { attempt, closeIdeaChat, useStore } from '../store'
 import { IdeaCard } from './Dashboard'
 import { Button, Modal } from './ui'
@@ -13,6 +14,8 @@ const STARTERS = [
 /** Brainstorm game ideas with Claude, grounded in what's trending on Roblox. */
 export function IdeaChat() {
   const initial = useStore((s) => s.ideaChat?.draft ?? '')
+  const startCategory = useStore((s) => s.ideaChat?.category ?? 'trend')
+  const [category, setCategory] = useState<IdeaCategory>(startCategory)
   const [messages, setMessages] = useState<IdeaChatMessage[]>([])
   const [draft, setDraft] = useState(initial)
   const [busy, setBusy] = useState(false)
@@ -29,7 +32,7 @@ export function IdeaChat() {
     setBusy(true)
     setDraft('')
     setMessages((m) => [...m, { id: `pending-${Date.now()}`, role: 'user', text: message, at: Date.now() }])
-    void attempt(() => window.hangar.ideaChat.send(message))
+    void attempt(() => window.hangar.ideaChat.send(message, category))
       .then((chat) => {
         if (chat) setMessages(chat)
         else {
@@ -51,7 +54,7 @@ export function IdeaChat() {
       onClose={closeIdeaChat}
       footer={
         <>
-          <span className="small muted">Claude sees the current Roblox trends. It can't use tools or touch your projects. About $0.01–0.05 a reply.</span>
+          <span className="small muted">Claude sees the current Roblox trends. It can't use tools or touch your projects. Star a brief to save it.</span>
           <span className="spacer" />
           {messages.length > 0 && (
             <Button tone="ghost" disabled={busy} onClick={startOver}>
@@ -61,6 +64,13 @@ export function IdeaChat() {
         </>
       }
     >
+      <div className="segmented segmented-sm chat-kinds" role="radiogroup" aria-label="Kind of ideas">
+        {IDEA_CATEGORIES.map((c) => (
+          <button key={c.id} role="radio" aria-checked={category === c.id} title={c.hint} className={`segment ${category === c.id ? 'segment-on' : ''}`} onClick={() => setCategory(c.id)}>
+            {c.label}
+          </button>
+        ))}
+      </div>
       <div className="chat-log">
         {messages.length === 0 && !busy && (
           <div className="chat-empty">

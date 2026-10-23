@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
-import type { AutopilotState, GameIdea, Project, TrendingGame } from '@shared/types'
+import type { AutopilotState, GameIdea, IdeaCategory, Project, TrendingGame } from '@shared/types'
+import { IDEA_CATEGORIES, ideaCategory } from '@shared/ideas'
 import { attempt, openIdeaChat, openIdeaRefine, openWizard, selectProject, setTrends, toast, useStore } from '../store'
 import { Avatar, Button, Icon, planLine, timeAgo, usd } from './ui'
 
@@ -22,6 +23,8 @@ export function Dashboard() {
   const costs = useStore((s) => s.costs)
   const onMax = useStore((s) => s.settings?.authMode === 'max')
   const [loading, setLoading] = useState<'refresh' | 'ideas' | null>(null)
+  const [category, setCategory] = useState<IdeaCategory>('trend')
+  const [ideaTab, setIdeaTab] = useState<'ideas' | 'saved'>('ideas')
 
   useEffect(() => {
     if (!trends?.fetchedAt || Date.now() - trends.fetchedAt > STALE_MS) refresh(false)
@@ -37,7 +40,8 @@ export function Dashboard() {
   }
   const ideas = (): void => {
     setLoading('ideas')
-    void attempt(async () => setTrends(await window.hangar.trends.ideas())).finally(() => setLoading(null))
+    setIdeaTab('ideas')
+    void attempt(async () => setTrends(await window.hangar.trends.ideas(category))).finally(() => setLoading(null))
   }
 
   const needsYou = useMemo(() => {
@@ -118,20 +122,41 @@ export function Dashboard() {
         <div className="trend-layout">
           <div className="trend-col">
             <div className="row between">
-              <h3>Ideas for you</h3>
-              <div className="row gap-xs">
-                <Button size="sm" tone="ghost" disabled={!trends?.games.length} onClick={() => openIdeaChat()} title="Chat with Claude about game ideas, using what's trending">
-                  Brainstorm
-                </Button>
-                <Button size="sm" tone={trends?.ideas.length ? 'ghost' : 'default'} disabled={loading !== null || !trends?.games.length} onClick={ideas}>
-                  {loading === 'ideas' ? 'Thinking…' : trends?.ideas.length ? 'New ideas' : 'Generate ideas'}
-                </Button>
+              <div className="segmented segmented-sm" role="tablist" aria-label="Ideas">
+                <button role="tab" aria-selected={ideaTab === 'ideas'} className={`segment ${ideaTab === 'ideas' ? 'segment-on' : ''}`} onClick={() => setIdeaTab('ideas')}>
+                  Ideas
+                </button>
+                <button role="tab" aria-selected={ideaTab === 'saved'} className={`segment ${ideaTab === 'saved' ? 'segment-on' : ''}`} onClick={() => setIdeaTab('saved')}>
+                  Saved{trends?.saved.length ? ` (${trends.saved.length})` : ''}
+                </button>
               </div>
+              <Button size="sm" tone="ghost" disabled={!trends?.games.length} onClick={() => openIdeaChat('', category)} title="Chat with Claude about game ideas of the chosen kind">
+                Brainstorm
+              </Button>
             </div>
-            {trends?.ideas.length ? (
+            <div className="row gap-xs idea-controls">
+              <select value={category} aria-label="Kind of ideas" title={ideaCategory(category).hint} onChange={(e) => setCategory(e.target.value as IdeaCategory)}>
+                {IDEA_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" tone={trends?.ideas.length ? 'ghost' : 'default'} disabled={loading !== null || !trends?.games.length} onClick={ideas}>
+                {loading === 'ideas' ? 'Thinking…' : trends?.ideas.length ? 'New ideas' : 'Generate ideas'}
+              </Button>
+            </div>
+            <p className="small muted">{ideaCategory(category).hint}.</p>
+            {ideaTab === 'saved' ? (
+              trends?.saved.length ? (
+                trends.saved.map((idea) => <IdeaCard key={idea.id} idea={idea} />)
+              ) : (
+                <p className="small muted">Star an idea to keep it here. Saved ideas stay when you get new ones.</p>
+              )
+            ) : trends?.ideas.length ? (
               trends.ideas.map((idea, i) => <IdeaCard key={idea.id} idea={idea} rank={i + 1} />)
             ) : (
-              <p className="small muted">Claude suggests original game concepts that ride what's trending, preferring spaces that aren't crowded yet. About $0.05 each time.</p>
+              <p className="small muted">Pick a kind of idea and Claude suggests six short concepts. Open one to fill in the details.</p>
             )}
             {trends && trends.genres.length > 0 && (
               <>
@@ -264,25 +289,44 @@ function TrendRow({ game, rank }: { game: TrendingGame; rank: number }) {
 
 /** The New game wizard's starting text for an idea. */
 export function ideaBrief(idea: GameIdea): { name: string; genre: string; idea: string } {
-  return {
-    name: idea.title,
-    genre: idea.genre,
-    idea: `${idea.pitch}\n\nCore loop: ${idea.coreLoop}\n\nWhy now: ${idea.whyNow}${idea.inspiredBy.length ? `\n\nSpace it plays in (be original, don't copy): ${idea.inspiredBy.join(', ')}` : ''}`
-  }
+  const parts = [
+    idea.pitch,
+    idea.coreLoop && `Core loop: ${idea.coreLoop}`,
+    idea.features?.length ? `Key features:\n${idea.features.map((f) => `- ${f}`).join('\n')}` : '',
+    idea.firstVersion && `Build first: ${idea.firstVersion}`,
+    idea.whyNow && `Why now: ${idea.whyNow}`,
+    idea.inspiredBy.length ? `Space it plays in (be original, don't copy): ${idea.inspiredBy.join(', ')}` : ''
+  ]
+  return { name: idea.title, genre: idea.genre, idea: parts.filter(Boolean).join('\n\n') }
 }
 
-/** An idea. Dashboard ideas (with a rank) open the refine screen when clicked; chat briefs are refined by chatting. */
+/** A star that saves or unsaves an idea. */
+export function SaveStar({ idea }: { idea: GameIdea }) {
+  const saved = useStore((s) => !!s.trends?.saved.some((x) => x.id === idea.id))
+  const toggle = (): void =>
+    void attempt(async () => {
+      setTrends(await (saved ? window.hangar.trends.unsaveIdea(idea.id) : window.hangar.trends.saveIdea(idea.id)))
+      if (!saved) toast(`Saved “${idea.title}”.`)
+    })
+  return (
+    <button className={`star-btn ${saved ? 'star-on' : ''}`} aria-pressed={saved} title={saved ? 'Remove from saved ideas' : 'Save this idea'} onClick={toggle}>
+      {saved ? '★' : '☆'}
+    </button>
+  )
+}
+
+/** A short idea card. Ideas on the dashboard or in Saved open the refine screen when clicked. */
 export function IdeaCard({ idea, rank }: { idea: GameIdea; rank?: number }) {
-  const clickable = rank !== undefined
+  const known = useStore((s) => !!(s.trends?.ideas.some((x) => x.id === idea.id) || s.trends?.saved.some((x) => x.id === idea.id)))
   const open = (): void => openIdeaRefine(idea.id)
   return (
     <article
-      className={`idea-card ${clickable ? 'idea-card-click' : ''}`}
-      {...(clickable
+      className={`idea-card ${known ? 'idea-card-click' : ''}`}
+      {...(known
         ? {
             role: 'button',
             tabIndex: 0,
-            title: 'Open to refine this idea',
+            title: idea.detailed ? 'Open to refine this idea' : 'Open to fill in the details',
             onClick: open,
             onKeyDown: (e: KeyboardEvent) => {
               if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
@@ -297,25 +341,23 @@ export function IdeaCard({ idea, rank }: { idea: GameIdea; rank?: number }) {
         {rank !== undefined && <span className="idea-rank">{rank}</span>}
         <h4 className="idea-title">{idea.title}</h4>
         <ScoreBar value={idea.score} />
+        {/* The card opens the refine screen; the star and buttons do their own thing. */}
+        <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <SaveStar idea={idea} />
+        </span>
       </div>
       <p>{idea.pitch}</p>
-      <p className="small muted">
-        <strong>Loop:</strong> {idea.coreLoop}
-      </p>
-      <p className="small muted">
-        <strong>Why now:</strong> {idea.whyNow}
-      </p>
+      {idea.detailed && idea.coreLoop && (
+        <p className="small muted">
+          <strong>Loop:</strong> {idea.coreLoop}
+        </p>
+      )}
       <div className="row between idea-foot">
         <span className="small muted">
-          {idea.genre} · {idea.scope} scope{idea.previous ? ' · refined' : ''}
+          {ideaCategory(idea.category).label} · {idea.genre} · {idea.scope}
+          {idea.detailed ? ' · detailed' : ''}
         </span>
-        {/* The card itself opens the refine screen; these buttons do their own thing. */}
         <span className="row gap-xs" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-          {rank !== undefined && (
-            <Button size="sm" tone="ghost" onClick={() => openIdeaChat(`Let's develop idea ${rank}, “${idea.title}”. `)}>
-              Discuss
-            </Button>
-          )}
           <Button size="sm" onClick={() => openWizard(ideaBrief(idea))}>
             Create this game
           </Button>

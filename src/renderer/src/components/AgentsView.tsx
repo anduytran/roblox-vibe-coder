@@ -94,7 +94,7 @@ export function AgentsView({ project }: { project: Project }) {
   )
 }
 
-function AgentPanel(props: { project: Project; role: Role; state: AgentState | undefined; onEdit?: () => void }) {
+export function AgentPanel(props: { project: Project; role: Role; state: AgentState | undefined; onEdit?: () => void }) {
   const { project, role, state } = props
   const allApprovals = useStore((s) => s.approvals)
   const approvals = useMemo(() => allApprovals.filter((a) => a.projectId === project.id && a.agentId === role.id), [allApprovals, project.id, role.id])

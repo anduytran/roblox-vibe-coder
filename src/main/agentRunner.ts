@@ -457,6 +457,9 @@ export class AgentRunner {
     let proxyGrant: { url: string; release: () => void } | null = null
 
     try {
+      if (role?.mcp?.includes('blender') && !this.deps.getSettings().blenderMcpCommand?.trim()) {
+        throw new Error('The Blender modeler needs the Blender connection. Set it up in Settings → Roblox → Blender.')
+      }
       // Anything in the folder that would launch programs (MCP servers, git config) needs approval first.
       const review = await reviewProject(project)
       const firstTime = !this.trust.hasAny(project.id)
@@ -535,10 +538,11 @@ export class AgentRunner {
         // Researchers are never subagents: their web findings must go through your review first.
         agents: research ? {} : Object.fromEntries(
           allRoles
-            .filter((r) => r.id !== role?.id && r.mode !== 'research')
+            // Roles with their own connected tools (Blender) only get them in their own runs, never as a subagent.
+            .filter((r) => r.id !== role?.id && r.mode !== 'research' && !r.mcp?.length)
             .map((r) => [r.id, { description: r.description || r.name, prompt: r.prompt, ...(r.tools?.length ? { tools: r.tools } : {}), ...(r.model ? { model: r.model } : {}) }])
         ),
-        mcpServers: research ? {} : mcpServersFor(project, settings, review.servers),
+        mcpServers: research ? {} : mcpServersFor(project, settings, review.servers, { blender: !!role?.mcp?.includes('blender') }),
         maxBudgetUsd: settings.perRunBudgetUsd,
         maxTurns: MAX_TURNS,
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),

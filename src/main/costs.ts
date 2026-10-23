@@ -88,7 +88,7 @@ export class CostTracker {
    * Utilization may arrive as a fraction (0–1) or a percentage; reset times as seconds or milliseconds.
    */
   recordPlan(info: RateLimitInfo, now = Date.now()): boolean {
-    const type = typeof info.rateLimitType === 'string' && info.rateLimitType in WINDOW_LABEL ? info.rateLimitType : null
+    const type = typeof info.rateLimitType === 'string' && Object.hasOwn(WINDOW_LABEL, info.rateLimitType) ? info.rateLimitType : null
     if (!type) return false
     const u = typeof info.utilization === 'number' && Number.isFinite(info.utilization) ? info.utilization : null
     const usedPct = u === null ? null : Math.max(0, Math.min(100, u <= 1 ? u * 100 : u))

@@ -134,6 +134,14 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - The token is stored like the API key (OS keychain), but it is **not** hidden behind the key proxy — proxying it would mean Hangar intermediates subscription credentials. The engine gets it as `CLAUDE_CODE_OAUTH_TOKEN`, so in autonomous or auto-run projects, commands an agent runs might reach it. (On the 2026-10-20 check, shell commands did not inherit it, but it still sits in the engine process.) Each such run says so in its feed. The token lasts a year; revoke it at claude.ai if it leaks.
 - Limits in Max mode are the plan's own 5-hour and weekly usage (percentages you set), not dollars. A `setup-token` token can't read usage, so Hangar asks the engine for it (the numbers behind `/usage`) using the owner's own Claude Code login (`claude auth login`). The engine reads that login from the keychain itself; Hangar never handles it, and the check sends no prompt. Runs also report usage as they go.
 
+## 3D models (Studio and Blender)
+
+- **Studio modeler** builds with Roblox Studio's tools under the usual rules: changing the place asks (edit-mode Luau is never auto-approved), and its builder script in `src/shared/Models` is a normal file edit that goes through review.
+- **Blender modeler** uses a Blender connection (an MCP server such as blender-mcp) that only the owner can set up, in Settings → Roblox → Blender; it is off until then and never comes from a project's files (its name, `Hangar_Blender`, is reserved: a project's `.mcp.json` can't use it, and a project's own `blender` server gets no pre-approved tools). Only roles marked `mcp: blender` get it, only in their own runs (never as a subagent).
+- Blender runs Python with your full permissions, outside the sandbox and outside the project checks. So every `execute_blender_code` call asks in red, with no "always allow", even in autonomous mode and with auto-approve on; other Blender tools (asset downloads) ask too. Only scene inspection runs without a click.
+- The 3D tab lists files in `assets/models` and `src/shared/Models` only: links are skipped, previews are size-limited and must really be PNGs. "Show" only opens files that listing found.
+- A cloned project could mark one of its roles `mcp: blender`; that role still can't do anything in Blender without your red approval for each code run. Read the code on those cards.
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.

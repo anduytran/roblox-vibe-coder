@@ -44,13 +44,15 @@ const api: HangarApi = {
   trends: {
     get: () => invoke(IPC.trendsGet),
     refresh: () => invoke(IPC.trendsRefresh),
-    ideas: () => invoke(IPC.trendsIdeas),
+    ideas: (category) => invoke(IPC.trendsIdeas, category),
     refineIdea: (id, request) => invoke(IPC.trendsRefineIdea, id, request),
-    undoRefine: (id) => invoke(IPC.trendsUndoRefine, id)
+    undoRefine: (id) => invoke(IPC.trendsUndoRefine, id),
+    saveIdea: (id) => invoke(IPC.trendsSaveIdea, id),
+    unsaveIdea: (id) => invoke(IPC.trendsUnsaveIdea, id)
   },
   ideaChat: {
     get: () => invoke(IPC.ideaChatGet),
-    send: (text) => invoke(IPC.ideaChatSend, text),
+    send: (text, category) => invoke(IPC.ideaChatSend, text, category),
     clear: () => invoke(IPC.ideaChatClear)
   },
   roles: {
@@ -58,6 +60,11 @@ const api: HangarApi = {
     installTemplates: (id) => invoke(IPC.rolesInstallTemplates, id),
     save: (id, role) => invoke(IPC.rolesSave, id, role),
     delete: (id, roleId) => invoke(IPC.rolesDelete, id, roleId)
+  },
+  models: {
+    list: (projectId) => invoke(IPC.modelsList, projectId),
+    make: (projectId, request) => invoke(IPC.modelsMake, projectId, request),
+    reveal: (projectId, file) => invoke(IPC.modelsReveal, projectId, file)
   },
   agents: {
     snapshot: (id) => invoke(IPC.agentsSnapshot, id),

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, Project, Review, Role, TrendsSnapshot } from '@shared/types'
+import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
 export interface StoreState {
   ready: boolean
@@ -22,7 +22,7 @@ export interface StoreState {
   /** The "New game" wizard, optionally prefilled (from a trending suggestion). */
   wizard: { idea?: string; name?: string; genre?: string } | null
   /** The idea brainstorm chat, if open, with text to start the message box with. */
-  ideaChat: { draft: string } | null
+  ideaChat: { draft: string; category: IdeaCategory } | null
   /** The dashboard idea open on the refine screen. */
   refineIdeaId: string | null
 }
@@ -166,7 +166,7 @@ export function initStore(): void {
       approvals,
       selectedProjectId: null,
       autopilot: Object.fromEntries(autopilots.map((a) => [a.projectId, a])),
-      trends
+      trends: normalizeTrends(trends)
     })
     for (const p of projects) void loadProject(p.id)
   })()
@@ -192,8 +192,8 @@ export function openWizard(prefill: StoreState['wizard'] = {}): void {
   set({ wizard: prefill ?? {}, ideaChat: null, refineIdeaId: null })
 }
 
-export function openIdeaChat(draft = ''): void {
-  set({ ideaChat: { draft }, refineIdeaId: null })
+export function openIdeaChat(draft = '', category: IdeaCategory = 'trend'): void {
+  set({ ideaChat: { draft, category }, refineIdeaId: null })
 }
 
 export function openIdeaRefine(id: string): void {
@@ -216,8 +216,13 @@ export function setCosts(costs: CostSummary): void {
   set({ costs })
 }
 
+/** Trend data from older app versions or files may lack newer lists; fill them in so nothing reads undefined. */
+function normalizeTrends(t: TrendsSnapshot): TrendsSnapshot {
+  return { ...t, ideas: t.ideas ?? [], saved: t.saved ?? [], games: t.games ?? [], genres: t.genres ?? [] }
+}
+
 export function setTrends(trends: TrendsSnapshot): void {
-  set({ trends })
+  set({ trends: normalizeTrends(trends) })
 }
 
 export function setAutopilot(st: AutopilotState): void {

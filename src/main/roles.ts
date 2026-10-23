@@ -48,6 +48,7 @@ export function parseRole(id: string, text: string): Role | null {
   if (meta.vault && validVaultFolder(meta.vault)) role.vault = meta.vault
   if (meta['vault-kind'] === 'design' || meta['vault-kind'] === 'ui') role.vaultKind = meta['vault-kind']
   if (meta.mode === 'research') role.mode = 'research'
+  if (parseList(meta.mcp ?? '').includes('blender')) role.mcp = ['blender']
   return role
 }
 
@@ -58,6 +59,7 @@ export function serializeRole(role: Role): string {
   if (role.vault && validVaultFolder(role.vault)) lines.push(`vault: ${role.vault}`)
   if (role.vault && role.vaultKind === 'design') lines.push('vault-kind: design')
   if (role.mode === 'research') lines.push('mode: research')
+  if (role.mcp?.includes('blender')) lines.push('mcp: blender')
   lines.push('---', '', role.prompt.trim(), '')
   return lines.join('\n')
 }
@@ -141,6 +143,33 @@ Finish every task by stating what changed, which acceptance criteria were checke
 - Read the relevant code, then (when Roblox Studio tools are available) run playtests and read console output.
 - Report each problem as: title, steps to reproduce, expected vs actual, likely file and line.
 - Say clearly when everything passed.`
+  },
+  {
+    id: 'studio-modeler',
+    name: '3D Modeler (Studio)',
+    description: 'Builds 3D models in Roblox Studio from parts, checks them with screenshots, and saves each as a builder script in git.',
+    prompt: `You build 3D models for a Roblox game in Roblox Studio, from parts.
+- Build with Parts, WedgeParts, CornerWedgeParts, cylinders and balls (unions only when needed). Anchor everything,
+  group it as a Model named after the request with a PrimaryPart at the base, under workspace.HangarModels.
+- Stay under the part budget you're given; pick colors and materials that match the requested style.
+- Take a screenshot (screen_capture) framed on the model, look at it critically, and improve it once.
+- Save the model as code so it is reviewable in git: write src/shared/Models/<Name>.luau, a ModuleScript that returns
+  function(parent: Instance): Model and rebuilds exactly what you built. Do not paste code into chat.
+- Finish with: the model name, part count, size in studs, and what you'd improve next.`
+  },
+  {
+    id: 'blender-modeler',
+    name: '3D Modeler (Blender)',
+    description: 'Models real 3D meshes in Blender, exports them for Roblox and renders a preview. Needs the Blender connection in Settings.',
+    mcp: ['blender'],
+    prompt: `You model 3D assets for a Roblox game in Blender, using the Blender tools.
+- Keep it game-ready: low-poly within the triangle budget you're given (never over 20,000, Roblox's MeshPart limit),
+  clean topology, origin at the base, transforms applied, simple materials or vertex colors.
+- Scale: 1 Roblox stud is about 0.28 m; size the model for the size you're asked for.
+- Export an FBX to the exact absolute path you're given, and render a 512x512 preview PNG next to it with the same name.
+  Write files only there.
+- Work in small steps of Blender code; check the scene (get_scene_info) as you go.
+- Finish with: the file paths, triangle count, size in studs, and how to bring it into Studio (File → Import 3D).`
   },
   {
     id: 'researcher',

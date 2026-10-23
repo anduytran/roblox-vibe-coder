@@ -2662,3 +2662,139 @@ button.file-item {
     grid-template-rows: auto minmax(0, 1fr);
   }
 }
+
+/* Idea kinds, saving and details */
+.segmented-sm .segment {
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
+.idea-controls select {
+  flex: 1;
+  min-width: 0;
+}
+.chat-kinds {
+  flex-wrap: wrap;
+}
+.star-btn {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, scale 0.15s;
+}
+.star-btn:hover {
+  color: var(--amber-text);
+}
+.star-on {
+  color: var(--amber);
+}
+.star-btn:active {
+  scale: 0.85;
+}
+.refine-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.refine-expand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+}
+
+/* 3D models tab */
+.models {
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  grid-template-areas: 'form list' 'agent agent';
+  gap: 18px;
+  align-content: start;
+}
+.models-form {
+  grid-area: form;
+}
+.models-form textarea {
+  resize: vertical;
+}
+.models-list {
+  grid-area: list;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.models-agent {
+  grid-area: agent;
+  min-height: 420px;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.models-agent > * {
+  flex: 1;
+  min-width: 0;
+}
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  animation: rise 0.3s var(--ease-out) both;
+  transition: border-color 0.15s, translate 0.15s var(--ease-out);
+}
+.model-card:hover {
+  border-color: var(--line-strong);
+  translate: 0 -2px;
+}
+.model-card img,
+.model-ph {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--r);
+  background: var(--raised);
+}
+.model-ph {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 650;
+}
+@media (max-width: 1000px) {
+  .models {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'form' 'list' 'agent';
+  }
+}
+
+/* Shown instead of a part of the window that crashed */
+.crash-inline {
+  padding: 24px;
+}
+.crash {
+  max-width: 460px;
+  margin: 0 auto;
+  gap: 8px;
+}

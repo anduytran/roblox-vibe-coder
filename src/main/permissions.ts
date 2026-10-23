@@ -17,6 +17,10 @@ const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'TodoW
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
 export const STUDIO_MCP_NAME = 'Roblox_Studio'
+/** Hangar's own Blender connection. Distinctive, so a project's own "blender" server never gets its pre-approved tools. */
+export const BLENDER_MCP_NAME = 'Hangar_Blender'
+/** Blender tools that only look at the scene. Everything else asks; running code asks in red. */
+const BLENDER_READ_TOOLS = new Set(['get_scene_info', 'get_object_info', 'get_viewport_screenshot'])
 /** Read-only Roblox Studio MCP tools: inspecting the game and playtest output is safe to allow. */
 const STUDIO_READ_TOOLS = new Set([
   'script_read',
@@ -197,6 +201,15 @@ export function evaluateToolUse(args: {
     const tool = toolName.slice(studioPrefix.length)
     if (STUDIO_READ_TOOLS.has(tool)) return { action: 'allow' }
     if (settings.autonomous && STUDIO_AUTONOMOUS_TOOLS.has(tool)) return { action: 'allow' }
+  }
+
+  const blenderPrefix = `mcp__${BLENDER_MCP_NAME}__`
+  if (toolName.startsWith(blenderPrefix)) {
+    const tool = toolName.slice(blenderPrefix.length)
+    if (BLENDER_READ_TOOLS.has(tool)) return { action: 'allow' }
+    // Blender runs this Python with your full permissions, outside any sandbox and outside the project checks.
+    if (tool === 'execute_blender_code') return ask('Runs Python in Blender with your full permissions (not sandboxed). Read the code before allowing.', true)
+    return ask('Calls a Blender tool (it may download assets or change files)', false, false)
   }
 
   if (EDIT_TOOLS.has(toolName)) {

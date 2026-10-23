@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type { AppSettings, CheckCommand, Project, ProjectSettings } from '@shared/types'
 import { JsonStore } from './jsonStore'
-import { shellWords, STUDIO_MCP_NAME } from './permissions'
+import { BLENDER_MCP_NAME, shellWords, STUDIO_MCP_NAME } from './permissions'
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   robloxStudioMcp: true,
@@ -138,8 +138,10 @@ export function projectMcpServers(projectPath: string): Record<string, StdioServ
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, StdioServer> }
     for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
-      // Any spelling that the engine could turn into the reserved name (Roblox-Studio, roblox studio, …).
-      if (name.toLowerCase().replace(/[^a-z0-9]/g, '') === STUDIO_MCP_NAME.toLowerCase().replace(/[^a-z0-9]/g, '')) continue
+      // Any spelling that the engine could turn into a reserved name (Roblox-Studio, roblox studio, BLENDER, …):
+      // those connections only ever come from Hangar's own settings, and some of their tools are pre-approved.
+      const squash = (n: string): string => n.toLowerCase().replace(/[^a-z0-9]/g, '')
+      if ([STUDIO_MCP_NAME, BLENDER_MCP_NAME].some((r) => squash(name) === squash(r))) continue
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue
       if (!cfg || typeof cfg.command !== 'string') continue
       servers[name] = {
@@ -159,8 +161,11 @@ export function projectMcpServers(projectPath: string): Record<string, StdioServ
  * Taking the reviewed set (instead of re-reading .mcp.json) means a file changed after approval
  * can't swap in a different command.
  */
-export function mcpServersFor(project: Project, app: AppSettings, reviewed: Record<string, StdioServer> = {}): Record<string, StdioServer> {
+export function mcpServersFor(project: Project, app: AppSettings, reviewed: Record<string, StdioServer> = {}, opts: { blender?: boolean } = {}): Record<string, StdioServer> {
   const servers: Record<string, StdioServer> = { ...reviewed }
+  // Only a role that asks for Blender gets it, and only once the owner has set the command up in Settings.
+  const blender = app.blenderMcpCommand?.trim()
+  if (opts.blender && blender) servers[BLENDER_MCP_NAME] = { command: blender, args: app.blenderMcpArgs ?? [] }
   if (project.settings.robloxStudioMcp) {
     const custom = app.studioMcpCommand.trim()
     const studio = custom ? { command: custom, args: app.studioMcpArgs } : defaultStudioMcp(process.platform, process.env)

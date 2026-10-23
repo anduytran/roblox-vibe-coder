@@ -15,7 +15,10 @@ import type {
   AutopilotState,
   NewGameInput,
   TrendsSnapshot,
-  IdeaChatMessage
+  IdeaChatMessage,
+  IdeaCategory,
+  ModelFile,
+  ModelRequest
 } from './types'
 
 export const IPC = {
@@ -37,6 +40,9 @@ export const IPC = {
   rolesDelete: 'roles:delete',
   agentsSnapshot: 'agents:snapshot',
   agentsSend: 'agents:send',
+  modelsList: 'models:list',
+  modelsMake: 'models:make',
+  modelsReveal: 'models:reveal',
   agentsStop: 'agents:stop',
   agentsStopAll: 'agents:stopAll',
   agentsClearQueue: 'agents:clearQueue',
@@ -85,6 +91,8 @@ export const IPC = {
   trendsIdeas: 'trends:ideas',
   trendsRefineIdea: 'trends:refineIdea',
   trendsUndoRefine: 'trends:undoRefine',
+  trendsSaveIdea: 'trends:saveIdea',
+  trendsUnsaveIdea: 'trends:unsaveIdea',
   ideaChatGet: 'ideaChat:get',
   ideaChatSend: 'ideaChat:send',
   ideaChatClear: 'ideaChat:clear',
@@ -158,15 +166,18 @@ export interface HangarApi {
   trends: {
     get(): Promise<TrendsSnapshot>
     refresh(): Promise<TrendsSnapshot>
-    ideas(): Promise<TrendsSnapshot>
+    ideas(category?: IdeaCategory): Promise<TrendsSnapshot>
     /** Rewrite one idea as asked; the previous version is kept for undoRefine. */
     refineIdea(id: string, request: string): Promise<TrendsSnapshot>
     undoRefine(id: string): Promise<TrendsSnapshot>
+    /** Star a dashboard idea or chat brief; saved ideas survive New ideas. */
+    saveIdea(id: string): Promise<TrendsSnapshot>
+    unsaveIdea(id: string): Promise<TrendsSnapshot>
   }
   ideaChat: {
     get(): Promise<IdeaChatMessage[]>
     /** Resolves with the whole conversation, including Claude's reply. */
-    send(text: string): Promise<IdeaChatMessage[]>
+    send(text: string, category?: IdeaCategory): Promise<IdeaChatMessage[]>
     clear(): Promise<IdeaChatMessage[]>
   }
   roles: {
@@ -174,6 +185,13 @@ export interface HangarApi {
     installTemplates(projectId: string): Promise<Role[]>
     save(projectId: string, role: Role): Promise<Role[]>
     delete(projectId: string, roleId: string): Promise<Role[]>
+  }
+  models: {
+    list(projectId: string): Promise<ModelFile[]>
+    /** Starts the Studio or Blender modeler on the request; resolves with the agent id that runs it. */
+    make(projectId: string, request: ModelRequest): Promise<string>
+    /** Shows a model file (or the models folder) in Finder / Explorer. */
+    reveal(projectId: string, file?: string): Promise<void>
   }
   agents: {
     snapshot(projectId: string): Promise<AgentState[]>

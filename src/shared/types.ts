@@ -11,6 +11,8 @@ export interface Role {
   prompt: string
   tools?: string[]
   model?: string
+  /** Extra connected tools this role gets: "blender" adds the Blender connection set up in Settings. */
+  mcp?: 'blender'[]
   /** Folder (inside the project) of this role's Obsidian vault, e.g. "ui-vault". */
   vault?: string
   /** Which templates the vault starts from: UI (screens, components, style guide) or game design. */
@@ -87,6 +89,9 @@ export interface AppSettings {
   rojoCommand: string
   /** Which credential agents use. 'max' (a Claude subscription token) works only in development builds. */
   authMode: 'apiKey' | 'max'
+  /** Blender connection (an MCP server such as blender-mcp) for the Blender 3D modeler. Empty = not set up. */
+  blenderMcpCommand?: string
+  blenderMcpArgs?: string[]
   /** Claude Max mode: no new work starts once plan usage reaches these percentages. */
   planLimits: { fiveHourPct: number; weeklyPct: number }
 }
@@ -348,18 +353,48 @@ export interface TrendingGame {
 }
 
 /** An original game idea generated from what's trending. */
+export type IdeaCategory = 'trend' | 'original' | 'niche' | 'mashup' | 'experimental'
+
 export interface GameIdea {
   id: string
   title: string
   pitch: string
+  /** Empty until the details are generated (ideas start short to save tokens). */
   coreLoop: string
   whyNow: string
+  /** What kind of idea was asked for (absent on ideas from before categories). */
+  category?: IdeaCategory
+  /** True once the full details (loop, why now, features, first version) have been generated. */
+  detailed?: boolean
+  features?: string[]
+  /** What to build first: the smallest playable version. */
+  firstVersion?: string
   genre: string
   scope: 'small' | 'medium' | 'large'
   inspiredBy: string[]
   score: number
   /** The version before the last refine, for Undo. */
   previous?: Omit<GameIdea, 'previous'>
+}
+
+/** A 3D model in a project: a Blender mesh export, or a Studio builder script (the model as Luau). */
+export interface ModelFile {
+  name: string
+  kind: 'mesh' | 'builder'
+  /** Path inside the project, forward slashes. */
+  file: string
+  /** Preview image as a data: URL (Blender renders one next to the mesh), if there is one. */
+  preview: string | null
+  updatedAt: number
+}
+
+/** A request to make a 3D model, from the project's 3D tab. */
+export interface ModelRequest {
+  method: 'studio' | 'blender'
+  name: string
+  description: string
+  style: 'low-poly' | 'blocky' | 'stylized' | 'detailed'
+  size: 'prop' | 'character' | 'vehicle' | 'building'
 }
 
 /** One message in the idea brainstorm chat on Home. */
@@ -380,6 +415,8 @@ export interface TrendsSnapshot {
   ideas: GameIdea[]
   ideasAt: number | null
   error: string | null
+  /** Ideas the user starred; they survive "New ideas". */
+  saved: GameIdea[]
 }
 
 export type AgentEvent =

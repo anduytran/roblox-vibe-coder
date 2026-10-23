@@ -28,6 +28,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [daily, setDaily] = useState(settings?.globalDailyBudgetUsd?.toString() ?? '')
   const [studioCmd, setStudioCmd] = useState(settings?.studioMcpCommand ?? '')
   const [studioArgs, setStudioArgs] = useState((settings?.studioMcpArgs ?? []).join(' '))
+  const [blenderCmd, setBlenderCmd] = useState(settings?.blenderMcpCommand ?? '')
+  const [blenderArgs, setBlenderArgs] = useState((settings?.blenderMcpArgs ?? []).join(' '))
   const [hideKey, setHideKey] = useState(settings?.hideKeyFromAgents ?? true)
   const [rojo, setRojo] = useState(settings?.rojoCommand ?? 'rojo')
   const [authMode, setAuthMode] = useState<'apiKey' | 'max'>(settings?.authMode ?? 'apiKey')
@@ -87,6 +89,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         globalDailyBudgetUsd: Number.isFinite(d) && d > 0 ? d : null,
         studioMcpCommand: studioCmd,
         studioMcpArgs: studioArgs.trim() ? studioArgs.trim().split(/\s+/) : [],
+        blenderMcpCommand: blenderCmd,
+        blenderMcpArgs: blenderArgs.trim() ? blenderArgs.trim().split(/\s+/) : [],
         hideKeyFromAgents: hideKey,
         rojoCommand: rojo,
         authMode: key.maxAvailable ? authMode : 'apiKey',
@@ -371,6 +375,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 <input value={rojo} onChange={(e) => setRojo(e.target.value)} placeholder="rojo" />
               </Field>
             </section>
+              <section className="card">
+                <h3>Blender</h3>
+                <p className="small muted">
+                  For the Blender 3D modeler. Install Blender and the blender-mcp add-on, start its server inside Blender, then enter the command that connects to it,
+                  for example <code>uvx</code> with arguments <code>blender-mcp</code>. Leave empty to keep Blender off. Every step that runs code in Blender asks you
+                  first, because Blender is not sandboxed.
+                </p>
+                <div className="grid-2">
+                  <Field label="Command">
+                    <input value={blenderCmd} onChange={(e) => setBlenderCmd(e.target.value)} placeholder="Off" />
+                  </Field>
+                  <Field label="Arguments">
+                    <input value={blenderArgs} onChange={(e) => setBlenderArgs(e.target.value)} placeholder="Space-separated" />
+                  </Field>
+                </div>
+              </section>
             </>
           )}
           {tab === 'phone' && (

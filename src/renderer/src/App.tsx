@@ -6,14 +6,16 @@ import { ReviewsView } from './components/ReviewsView'
 import { SettingsModal } from './components/SettingsModal'
 import { Dashboard } from './components/Dashboard'
 import { IdeaChat } from './components/IdeaChat'
+import { ModelsView } from './components/ModelsView'
 import { IdeaRefine } from './components/IdeaRefine'
 import { NewGameWizard } from './components/NewGameWizard'
 import { OverviewView } from './components/OverviewView'
 import { Sidebar } from './components/Sidebar'
 import { Avatar, Button, Icon } from './components/ui'
-import { useStore } from './store'
+import { closeIdeaChat, closeIdeaRefine, closeWizard, useStore } from './store'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
-type Tab = 'overview' | 'agents' | 'reviews' | 'changes' | 'settings'
+type Tab = 'overview' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
 
 export function App() {
   const ready = useStore((s) => s.ready)
@@ -57,31 +59,52 @@ export function App() {
                 </div>
               </div>
               <nav className="tabs" role="tablist">
-                {(['overview', 'agents', 'reviews', 'changes', 'settings'] as Tab[]).map((t) => (
+                {(['overview', 'agents', 'models', 'reviews', 'changes', 'settings'] as Tab[]).map((t) => (
                   <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? 'tab-active' : ''}`} onClick={() => setTab(t)}>
-                    <Icon name={t === 'overview' ? 'home' : t === 'agents' ? 'agents' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : 'sliders'} />
-                    {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agents' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Settings'}
+                    <Icon name={t === 'overview' ? 'home' : t === 'agents' ? 'agents' : t === 'models' ? 'cube' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : 'sliders'} />
+                    {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Settings'}
                     {t === 'reviews' && pendingReviews > 0 && <span className="badge badge-warn tab-badge">{pendingReviews}</span>}
                   </button>
                 ))}
               </nav>
             </header>
             <section className="view" key={`${project.id}-${tab}`}>
-              {tab === 'overview' && <OverviewView project={project} onOpenReviews={() => setTab('reviews')} />}
-              {tab === 'agents' && <AgentsView project={project} />}
-              {tab === 'reviews' && <ReviewsView project={project} />}
-              {tab === 'changes' && <ChangesView project={project} />}
-              {tab === 'settings' && <ProjectSettingsView project={project} />}
+              <ErrorBoundary label="this tab">
+                {tab === 'overview' && <OverviewView project={project} onOpenReviews={() => setTab('reviews')} />}
+                {tab === 'agents' && <AgentsView project={project} />}
+                {tab === 'models' && <ModelsView project={project} />}
+                {tab === 'reviews' && <ReviewsView project={project} />}
+                {tab === 'changes' && <ChangesView project={project} />}
+                {tab === 'settings' && <ProjectSettingsView project={project} />}
+              </ErrorBoundary>
             </section>
           </>
         ) : (
-          <Dashboard />
+          <ErrorBoundary label="Home">
+            <Dashboard />
+          </ErrorBoundary>
         )}
       </main>
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
-      {wizardOpen && <NewGameWizard />}
-      {ideaChatOpen && <IdeaChat />}
-      {refineOpen && <IdeaRefine />}
+      {settingsOpen && (
+        <ErrorBoundary label="Settings" onClose={() => setSettingsOpen(false)}>
+          <SettingsModal onClose={() => setSettingsOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {wizardOpen && (
+        <ErrorBoundary label="New game" onClose={closeWizard}>
+          <NewGameWizard />
+        </ErrorBoundary>
+      )}
+      {ideaChatOpen && (
+        <ErrorBoundary label="Brainstorm" onClose={closeIdeaChat}>
+          <IdeaChat />
+        </ErrorBoundary>
+      )}
+      {refineOpen && (
+        <ErrorBoundary label="this idea" onClose={closeIdeaRefine}>
+          <IdeaRefine />
+        </ErrorBoundary>
+      )}
       {toast && (
         <div key={toast.id} className={`toast toast-${toast.tone}`} role="status">
           {toast.text}

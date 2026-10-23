@@ -5,6 +5,7 @@ import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
+import { ideaCategory } from '@shared/ideas'
 import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
 import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus, setNoHooksBase } from './git'
 import { scrubProcessEnv } from './env'
@@ -29,7 +30,9 @@ import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
 import { createVault, vaultStatus } from './vault'
 import { ProjectRegistry } from './projects'
-import { deleteRole, installTemplates, listRoles, saveRole } from './roles'
+import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
+import { listModels, MESH_DIR, modelTask } from './models'
+import { isInsideRoot, linkInPath } from './pathScope'
 import { SecretStore } from './secrets'
 import { EngineCredentials, validateMaxToken, type EngineAuth } from './engineCredentials'
 
@@ -81,6 +84,17 @@ function createWindow(): BrowserWindow {
 
   // Never open new windows inside the app; send real web links to the default browser.
   // Links can come from agent or web content (research sources), so say where it goes before opening.
+  // Development only: show the window's warnings and errors in the terminal running `npm run dev`.
+  if (!app.isPackaged) {
+    win.webContents.on('console-message', (e: unknown, legacyLevel?: unknown, legacyMessage?: unknown) => {
+      const d = e as { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown }
+      const level = d.level ?? legacyLevel
+      const message = d.message ?? legacyMessage
+      if (level === 'warning' || level === 'error' || level === 2 || level === 3) {
+        console.log(`[window ${String(level)}] ${String(message).slice(0, 2000)}${d.sourceId ? ` (${String(d.sourceId).split('/').pop()}:${String(d.lineNumber)})` : ''}`)
+      }
+    })
+  }
   win.webContents.setWindowOpenHandler(({ url }) => {
     let host = ''
     try {
@@ -156,6 +170,8 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   }
   if (typeof patch.studioMcpCommand === 'string') next.studioMcpCommand = patch.studioMcpCommand.trim()
   if (Array.isArray(patch.studioMcpArgs)) next.studioMcpArgs = patch.studioMcpArgs.filter((a): a is string => typeof a === 'string')
+  if (typeof patch.blenderMcpCommand === 'string') next.blenderMcpCommand = patch.blenderMcpCommand.trim().slice(0, 500)
+  if (Array.isArray(patch.blenderMcpArgs)) next.blenderMcpArgs = patch.blenderMcpArgs.filter((a): a is string => typeof a === 'string').slice(0, 20)
   if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
   if (patch.planLimits && typeof patch.planLimits === 'object') {
     const cur = current.planLimits ?? DEFAULT_PLAN_LIMITS
@@ -381,6 +397,34 @@ app.whenReady().then(() => {
     await shell.openPath(registry.get(str(id, 'project')).path)
   })
 
+  // 3D models
+  handle(IPC.modelsList, (id: unknown) => listModels(registry.get(str(id, 'project')).path))
+  handle(IPC.modelsMake, (id: unknown, request: unknown) => {
+    const project = registry.get(str(id, 'project'))
+    const task = modelTask(project.path, request)
+    // Older projects don't have the modeler roles yet; add the one this needs.
+    if (!listRoles(project.path).some((r) => r.id === task.roleId)) saveRole(project.path, ROLE_TEMPLATES.find((t) => t.id === task.roleId)!)
+    runner.send(project.id, task.roleId, task.prompt)
+    return task.roleId
+  })
+  handle(IPC.modelsReveal, async (id: unknown, file: unknown) => {
+    const projectRoot = registry.get(str(id, 'project')).path
+    if (typeof file === 'string') {
+      // Only files the listing knows about, so this can't be pointed anywhere else.
+      const model = listModels(projectRoot, { previews: false }).find((m) => m.file === file)
+      if (model) shell.showItemInFolder(join(projectRoot, model.file))
+      return
+    }
+    // A repo (or an agent) could make assets/ or assets/models a link, even to an app. Refuse links, and
+    // reveal the folder in Finder rather than opening it: revealing never launches anything.
+    const dir = join(projectRoot, MESH_DIR)
+    const link = linkInPath(projectRoot, dir)
+    if (link) throw new Error(`${link} is a link, so Hangar won't open it. Check that folder.`)
+    mkdirSync(dir, { recursive: true })
+    if (linkInPath(projectRoot, dir) || !isInsideRoot(projectRoot, dir) || !statSync(dir).isDirectory()) throw new Error('The models folder is not a plain folder in the project.')
+    shell.showItemInFolder(dir)
+  })
+
   // Roles
   const root = (id: unknown): string => registry.get(str(id, 'project')).path
   handle(IPC.rolesList, (id: unknown) => listRoles(root(id)))
@@ -553,11 +597,13 @@ app.whenReady().then(() => {
   // Trends and ideas
   handle(IPC.trendsGet, () => trends.current())
   handle(IPC.trendsRefresh, () => trends.refresh())
-  handle(IPC.trendsIdeas, () => trends.generateIdeas())
+  handle(IPC.trendsIdeas, (category: unknown) => trends.generateIdeas(ideaCategory(typeof category === 'string' ? category : undefined).id))
   handle(IPC.trendsRefineIdea, (id: unknown, request: unknown) => trends.refineIdea(str(id, 'idea'), str(request, 'request')))
   handle(IPC.trendsUndoRefine, (id: unknown) => trends.undoRefine(str(id, 'idea')))
+  handle(IPC.trendsSaveIdea, (id: unknown) => trends.saveIdea(str(id, 'idea')))
+  handle(IPC.trendsUnsaveIdea, (id: unknown) => trends.unsaveIdea(str(id, 'idea')))
   handle(IPC.ideaChatGet, () => trends.chat())
-  handle(IPC.ideaChatSend, (text: unknown) => trends.sendChat(str(text, 'message')))
+  handle(IPC.ideaChatSend, (text: unknown, category: unknown) => trends.sendChat(str(text, 'message'), ideaCategory(typeof category === 'string' ? category : undefined).id))
   handle(IPC.ideaChatClear, () => trends.clearChat())
 
   // Phone remote

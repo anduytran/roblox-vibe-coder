@@ -211,7 +211,7 @@ test('idea chat: replies see the trends and the whole conversation, with no tool
 
   let chat = await trends.sendChat('  I like obbies  ')
   assert.deepEqual(chat.map((m) => [m.role, m.text]), [['user', 'I like obbies'], ['assistant', 'What do you enjoy playing?']])
-  assert.match(prompts[0]!, /Trending Roblox experiences right now/)
+  assert.match(prompts[0]!, /Trending on Roblox/)
   assert.match(prompts[0]!, /Cloud Parkour/)
   assert.deepEqual(auth, [{ forceHideKey: true }])
   assert.deepEqual(options[0]!.mcpServers, {})
@@ -273,9 +273,65 @@ test('refine: an idea is rewritten in place as asked, with no tools, and can be 
   assert.equal(undone.previous, undefined)
 
   await assert.rejects(trends.refineIdea(target.id, '   '), /how to change/)
-  await assert.rejects(trends.refineIdea('missing', 'x'), /no longer on the dashboard/)
+  await assert.rejects(trends.refineIdea('missing', 'x'), /no longer here/)
   reply = 'not json'
   await assert.rejects(trends.refineIdea(target.id, 'x'), /expected format/)
+})
+
+test('ideas: kinds steer the prompt, ideas start short, details come on request, and saved ideas stay', async () => {
+  const { get } = fakeRoblox()
+  const short = '```json\n' + JSON.stringify([
+    { title: 'Moon Mail', pitch: 'Deliver letters on a low-gravity moon.', genre: 'Obby', scope: 'small', inspiredBy: [] },
+    { title: 'Echo Keep', pitch: 'A castle that remembers your moves.', genre: 'Puzzle', scope: 'medium', inspiredBy: [] }
+  ]) + '\n```'
+  let reply = short
+  const prompts: { system: string; prompt: string }[] = []
+  const query: QueryFn = ({ prompt, options }) =>
+    (async function* () {
+      prompts.push({ system: String(options.systemPrompt), prompt })
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
+  const file = join(tmp('hangar-kinds-'), 't.json')
+  const trends = new Trends(file, { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async () => ({ env: {}, release: () => {} }) })
+
+  // Original ideas don't build on specific games: the prompt has the game spaces, not the game list.
+  const first = await trends.generateIdeas('original')
+  assert.match(prompts[0]!.system, /NOT versions of any trending game/)
+  assert.ok(!/Trending on Roblox/.test(prompts[0]!.prompt) && /Game spaces/.test(prompts[0]!.prompt))
+  assert.ok(first.ideas.every((i) => i.category === 'original' && !i.detailed && i.coreLoop === ''))
+  await trends.generateIdeas('trend')
+  assert.match(prompts[1]!.prompt, /Trending on Roblox/)
+
+  // Save one, then get new ideas: the saved one stays (and survives a restart).
+  const keep = trends.current().ideas[0]!
+  trends.saveIdea(keep.id)
+  trends.saveIdea(keep.id)
+  await trends.generateIdeas('niche')
+  assert.equal(trends.current().saved.length, 1)
+  assert.ok(!trends.current().ideas.some((i) => i.id === keep.id))
+  assert.equal(new Trends(file).current().saved[0]?.title, keep.title)
+
+  // Asking anything of a short saved idea fills in its details.
+  reply = '```json\n' + JSON.stringify([{ title: keep.title, pitch: keep.pitch, coreLoop: 'Run, sort, deliver', whyNow: 'Open space', features: ['Low gravity jumps', 'Mail sorting'], firstVersion: 'One district.', genre: 'Obby', scope: 'small', inspiredBy: [] }]) + '\n```'
+  const expanded = (await trends.refineIdea(keep.id, 'Fill in the full details.')).saved[0]!
+  assert.equal(expanded.id, keep.id)
+  assert.equal(expanded.detailed, true)
+  assert.deepEqual(expanded.features, ['Low gravity jumps', 'Mail sorting'])
+  assert.equal(expanded.firstVersion, 'One district.')
+  assert.equal(expanded.category, keep.category, 'keeps its kind')
+  assert.equal(trends.undoRefine(keep.id).saved[0]!.detailed, undefined)
+
+  // A brief from the chat can be saved too; unsaving removes it.
+  reply = 'Try this.\n' + short
+  const chat = await trends.sendChat('something original', 'original')
+  assert.match(prompts[prompts.length - 1]!.system, /NOT versions of any trending game/)
+  const brief = chat[chat.length - 1]!.idea!
+  assert.equal(brief.category, 'original')
+  assert.equal(trends.saveIdea(brief.id).saved[0]!.id, brief.id)
+  assert.equal(trends.unsaveIdea(brief.id).saved.some((i) => i.id === brief.id), false)
+  assert.throws(() => trends.saveIdea('nope'), /no longer here/)
 })
 
 // ---------- autopilot (unit) ----------
