@@ -24,7 +24,10 @@ export function IdeaChat() {
   useEffect(() => {
     void attempt(async () => setMessages(await window.hangar.ideaChat.get()))
   }, [])
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [messages, busy])
+  // Braces matter: scrollIntoView returns a promise in newer Chromium, and an effect must not return one.
+  useEffect(() => {
+    void end.current?.scrollIntoView({ block: 'end' })
+  }, [messages, busy])
 
   const send = (text: string): void => {
     const message = text.trim()

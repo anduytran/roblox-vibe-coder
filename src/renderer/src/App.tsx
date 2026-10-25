@@ -30,7 +30,9 @@ export function App() {
   const refineOpen = useStore((s) => s.refineIdeaId !== null)
   const projectId = project?.id
   // Each project opens on its Overview.
-  useEffect(() => setTab('overview'), [projectId])
+  useEffect(() => {
+    setTab('overview')
+  }, [projectId])
 
   if (!ready) return <div className="boot">Starting Hangar…</div>
 

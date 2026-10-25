@@ -28,7 +28,9 @@ export function ModelsView({ project }: { project: Project }) {
   const blenderReady = !!settings?.blenderMcpCommand?.trim()
 
   const reload = useCallback(() => void attempt(async () => setModels(await window.hangar.models.list(project.id))), [project.id])
-  useEffect(reload, [reload])
+  useEffect(() => {
+    reload()
+  }, [reload])
   // A modeler finishing usually means a new file: look again.
   useEffect(() => {
     if (state?.status === 'idle') reload()
