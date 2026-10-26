@@ -47,3 +47,10 @@ test('safety checker: approves only a plainly safe, ordinary action that Hangar 
   assert.equal(checkerMayApprove(req(), safe({ approvalId: 'other' })), false, 'the answer must be about this request')
   assert.equal(checkerMayApprove(req(), null), false)
 })
+
+test("safety checks: Lua's ~= (not equal) isn't a path in your home folder; ~/x still is", async () => {
+  const { approvalFlags } = await import('../src/main/approvalExplainer')
+  const flags = (command: string) => approvalFlags({ ...req(), summary: `$ ${command}`, inputJson: JSON.stringify({ command }) }, { projectRoot: '/tmp/game' }).flags.map((f) => f.text)
+  assert.deepEqual(flags('echo part.LocalTransparencyModifier ~= 0'), [])
+  assert.ok(flags('cat ~/.ssh/id_rsa').length > 0)
+})

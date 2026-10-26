@@ -131,7 +131,8 @@ const SAFE_DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/s
 
 /** A word that names a place by itself (not relative to the project): /x, ~/x, $HOME/x, C:\x, ../x. */
 function looksLikePath(w: string): boolean {
-  return /^(~|\/|\\\\|[A-Za-z]:[\\/]|\$HOME\b|\$\{HOME\}|%[A-Za-z]+%)/.test(w) || /(^|[\\/])\.\.([\\/]|$)/.test(w)
+  // "~" only as a home folder (~, ~/x, ~user/x), not Lua's "~=" (not equal) or other code.
+  return /^(~(?=$|[\\/]|[A-Za-z0-9_.-]+(?:$|[\\/]))|\/|\\\\|[A-Za-z]:[\\/]|\$HOME\b|\$\{HOME\}|%[A-Za-z]+%)/.test(w) || /(^|[\\/])\.\.([\\/]|$)/.test(w)
 }
 
 function expandHome(p: string): string {
