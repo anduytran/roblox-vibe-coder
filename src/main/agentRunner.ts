@@ -147,6 +147,14 @@ export interface RunnerDeps {
   onTaskDone?: (outcome: { projectId: string; agentId: string; task: QueuedTask; ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null }) => void
   /** A per-run URL (with credentials) for the web researcher's filtering proxy (see webEgress.ts). */
   researchProxy?: () => Promise<{ url: string; release: () => void }>
+  /**
+   * Roblox Studio, shared by every task: `show` puts a task's copy of the game into Studio (null, or why it couldn't);
+   * `release` puts your game folder back.
+   */
+  studio?: {
+    show(project: Project, dir: string, showing: { kind: 'task'; label: string; agentId: string }): Promise<string | null>
+    release(project: Project): void
+  }
 }
 
 export interface ClipSession {
@@ -762,7 +770,7 @@ export class AgentRunner {
         ...(own.effort && !research ? { effort: own.effort } : {}),
         maxTurns: MAX_TURNS,
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
-        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, role?.name ?? 'Main', own, coordinate)
+        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, role?.name ?? 'Main', own, coordinate, { taskId: task.id, agentId: s.agentId, label: `${role?.name ?? 'Main'}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
       }
       if (research) {
         // An empty folder of its own: nothing from your project or computer to read.
@@ -889,6 +897,7 @@ export class AgentRunner {
         this.deps.emit({ type: 'cost', summary: this.deps.costs.summary() })
       }
       releaseAuth?.()
+      this.releaseStudio(work, task.id)
       for (const id of helpers.keys()) this.endHelping(helpers, id)
       if (researchDir) rmSync(researchDir, { recursive: true, force: true })
       proxyGrant?.release()
@@ -1334,7 +1343,48 @@ export class AgentRunner {
     this.publish(s)
   }
 
-  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, coordinate: Coordinate | null = null): CanUseTool {
+  /** The one task Roblox Studio is lent to (there's one Studio, and one game synced into it at a time). */
+  private studioHolder: { projectId: string; taskId: string; label: string; lastUse: number } | null = null
+  private studioWaiters: (() => void)[] = []
+
+  /**
+   * Lend Studio to a task for its playtest: the first Studio call of a task waits until no other task has it (or the
+   * other one has left it alone for a while), then Studio is switched to this task's copy of the game. Returns why
+   * it can't have Studio, or null.
+   */
+  private async takeStudio(project: Project, task: StudioTask, signal: AbortSignal): Promise<string | null> {
+    const until = Date.now() + STUDIO_WAIT_MS
+    for (;;) {
+      const h = this.studioHolder
+      if (!h || h.taskId === task.taskId || Date.now() - h.lastUse > STUDIO_IDLE_MS) break
+      if (signal.aborted) return 'Run was stopped.'
+      if (Date.now() > until) return `Roblox Studio is busy: another task (${h.label}) is playtesting. Carry on with what doesn't need Studio, check your work with the build and lint checks, and say in your report that the playtest is still to do.`
+      await new Promise<void>((r) => {
+        this.studioWaiters.push(r)
+        setTimeout(r, 2000)
+      })
+    }
+    const fresh = this.studioHolder?.taskId !== task.taskId
+    this.studioHolder = { projectId: project.id, taskId: task.taskId, label: task.label, lastUse: Date.now() }
+    if (fresh && this.deps.studio) {
+      const why = await this.deps.studio.show(project, project.path, { kind: 'task', label: task.label, agentId: task.agentId }).catch((e: Error) => e.message)
+      if (why) {
+        this.releaseStudio(project, task.taskId, false)
+        return `Roblox Studio couldn't be switched to this task's game: ${why}`
+      }
+    }
+    return null
+  }
+
+  /** A task is done with Studio: the next one waiting gets it, and if none does, Studio shows your game folder again. */
+  private releaseStudio(project: Project, taskId: string, putBack = true): void {
+    if (this.studioHolder?.taskId !== taskId) return
+    this.studioHolder = null
+    if (putBack) this.deps.studio?.release(project)
+    for (const wake of this.studioWaiters.splice(0)) wake()
+  }
+
+  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, coordinate: Coordinate | null = null, studioTask: StudioTask | null = null): CanUseTool {
     return async (toolName, input, { signal, agentID }) => {
       // Re-read settings each time so "Always allow" applies immediately.
       // Settings are re-read; the folder is where this agent works (its own copy in autonomous mode).
@@ -1349,6 +1399,11 @@ export class AgentRunner {
         }
         const handOff = coordinate ? coordinateBlock(coordinate, current.path, toolName, input) : null
         if (handOff) return { behavior: 'deny', message: handOff }
+      }
+      // One task at a time gets Studio (helpers included): this task's copy of the game is put into it first.
+      if (studioTask && toolName.startsWith(`mcp__${STUDIO_MCP_NAME}__`)) {
+        const busy = await this.takeStudio(project, studioTask, signal)
+        if (busy) return { behavior: 'deny', message: busy }
       }
       const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings })
       if (decision.action === 'allow') return { behavior: 'allow', updatedInput: input }
@@ -1527,3 +1582,14 @@ interface Helper {
 
 /** Every helper an agent hands work to: work from the brief's files, not a tour of the project. */
 export const HELPER_FOCUS = `You were handed a brief. Read the files it names first and stay with them. Open other files only when you truly need to (something they call or depend on), and say which ones in your report. Don't explore the project, and don't re-read files you already have.`
+
+/** A task that may borrow Roblox Studio: which task, who, a label for the app, and the copy of the game to show. */
+interface StudioTask {
+  taskId: string
+  agentId: string
+  label: string
+}
+
+/** How long a task waits for another to finish with Studio, and how long Studio left untouched counts as finished. */
+export const STUDIO_WAIT_MS = 20 * 60_000
+export const STUDIO_IDLE_MS = 10 * 60_000

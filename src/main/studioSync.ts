@@ -1,12 +1,12 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmdirSync, statSync, unlinkSync, utimesSync, watch, type FSWatcher } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Project, Review, StudioSyncState } from '@shared/types'
 import { minimalEnv } from './env'
 import { linkInPath } from './pathScope'
 import { resolveCommand, unsafeRojoPaths } from './testPlace'
-import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
+import { addTempWorktree, linksInCommit, listWorkingFiles, removeTempWorktree } from './git'
 import { rmSync } from 'node:fs'
 
 /** The port the Rojo plugin in Studio connects to unless told otherwise. */
@@ -85,6 +85,63 @@ export function projectFile(root: string): string | null {
 const OFF: StudioSyncState = { projectId: null, status: 'off', port: SYNC_PORT, message: null }
 
 /**
+ * Make `dest` hold exactly the game's files from `source` (tracked and new, not git-ignored; links skipped). Files
+ * already the same (size and time) aren't copied again, so Rojo only sees what changed.
+ */
+export async function mirrorGame(source: string, dest: string): Promise<void> {
+  const files = (await listWorkingFiles(source)).filter((f) => !f.split('/').some((s) => s === '..' || s === '.git' || s === ''))
+  mkdirSync(dest, { recursive: true })
+  const keep = new Set<string>()
+  for (const rel of files) {
+    const src = join(source, rel)
+    let st: ReturnType<typeof lstatSync>
+    try {
+      st = lstatSync(src)
+    } catch {
+      continue // deleted meanwhile
+    }
+    if (!st.isFile() || linkInPath(source, src) !== null) continue
+    const dst = join(dest, rel)
+    if (linkInPath(dest, dst) !== null) continue
+    keep.add(rel)
+    try {
+      const d = statSync(dst)
+      if (d.isFile() && d.size === st.size && Math.abs(d.mtimeMs - st.mtimeMs) < 1) continue
+    } catch {
+      // not there yet
+    }
+    mkdirSync(dirname(dst), { recursive: true })
+    copyFileSync(src, dst)
+    utimesSync(dst, st.atime, st.mtime)
+  }
+  // What's no longer in the source goes (the view holds nothing but the game).
+  const sweep = (rel: string): boolean => {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = readdirSync(join(dest, rel), { withFileTypes: true })
+    } catch {
+      return false
+    }
+    let empty = true
+    for (const e of entries) {
+      const path = rel ? `${rel}/${e.name}` : e.name
+      if (e.isDirectory() && !e.isSymbolicLink()) {
+        if (sweep(path)) {
+          try {
+            rmdirSync(join(dest, path))
+          } catch {
+            empty = false
+          }
+        } else empty = false
+      } else if (!keep.has(path)) unlinkSync(join(dest, path))
+      else empty = false
+    }
+    return empty
+  }
+  sweep('')
+}
+
+/**
  * Live sync of one game into Roblox Studio with `rojo serve` (one at a time, since the Studio plugin connects to one
  * port). Rojo only reads the project's files and serves them to Studio on this computer; it runs none of them.
  */
@@ -94,7 +151,24 @@ export class StudioSync {
   /** The separate copy a review is served from, while one is. */
   private preview: { root: string; dir: string } | null = null
 
-  constructor(private readonly deps: { rojo: () => string | null; emit: (s: StudioSyncState) => void; spawnFn?: typeof spawn; previewDir?: (projectId: string) => string }) {}
+  /**
+   * View mode (when `viewDir` is given): Rojo always serves a folder of Hangar's own, and what Studio should show (your
+   * game folder, a change you're trying, a task's copy while it playtests) is copied into it. Rojo live-syncs those
+   * file changes, so switching never disconnects the Studio plugin.
+   */
+  private view: { projectId: string; dir: string } | null = null
+  private watcher: FSWatcher | null = null
+  private mirroring: Promise<unknown> = Promise.resolve()
+
+  constructor(
+    private readonly deps: {
+      rojo: () => string | null
+      emit: (s: StudioSyncState) => void
+      spawnFn?: typeof spawn
+      previewDir?: (projectId: string) => string
+      viewDir?: (projectId: string) => string
+    }
+  ) {}
 
   status(): StudioSyncState {
     return this.state
@@ -108,8 +182,65 @@ export class StudioSync {
 
   /** Serve the game as it is in its folder. */
   start(project: Project): StudioSyncState {
+    if (this.deps.viewDir) {
+      void this.show(project, project.path, { kind: 'main', label: 'your game folder' })
+      return this.state
+    }
     this.stop()
     return this.serve(project, project.path, null)
+  }
+
+  /**
+   * View mode: Studio shows `source` (copied into the view, and again whenever its files change). Serving starts if it
+   * isn't already serving this game; if it is, nothing reconnects.
+   */
+  async show(project: Project, source: string, showing: NonNullable<StudioSyncState['showing']>, review: Review | null = null): Promise<StudioSyncState> {
+    if (!this.deps.viewDir) throw new Error('Studio view is not set up.')
+    const dir = this.deps.viewDir(project.id)
+    const live = this.child !== null && this.view?.projectId === project.id && (this.state.status === 'running' || this.state.status === 'starting')
+    if (!live) {
+      this.stop()
+      this.view = { projectId: project.id, dir }
+    }
+    this.watch(project, source, dir)
+    try {
+      await this.queueMirror(source, dir)
+    } catch (e) {
+      return this.set({ projectId: project.id, status: 'error', port: SYNC_PORT, message: `Couldn't copy the game for Studio: ${(e as Error).message}`, showing })
+    }
+    if (live) return this.set({ ...this.state, showing, reviewId: review?.id ?? null, reviewTitle: review?.title ?? null })
+    const st = this.serve(project, dir, review)
+    return st.status === 'error' ? st : this.set({ ...st, showing })
+  }
+
+  /** Copy into the view one at a time (the latest wins when several changes come in quick succession). */
+  private queueMirror(source: string, dir: string): Promise<unknown> {
+    this.mirroring = this.mirroring.catch(() => undefined).then(() => mirrorGame(source, dir))
+    return this.mirroring
+  }
+
+  /** Keep the view up to date while `source` changes (an editor, a merge, a builder fixing what QA found). */
+  private watch(project: Project, source: string, dir: string): void {
+    this.watcher?.close()
+    this.watcher = null
+    let timer: NodeJS.Timeout | null = null
+    try {
+      this.watcher = watch(source, { recursive: true }, (_event, name) => {
+        if (name && /(^|[\\/])\.git([\\/]|$)/.test(String(name))) return
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (this.view?.projectId === project.id && this.view.dir === dir) void this.queueMirror(source, dir).catch(() => undefined)
+        }, 400)
+      })
+      this.watcher.on('error', () => undefined)
+    } catch {
+      // No file watching here: Studio updates when what it shows changes.
+    }
+  }
+
+  /** What Studio shows now, if it's this game. */
+  showing(projectId: string): StudioSyncState['showing'] {
+    return this.view?.projectId === projectId ? (this.state.showing ?? null) : null
   }
 
   /**
@@ -117,6 +248,23 @@ export class StudioSync {
    * folder switching branches. "Show the latest" (start) or a merge/discard goes back to the folder.
    */
   async startReview(project: Project, review: Review): Promise<StudioSyncState> {
+    if (this.deps.viewDir && this.deps.previewDir) {
+      // View mode: the change is checked out in a temporary copy, copied into the view, and the copy removed.
+      const tmp = this.deps.previewDir(project.id)
+      await removeTempWorktree(project.path, tmp)
+      rmSync(tmp, { recursive: true, force: true })
+      const links = await linksInCommit(project.path, review.headSha)
+      if (links.length) return this.set({ projectId: project.id, status: 'error', port: SYNC_PORT, message: `This change has links or submodules, so Hangar won't show it in Studio: ${links.slice(0, 3).join(', ')}`, reviewId: review.id, reviewTitle: review.title })
+      await addTempWorktree(project.path, review.headSha, tmp)
+      try {
+        return await this.show(project, tmp, { kind: 'review', label: review.title }, review)
+      } finally {
+        this.watcher?.close()
+        this.watcher = null
+        await removeTempWorktree(project.path, tmp)
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    }
     this.stop()
     if (!this.deps.previewDir) throw new Error('Trying reviews in Studio is not set up.')
     const dir = this.deps.previewDir(project.id)
@@ -154,7 +302,8 @@ export class StudioSync {
     const read = (chunk: Buffer): void => {
       tail = (tail + chunk.toString('utf8')).slice(-2000)
       if (this.child === child && this.state.status === 'starting' && /listening|Port:\s*\d+/i.test(tail)) {
-        this.set({ projectId: project.id, status: 'running', port: SYNC_PORT, message: null, ...showing })
+        // Keeps what Studio is showing (set when serving started).
+        this.set({ ...this.state, projectId: project.id, status: 'running', port: SYNC_PORT, message: null, ...showing })
       }
     }
     child.stdout?.on('data', read)
@@ -174,6 +323,9 @@ export class StudioSync {
   }
 
   stop(): StudioSyncState {
+    this.watcher?.close()
+    this.watcher = null
+    this.view = null
     const child = this.child
     this.child = null
     if (child && child.exitCode === null) child.kill()

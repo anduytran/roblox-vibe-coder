@@ -386,6 +386,8 @@ export interface StudioSyncState {
   /** Studio shows this review's change (from a separate copy; your folder isn't switched), or null for the game as it is. */
   reviewId?: string | null
   reviewTitle?: string | null
+  /** What Studio shows: your game folder, a change you're trying, or a task's copy while it playtests. */
+  showing?: { kind: 'main' | 'review' | 'task'; label: string; agentId?: string } | null
 }
 
 /** One folder of the project, for the Files tab (read-only). */

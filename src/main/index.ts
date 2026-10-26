@@ -433,6 +433,24 @@ app.whenReady().then(() => {
     onReview: (r) => void pipeline?.start(r),
     onTaskDone: (o) => autopilot?.onTaskDone(o),
     researchProxy: () => webEgress.issue(),
+    // Studio is lent to one task at a time for its playtest; afterwards it shows your game folder again.
+    studio: {
+      show: async (project, dir, showing) => {
+        const sync = studioSyncRef
+        if (!sync) return 'Studio sync is not set up.'
+        const st = await sync.show(project, dir, showing)
+        return st.status === 'error' ? (st.message ?? 'Studio sync stopped.') : null
+      },
+      release: (project) => {
+        const sync = studioSyncRef
+        if (!sync || sync.showing(project.id)?.kind !== 'task') return
+        try {
+          void sync.show(registry.get(project.id), registry.get(project.id).path, { kind: 'main', label: 'your game folder' })
+        } catch {
+          // project removed
+        }
+      }
+    },
     getSettings: () => settings.get(),
     getApiKey: getCredential,
     engineAuth,
@@ -740,7 +758,9 @@ app.whenReady().then(() => {
   const studioSync = new StudioSync({
     rojo: () => findRojo(settings.get().rojoCommand),
     emit: (state) => emit({ type: 'studioSync', state }),
-    previewDir: (projectId) => join(dataDir(), 'studio-preview', projectId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64))
+    previewDir: (projectId) => join(dataDir(), 'studio-preview', projectId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64)),
+    // What Rojo serves: Hangar copies into it whatever Studio should show, so switching never disconnects Studio.
+    viewDir: (projectId) => join(dataDir(), 'studio-view', projectId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64))
   })
   studioSyncRef = studioSync
   handle(IPC.studioSyncStatus, () => studioSync.status())

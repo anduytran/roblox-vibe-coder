@@ -511,6 +511,13 @@ export async function resumeTaskWorktree(root: string, dir: string, branch: stri
   trustTaskCopy(dir, root)
 }
 
+/** The game's files as git sees them in a working folder: tracked plus new ones, without what's git-ignored. */
+export async function listWorkingFiles(root: string): Promise<string[]> {
+  await assertSafeRepo(root)
+  const out = await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
+  return [...new Set(out.split('\0').filter(Boolean))]
+}
+
 /** Remove a task's copy (its branch stays). Safe to call when it's already gone. */
 export async function closeTaskWorktree(root: string, dir: string): Promise<void> {
   await clearWorktreeDir(root, dir)
