@@ -400,6 +400,8 @@ app.whenReady().then(() => {
     autopilot: autopilot.list().map((a) => ({ projectId: a.projectId, status: a.status }))
   })
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot, trends, emit })
+  // A task that was running when Hangar last closed is wrapped up now: back on the main branch, its work in Reviews.
+  void runner.recoverInterrupted().catch(() => undefined)
   void remote.start().catch(() => undefined)
 
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void => {

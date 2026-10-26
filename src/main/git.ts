@@ -312,7 +312,10 @@ function assertTaskBranch(branch: string): void {
 /** Current branch name, or null when HEAD is detached or the repo has no commits. */
 export async function currentBranch(root: string): Promise<string | null> {
   try {
-    const name = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
+    // The full name, shortened here: "--short" gives "heads/main" when a tag is also called "main".
+    const ref = (await git(root, ['symbolic-ref', '--quiet', 'HEAD'])).trim()
+    const name = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ''
+    if (!name) return null
     // A branch with no commits yet can't be branched from.
     await git(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])
     return name || null
@@ -454,6 +457,9 @@ async function restoreOtherRefs(root: string, from: TaskBase, branch: string): P
   return restored
 }
 
+/** The task branch no longer builds on where the task started: kept for you to look at, never reviewed or merged. */
+export class RewrittenBranchError extends Error {}
+
 export interface FinishedTask {
   files: string[]
   /** The task branch's final commit; what the review shows and what merge applies. */
@@ -472,7 +478,8 @@ export async function finishTaskBranch(
   from: TaskBase,
   agentName: string,
   message: string,
-  quarantineDir?: string
+  quarantineDir?: string,
+  opts: { recovering?: boolean } = {}
 ): Promise<FinishedTask> {
   assertTaskBranch(branch)
   await assertSafeRepo(root)
@@ -490,16 +497,28 @@ export async function finishTaskBranch(
   }
   if ((await currentBranch(root)) !== branch) throw new Error(`Not on ${branch}; nothing was committed.`)
 
-  const restored = await restoreOtherRefs(root, from, branch)
-  if (restored.length) notes.push(`The agent changed other branches or tags; Hangar put them back: ${restored.join(', ')}.`)
+  if (opts.recovering) {
+    // Hangar was closed meanwhile: the start-of-task snapshot may be days old, and you may have committed, tagged or
+    // branched since. Nothing is put back; what changed is listed instead.
+    const changed = await refsChangedSince(root, from, branch)
+    if (changed.length) notes.push(refsNote(changed))
+  } else {
+    const restored = await restoreOtherRefs(root, from, branch)
+    if (restored.length) notes.push(`The agent changed other branches or tags; Hangar put them back: ${restored.join(', ')}.`)
+  }
 
   const tip = (await git(root, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`])).trim()
   const descends = await git(root, ['merge-base', '--is-ancestor', from.baseSha, tip]).then(() => true).catch(() => false)
-  if (!descends) throw new Error(`The task branch no longer builds on ${from.base}'s starting point (its history was rewritten). It was kept for you to inspect: ${branch}.`)
+  if (!descends) throw new RewrittenBranchError(`The task branch no longer builds on ${from.base}'s starting point (its history was rewritten). It was kept for you to inspect: ${branch}.`)
 
   await git(root, ['add', '-A'])
   // --ignore-submodules=none: a task that only bumps a submodule (with ignore=all configured) still gets committed and reviewed.
   const staged = (await git(root, ['diff', '--cached', '--name-only', '-z', '--ignore-submodules=none'])).split('\0').filter(Boolean)
+  if (staged.length > 0 && opts.recovering) {
+    notes.push(
+      `Everything uncommitted in the project folder (${staged.length} file${staged.length === 1 ? '' : 's'}) was committed to this branch. That may include changes you made while Hangar was closed: look before you Discard it, which would delete them too.`
+    )
+  }
   if (staged.length > 0) {
     const who = agentName.replace(/[<>\n]/g, '').slice(0, 40)
     await git(root, ['-c', `user.name=Hangar (${who})`, '-c', 'user.email=hangar@localhost', 'commit', '--no-verify', '-m', message.slice(0, 200)])
@@ -509,7 +528,10 @@ export async function finishTaskBranch(
   const files = (await git(root, ['diff', '--name-only', '-z', '--ignore-submodules=none', from.baseSha, headSha, '--'])).split('\0').filter(Boolean)
   if (files.length === 0) await git(root, ['branch', '-D', branch]).catch(() => undefined)
   if (files.some((f) => /(^|\/)\.gitignore$/.test(f))) notes.push('This change edits .gitignore — check it doesn\'t hide or expose files you care about.')
-  if (quarantineDir) {
+  if (opts.recovering) {
+    const note = await ignoredChangesNote(root, from.ignored ?? null)
+    if (note) notes.push(note)
+  } else if (quarantineDir) {
     const q = await quarantineIgnored(root, from.ignored ?? null, quarantineDir)
     if (q.moved.length) {
       notes.push(
@@ -552,6 +574,102 @@ export async function mergeTaskBranch(root: string, base: string, branch: string
   const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
   await git(root, [...identity, 'commit', '--no-verify', '-m', message.slice(0, 200)])
   await git(root, ['branch', '-D', branch]).catch(() => undefined)
+}
+
+/** The current branch, after checking the repo is one Hangar will run git in. */
+export async function safeCurrentBranch(root: string): Promise<string | null> {
+  await assertSafeRepo(root)
+  return currentBranch(root)
+}
+
+/**
+ * Branches and tags (not remotes) that differ from the start-of-task snapshot, other than the task's own branch,
+ * each with what happened ("my-feature deleted, was abc1234"), so a deleted one can be brought back.
+ */
+export async function refsChangedSince(root: string, from: TaskBase, ownBranch: string): Promise<string[]> {
+  const own = `refs/heads/${ownBranch}`
+  const now = await snapshotRefs(root)
+  const mine = (ref: string): boolean => ref !== own && (ref.startsWith('refs/heads/') || ref.startsWith('refs/tags/'))
+  const names = [...new Set([...Object.keys(from.refs), ...Object.keys(now)].filter(mine))].sort()
+  const short = (sha: string | undefined): string => (sha ?? '').slice(0, 9)
+  return names
+    .filter((ref) => from.refs[ref] !== now[ref])
+    .map((ref) => {
+      const name = ref.replace(/^refs\/(heads|tags)\//, '')
+      const before = from.refs[ref]
+      const after = now[ref]
+      return !after ? `${name} deleted (was ${short(before)})` : !before ? `${name} new (at ${short(after)})` : `${name} moved (${short(before)} → ${short(after)})`
+    })
+}
+
+/** The note for refsChangedSince: nothing is put back, and how to bring back a deleted branch. */
+export function refsNote(changed: string[]): string {
+  const deleted = changed.some((c) => c.includes(' deleted '))
+  return `Since this task started, these branches or tags changed (by the agent, or by you while Hangar was closed). Hangar left them as they are: ${changed.slice(0, 10).join(', ')}${changed.length > 10 ? '…' : ''}.${
+    deleted ? ' To bring back a deleted branch: git branch <name> <the "was" commit>.' : ''
+  }`
+}
+
+/** How many files have uncommitted changes in the project folder (0 if it can't tell). */
+export async function uncommittedCount(root: string): Promise<number> {
+  return (await gitStatus(root).catch(() => null))?.files.length ?? 0
+}
+
+/**
+ * After Hangar was closed mid-task: git-ignored files that are new or changed since the task started. They may be the
+ * agent's or yours (made while Hangar was closed), so they're listed for you, never moved.
+ */
+export async function ignoredChangesNote(root: string, before: Record<string, string> | null): Promise<string | null> {
+  if (before === null) return null
+  const after = await ignoredFiles(root)
+  if (after === null) return null
+  const changed = Object.entries(after)
+    .filter(([rel, print]) => before[rel] !== print)
+    .map(([rel]) => rel)
+  if (!changed.length) return null
+  return `${changed.length} git-ignored file${changed.length === 1 ? ' was' : 's were'} created or changed since this task started (by the agent, or by you while Hangar was closed): ${changed.slice(0, 5).join(', ')}${changed.length > 5 ? '…' : ''}. ${changed.length === 1 ? "It isn't part of this review and wasn't moved" : "They aren't part of this review and weren't moved"}: check before running the game.`
+}
+
+/**
+ * A task branch left behind when Hangar closed mid-task: its tip and what it changes from where the task started,
+ * or null if it's gone.
+ */
+export async function leftoverTaskBranch(root: string, branch: string, baseSha: string): Promise<{ headSha: string; files: string[]; rewritten: boolean } | null> {
+  assertTaskBranch(branch)
+  if (!SHA.test(baseSha)) throw new Error('Invalid task.')
+  await assertSafeRepo(root)
+  const headSha = (await git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
+  if (!SHA.test(headSha)) return null
+  // A branch that no longer builds on where the task started can't be reviewed as baseSha..headSha.
+  const rewritten = !(await git(root, ['merge-base', '--is-ancestor', baseSha, headSha]).then(() => true).catch(() => false))
+  const files = rewritten ? [] : (await git(root, ['diff', '--name-only', '-z', '--ignore-submodules=none', baseSha, headSha, '--'])).split('\0').filter(Boolean)
+  return { headSha, files, rewritten }
+}
+
+/**
+ * The project is on a task branch Hangar has no record of (it was closed mid-task before it kept records), with
+ * nothing on it: no uncommitted changes, and another branch (main or master first) at the very same commit.
+ * Switch to that branch and delete the empty task branch. Returns the branch switched to, or null if it wasn't
+ * that safe case (then nothing is touched).
+ */
+export async function leaveEmptyTaskBranch(root: string): Promise<{ from: string; to: string } | null> {
+  const status = await gitStatus(root) // refuses dangerous config, before anything else runs
+  if (!status.isRepo || status.files.length) return null
+  const branch = await currentBranch(root)
+  if (!branch || !SAFE_BRANCH.test(branch)) return null
+  const tip = (await git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
+  // Full ref names (a tag called "main" would make the short form "heads/main").
+  const same = (await git(root, ['for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads']))
+    .split('\n')
+    .map((l) => l.trim().split(' '))
+    .filter(([sha, ref]) => sha === tip && ref?.startsWith('refs/heads/'))
+    .map(([, ref]) => ref!.slice('refs/heads/'.length))
+    .filter((name) => !name.startsWith(BRANCH_PREFIX) && /^[A-Za-z0-9._/-]{1,120}$/.test(name) && !name.startsWith('-'))
+  const to = ['main', 'master'].find((n) => same.includes(n)) ?? same[0]
+  if (!to) return null
+  await git(root, ['checkout', to])
+  await git(root, ['branch', '-D', branch]).catch(() => undefined)
+  return { from: branch, to }
 }
 
 export async function deleteTaskBranch(root: string, branch: string): Promise<void> {

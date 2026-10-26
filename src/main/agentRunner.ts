@@ -16,7 +16,7 @@ import type {
 } from '@shared/types'
 import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
-import { finishTaskBranch, gitSafetyEnv, prepareTaskBase, startTaskBranch, taskBranchName, type TaskBase } from './git'
+import { deleteTaskBranch, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
 import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
@@ -70,6 +70,23 @@ export type QueryFn = (args: { prompt: string; options: Record<string, unknown> 
 
 interface Persisted {
   agents: Record<string, { sessionId: string | null; log: LogEntry[] }>
+}
+
+/**
+ * Autonomous tasks under way, by project, in a file of their own: written when a task branch is made, removed once
+ * the task is wrapped up. One still there at startup means Hangar closed mid-task; recoverInterrupted() wraps it up.
+ */
+interface InFlightFile {
+  tasks: Record<string, InFlight>
+}
+
+interface InFlight {
+  agentId: string
+  taskId: string
+  branch: string
+  from: TaskBase
+  title: string
+  startedAt: number
 }
 
 interface PendingApproval {
@@ -175,6 +192,8 @@ export function cleanResearch(text: string): { markdown: string; hiddenChars: bo
 
 const keyOf = (projectId: string, agentId: string): string => `${projectId}:${agentId}`
 
+const INTERRUPTED = 'Hangar was closed while this task was running.'
+
 export class AgentRunner {
   private states = new Map<string, AgentState>()
   private controllers = new Map<string, AbortController>()
@@ -187,10 +206,14 @@ export class AgentRunner {
   /** Projects a review action (merge, discard, checkout…) is working on; no task may start meanwhile. */
   private locked = new Set<string>()
   private persisted: JsonStore<Persisted>
+  private inflight: JsonStore<InFlightFile>
+  /** While startup recovery runs, no task starts (it could start on a branch recovery is about to change). */
+  private recovering = false
   private trust: TrustStore
 
   constructor(private readonly deps: RunnerDeps) {
     this.persisted = new JsonStore<Persisted>(deps.persistFile, { agents: {} })
+    this.inflight = new JsonStore<InFlightFile>(deps.persistFile.replace(/\.json$/i, '') + '.inflight.json', { tasks: {} })
     this.trust = new TrustStore(deps.trustFile)
   }
 
@@ -224,6 +247,7 @@ export class AgentRunner {
   private save(s: AgentState): void {
     const key = keyOf(s.projectId, s.agentId)
     this.persisted.update((p) => ({
+      ...p,
       agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG) } }
     }))
   }
@@ -399,6 +423,7 @@ export class AgentRunner {
   // ---------- scheduling ----------
 
   private schedule(): void {
+    if (this.recovering) return
     const max = Math.max(1, this.deps.getSettings().maxConcurrentRuns)
     while (this.runningCount() < max) {
       const next = [...this.states.values()]
@@ -502,6 +527,14 @@ export class AgentRunner {
         const name = taskBranchName(s.agentId, prompt, task.id)
         await startTaskBranch(project.path, name, from)
         taskBranch = { name, from }
+        this.setInflight(project.id, {
+          agentId: s.agentId,
+          taskId: task.id,
+          branch: name,
+          from,
+          title: (task.origin ? 'Autopilot task' : stripHidden(task.prompt).split('\n')[0]!).slice(0, 120),
+          startedAt: Date.now()
+        })
         this.log(s, { kind: 'system', text: `Autonomous: working on branch ${name} (from ${from.base}). You'll review it when it's done.` })
       }
       if (task.record && this.deps.clips && !research) clip = this.deps.clips.begin({ taskId: task.id, projectPath: project.path })
@@ -670,6 +703,7 @@ export class AgentRunner {
           box.reviewId = await this.finishTask(s, project, task, taskBranch, lastText, clip, finished && !s.lastError && !controller.signal.aborted)
         } finally {
           this.wrapping.delete(project.id)
+          this.setInflight(project.id, null)
         }
       } else clip?.abort()
       if (research && lastText.trim()) {
@@ -681,6 +715,123 @@ export class AgentRunner {
     }
   }
 
+  private setInflight(projectId: string, rec: InFlight | null): void {
+    this.inflight.update((f) => {
+      const tasks = { ...f.tasks }
+      if (rec) tasks[projectId] = rec
+      else delete tasks[projectId]
+      return { tasks }
+    })
+  }
+
+  /**
+   * Wrap up autonomous tasks that were under way when Hangar closed (quit, crash, or a restart while an agent
+   * worked): the project is put back on its main branch, and whatever the agent had done becomes a review marked
+   * as stopped early, exactly as if the task had been stopped. Run once at startup, before any task starts.
+   * Also gets a project off an empty task branch Hangar has no record of (closed mid-task by an older version).
+   */
+  async recoverInterrupted(): Promise<void> {
+    // Set before the first await: nothing can start until recovery is done.
+    this.recovering = true
+    try {
+      const records = { ...this.inflight.get().tasks }
+      for (const [projectId, rec] of Object.entries(records)) await this.recoverOne(projectId, rec)
+      // Projects left on an empty task branch with no record (closed mid-task by a version before records were kept).
+      for (const project of this.deps.registry.list()) {
+        if (!project.settings.autonomous || records[project.id]) continue
+        const moved = await this.withProjectLock(project.id, () => leaveEmptyTaskBranch(project.path)).catch(() => null)
+        if (moved) {
+          const s = this.state(project.id, MAIN_AGENT_ID)
+          this.log(s, { kind: 'system', text: `Hangar was closed while a task ran on ${moved.from}, before it changed anything. Back on ${moved.to}.` })
+          this.save(s)
+        }
+      }
+    } finally {
+      this.recovering = false
+      this.schedule()
+    }
+  }
+
+  /** One interrupted task. The record is kept (and tried again next launch) unless the task was wrapped up. */
+  private async recoverOne(projectId: string, rec: InFlight): Promise<void> {
+    let project: Project
+    try {
+      project = this.deps.registry.get(projectId)
+    } catch {
+      this.setInflight(projectId, null)
+      return
+    }
+    const s = this.state(projectId, rec.agentId)
+    try {
+      await this.withProjectLock(projectId, async () => {
+        if ((await safeCurrentBranch(project.path)) === rec.branch) {
+          // Still on the task branch: commit what's there and switch back, as a stopped task would (but nothing
+          // is put back or moved: you may have changed things while Hangar was closed).
+          this.log(s, { kind: 'system', text: `${INTERRUPTED} Wrapping it up: committing what it did to ${rec.branch} and switching back to ${rec.from.base}.` })
+          await this.finishTask(s, project, { id: rec.taskId, prompt: rec.title, createdAt: rec.startedAt }, { name: rec.branch, from: rec.from }, '', null, false, {
+            stoppedBecause: INTERRUPTED,
+            recovering: true
+          })
+          return
+        }
+        // Already switched away (by hand, or Hangar closed while wrapping up, or the agent switched): look at what
+        // the branch holds, and say what else changed, whatever happens to the branch.
+        const left = await leftoverTaskBranch(project.path, rec.branch, rec.from.baseSha)
+        const changedRefs = await refsChangedSince(project.path, rec.from, rec.branch)
+        const uncommitted = await uncommittedCount(project.path)
+        const notes = [
+          changedRefs.length ? refsNote(changedRefs) : null,
+          uncommitted
+            ? `The project folder has ${uncommitted} file${uncommitted === 1 ? '' : 's'} with uncommitted changes. Some may be the agent's unreviewed work: check them in the Changes tab.`
+            : null,
+          await ignoredChangesNote(project.path, rec.from.ignored ?? null)
+        ].filter((n): n is string => !!n)
+        const tell = (what: string): void => this.log(s, { kind: notes.length ? 'error' : 'system', text: [`${INTERRUPTED} ${what}`, ...notes].join(' ') })
+        if (!left) return tell(`Its branch ${rec.branch} is gone.`)
+        if (left.rewritten) return tell(`Its branch ${rec.branch} no longer builds on where it started, so it was kept for you to look at, not turned into a review.`)
+        if (!left.files.length) {
+          await deleteTaskBranch(project.path, rec.branch).catch(() => undefined)
+          return tell(`It hadn't changed anything on ${rec.branch}, so that branch was removed.`)
+        }
+        if (this.deps.reviews.list(projectId).some((r) => r.branch === rec.branch)) return
+        if (left.files.some((f) => /(^|\/)\.gitignore$/.test(f))) notes.push("This change edits .gitignore — check it doesn't hide or expose files you care about.")
+        const review = this.deps.reviews.add({
+          projectId,
+          agentId: rec.agentId,
+          title: rec.title,
+          branch: rec.branch,
+          base: rec.from.base,
+          baseSha: rec.from.baseSha,
+          headSha: left.headSha,
+          summary: '',
+          files: left.files,
+          incomplete: INTERRUPTED,
+          note: notes.length ? notes.join(' ') : null,
+          clip: null
+        })
+        this.deps.emit({ type: 'review', review })
+        // Checks and the reviewer run on it like on any finished task.
+        this.deps.onReview?.(review)
+        this.log(s, { kind: 'system', text: `${INTERRUPTED} Its work on ${rec.branch} is in Reviews, marked as stopped early.` })
+      })
+      this.setInflight(projectId, null)
+    } catch (err) {
+      if (err instanceof RewrittenBranchError) {
+        // Final, not passing: the branch is kept for you to look at, and there's nothing to retry.
+        this.log(s, { kind: 'error', text: `${INTERRUPTED} ${err.message} Hangar left the project on that branch: switch back to ${rec.from.base} once you've looked.` })
+        this.setInflight(projectId, null)
+        return
+      }
+      // A passing problem (a git lock left behind, a drive not mounted yet): keep the record and try again next launch.
+      this.log(s, {
+        kind: 'error',
+        text: `Hangar was closed while a task ran on ${rec.branch}, and couldn't wrap it up yet: ${err instanceof Error ? err.message : String(err)}. It will try again next time Hangar starts; you can also check the Changes tab.`
+      })
+    } finally {
+      this.save(s)
+    }
+  }
+
   /** Commit the task's work to its branch, switch back, and turn it into a review (or note there was nothing). */
   private async finishTask(
     s: AgentState,
@@ -689,7 +840,8 @@ export class AgentRunner {
     branch: { name: string; from: TaskBase },
     lastText: string,
     clip: ClipSession | null,
-    completed: boolean
+    completed: boolean,
+    opts: { stoppedBecause?: string; recovering?: boolean } = {}
   ): Promise<string | null> {
     const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
     // Autopilot prompts are long instructions; the agent's own first line says what it actually built.
@@ -703,7 +855,8 @@ export class AgentRunner {
         branch.from,
         roleName,
         `${roleName}: ${title}`,
-        join(this.deps.appDataDir, 'quarantine', task.id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64))
+        join(this.deps.appDataDir, 'quarantine', task.id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64)),
+        { recovering: opts.recovering }
       )
       const clipResult = clip ? await clip.finish().catch(() => null) : null
       if (files.length === 0 || !headSha) {
@@ -721,7 +874,7 @@ export class AgentRunner {
         headSha,
         summary: lastText.slice(0, 8000),
         files,
-        incomplete: completed ? null : (s.lastError ?? 'The run was stopped before it finished.'),
+        incomplete: completed ? null : (opts.stoppedBecause ?? s.lastError ?? 'The run was stopped before it finished.'),
         note,
         clip: clipResult
       })
@@ -732,6 +885,8 @@ export class AgentRunner {
       return review.id
     } catch (err) {
       clip?.abort()
+      // Recovery says what happened itself, and keeps its record to try again.
+      if (opts.recovering) throw err
       const message = err instanceof Error ? err.message : String(err)
       this.log(s, { kind: 'error', text: `Couldn't wrap up the task branch ${branch.name}: ${message}. Your work is still on that branch; check the Changes tab.` })
       return null
