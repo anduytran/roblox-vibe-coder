@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import type { Role } from '@shared/types'
 import { validVaultFolder } from './vault'
+import { cleanBudget, isEffort } from '@shared/agentConfig'
 
 /** Roles live in <project>/.claude/agents/*.md, the same format Claude Code uses for subagents. */
 export function agentsDir(projectRoot: string): string {
@@ -51,6 +52,11 @@ export function parseRole(id: string, text: string): Role | null {
   if (meta['vault-kind'] === 'design' || meta['vault-kind'] === 'ui') role.vaultKind = meta['vault-kind']
   if (meta.mode === 'research') role.mode = 'research'
   if (parseList(meta.mcp ?? '').includes('blender')) role.mcp = ['blender']
+  if (isEffort(meta.effort)) role.effort = meta.effort
+  const budget = cleanBudget(meta.budget)
+  if (budget) role.budgetUsd = budget
+  if (meta.studio === 'off') role.studio = false
+  if (meta.knowledge && validVaultFolder(meta.knowledge)) role.knowledge = meta.knowledge
   return role
 }
 
@@ -62,6 +68,11 @@ export function serializeRole(role: Role): string {
   if (role.vault && role.vaultKind === 'design') lines.push('vault-kind: design')
   if (role.mode === 'research') lines.push('mode: research')
   if (role.mcp?.includes('blender')) lines.push('mcp: blender')
+  if (isEffort(role.effort)) lines.push(`effort: ${role.effort}`)
+  const budget = cleanBudget(role.budgetUsd)
+  if (budget) lines.push(`budget: ${budget}`)
+  if (role.studio === false) lines.push('studio: off')
+  if (role.knowledge && validVaultFolder(role.knowledge)) lines.push(`knowledge: ${role.knowledge}`)
   lines.push('---', '', role.prompt.trim(), '')
   return lines.join('\n')
 }
@@ -88,6 +99,7 @@ export function saveRole(projectRoot: string, role: Role): void {
   const id = role.id && ID_RE.test(role.id) ? role.id : slugify(role.name)
   if (!role.name.trim() || !role.prompt.trim()) throw new Error('A role needs a name and instructions.')
   if (role.vault && !validVaultFolder(role.vault)) throw new Error('Vault folder must be a simple folder name inside the project, like ui-vault.')
+  if (role.knowledge && !validVaultFolder(role.knowledge)) throw new Error('Knowledge folder must be a simple folder inside the project, like knowledge/scripter.')
   const dir = agentsDir(projectRoot)
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, `${id}.md`), serializeRole({ ...role, id }), 'utf8')

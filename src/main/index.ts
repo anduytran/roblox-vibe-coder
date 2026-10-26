@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { normalizeModel } from '@shared/models'
+import { cleanAgentSettings } from '@shared/agentConfig'
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
@@ -565,11 +566,12 @@ app.whenReady().then(() => {
       name: str(role.name, 'name').slice(0, 60),
       description: str(role.description ?? '', 'description').slice(0, 500),
       prompt: str(role.prompt, 'instructions'),
-      ...(Array.isArray(role.tools) && role.tools.length ? { tools: role.tools.filter((t) => typeof t === 'string') } : {}),
       ...(normalizeModel(role.model) ? { model: normalizeModel(role.model)! } : {}),
       ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {}),
       ...(role.vaultKind === 'design' ? { vaultKind: 'design' as const } : {}),
-      ...(role.mode === 'research' ? { mode: 'research' as const } : {})
+      ...(role.mode === 'research' ? { mode: 'research' as const } : {}),
+      ...(Array.isArray(role.mcp) && role.mcp.includes('blender') ? { mcp: ['blender' as const] } : {}),
+      ...cleanAgentSettings(role)
     })
     return listRoles(root(id))
   })

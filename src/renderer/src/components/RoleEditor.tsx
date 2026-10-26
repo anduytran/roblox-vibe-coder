@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Project, Role } from '@shared/types'
-import { confirmDialog, attempt, setRoles, toast } from '../store'
+import { confirmDialog, attempt, replaceProject, setRoles, toast } from '../store'
+import { AgentSettingsFields, agentFormState, agentSettingsFrom } from './AgentSettingsFields'
 import { Button, Field, Modal } from './ui'
 import { ModelSelect } from './ModelSelect'
 
@@ -9,7 +10,8 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
   const isNew = !props.role.id
   const [name, setName] = useState(props.role.name)
   const [description, setDescription] = useState(props.role.description)
-  const [tools, setTools] = useState((props.role.tools ?? []).join(', '))
+  const [agent, setAgent] = useState(() => agentFormState(props.role))
+  const [blender, setBlender] = useState(props.role.mcp?.includes('blender') ?? false)
   const [model, setModel] = useState(props.role.model ?? '')
   const [prompt, setPrompt] = useState(props.role.prompt)
   const [vault, setVault] = useState(props.role.vault ?? '')
@@ -24,10 +26,8 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
         name,
         description,
         prompt,
-        tools: tools
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
+        ...(research ? {} : agentSettingsFrom(agent)),
+        mcp: !research && blender ? ['blender'] : undefined,
         model: model.trim() || undefined,
         vault: research ? undefined : vault.trim() || undefined,
         vaultKind: !research && vault.trim() && vaultKind === 'design' ? 'design' : undefined,
@@ -99,9 +99,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
       </Field>
       {!research && (
         <>
-          <Field label="Built-in tools allowed (optional)" hint="Comma-separated, e.g. Read, Glob, Grep. Empty = all tools. Roblox Studio tools are always offered.">
-            <input value={tools} onChange={(e) => setTools(e.target.value)} placeholder="Read, Glob, Grep, Edit, Write, Bash" />
-          </Field>
+          <AgentSettingsFields agentId={props.role.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} />
           <div className="grid-2">
             <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated. Created from templates on first use.">
               <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />
@@ -119,6 +117,48 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
         <textarea className="mono" rows={12} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
       </Field>
       <p className="muted small">Saved as .claude/agents/{props.role.id || '<name>'}.md in the project, the same format Claude Code uses.</p>
+    </Modal>
+  )
+}
+
+/** The Main agent has no role file: its settings live with the project's settings. Its model is the project's. */
+export function MainAgentEditor(props: { project: Project; onClose: () => void }) {
+  const { project } = props
+  const main = project.settings.mainAgent ?? {}
+  const [prompt, setPrompt] = useState(main.prompt ?? '')
+  const [agent, setAgent] = useState(() => agentFormState(main))
+
+  const save = (): void => {
+    void attempt(async () => {
+      const mainAgent = { ...agentSettingsFrom(agent), prompt: prompt.trim() || undefined }
+      replaceProject(await window.hangar.projects.update(project.id, { settings: { mainAgent } }))
+      toast('Saved the Main agent.')
+      props.onClose()
+    })
+  }
+
+  return (
+    <Modal
+      title="Main agent settings"
+      onClose={props.onClose}
+      wide
+      footer={
+        <>
+          <span className="spacer" />
+          <Button tone="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button tone="primary" onClick={save}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <p className="muted small">The general-purpose agent. It uses the project's model (Project → General → Model) and can hand work to every role.</p>
+      <AgentSettingsFields agentId="main" value={agent} onChange={setAgent} />
+      <Field label="Extra instructions (optional)" hint="Added to what it already knows: the project's CLAUDE.md and Hangar's rules.">
+        <textarea className="mono" rows={8} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+      </Field>
     </Modal>
   )
 }

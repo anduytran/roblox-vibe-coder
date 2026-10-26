@@ -4,7 +4,7 @@ import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
 import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
-import { RoleEditor } from './RoleEditor'
+import { MainAgentEditor, RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
 import { Button, Icon, StatusPill, timeAgo, usd } from './ui'
 
@@ -26,6 +26,7 @@ export function AgentsView({ project }: { project: Project }) {
     if (focus?.agentId) setSelected(focus.agentId)
   }, [focus])
   const [editing, setEditing] = useState<Role | null>(null)
+  const [editingMain, setEditingMain] = useState(false)
 
   const all = useMemo(() => [MAIN_AGENT, ...roles], [roles])
   useEffect(() => {
@@ -95,8 +96,9 @@ export function AgentsView({ project }: { project: Project }) {
         project={project}
         role={role}
         state={state}
-        onEdit={role.id === 'main' ? undefined : () => setEditing(role)}
+        onEdit={role.id === 'main' ? () => setEditingMain(true) : () => setEditing(role)}
       />
+      {editingMain && <MainAgentEditor project={project} onClose={() => setEditingMain(false)} />}
       {editing && <RoleEditor project={project} role={editing} onClose={() => setEditing(null)} onSaved={(id) => setSelected(id)} />}
     </div>
   )
@@ -174,7 +176,7 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <div className="row gap-xs">
           {props.onEdit && (
             <Button size="sm" tone="ghost" onClick={props.onEdit}>
-              Edit role
+              {role.id === 'main' ? 'Settings' : 'Edit role'}
             </Button>
           )}
           <Button size="sm" tone="ghost" aria-pressed={raw} disabled={log.length === 0} title="Every log entry as recorded, without grouping" onClick={() => {

@@ -4317,3 +4317,19 @@ kbd {
 .approval-checker {
   color: var(--info);
 }
+
+/* Tool checkboxes in the agent editors */
+.check-grid {
+  display: grid;
+  gap: 6px;
+}
+.check-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.check-row input {
+  flex: none;
+  transform: translateY(2px);
+}

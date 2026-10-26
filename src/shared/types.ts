@@ -4,7 +4,28 @@
 export type AgentStatus = 'idle' | 'queued' | 'working' | 'awaiting_approval' | 'error' | 'stopped'
 
 /** A subagent role, stored as .claude/agents/<id>.md in the project (Claude Code compatible). */
-export interface Role {
+export type AgentEffort = 'low' | 'medium' | 'high' | 'max'
+
+/** Settings every agent can have, roles and the Main agent alike. */
+export interface AgentSettings {
+  /** Tools allowed (see shared/agentConfig.ts groups). Empty or missing: all. */
+  tools?: string[]
+  /** How hard it thinks. Missing: the model's usual effort. */
+  effort?: AgentEffort
+  /** Per-task spending limit (USD) for this agent. Missing: the app's per-task limit. */
+  budgetUsd?: number
+  /** false: no Roblox Studio tools for this agent, even when the project has them on. */
+  studio?: boolean
+  /** A folder of notes (inside the project) this agent searches before working and adds to as it learns. */
+  knowledge?: string
+}
+
+/** The Main agent's own settings (it has no role file): its extra instructions and the shared settings. */
+export interface MainAgentSettings extends AgentSettings {
+  prompt?: string
+}
+
+export interface Role extends AgentSettings {
   id: string
   name: string
   description: string
@@ -63,6 +84,8 @@ export interface ProjectSettings {
   checks: CheckCommand[]
   /** A read-only reviewer agent reads each finished task's change and reports problems. */
   reviewer: boolean
+  /** The Main agent's own instructions, tools, effort, budget, Studio access and knowledge folder. */
+  mainAgent?: MainAgentSettings
   /**
    * A second AI looks at each waiting approval (only the action, never the conversation) and approves it when it's
    * plainly safe and Hangar's own checks found nothing. High-risk actions always wait for you.

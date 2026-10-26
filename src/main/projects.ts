@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type { AppSettings, CheckCommand, Project, ProjectSettings } from '@shared/types'
+import { cleanMainAgent } from '@shared/agentConfig'
 import { JsonStore } from './jsonStore'
 import { BLENDER_MCP_NAME, shellWords, STUDIO_MCP_NAME } from './permissions'
 
@@ -106,7 +107,8 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d)),
     checks: sanitizeChecks(s.checks),
     reviewer: s.reviewer !== false,
-    safetyChecker: s.safetyChecker === true
+    safetyChecker: s.safetyChecker === true,
+    ...(cleanMainAgent(s.mainAgent) ? { mainAgent: cleanMainAgent(s.mainAgent) } : {})
   }
 }
 
@@ -165,12 +167,13 @@ export function projectMcpServers(projectPath: string): Record<string, StdioServ
  * Taking the reviewed set (instead of re-reading .mcp.json) means a file changed after approval
  * can't swap in a different command.
  */
-export function mcpServersFor(project: Project, app: AppSettings, reviewed: Record<string, StdioServer> = {}, opts: { blender?: boolean } = {}): Record<string, StdioServer> {
+export function mcpServersFor(project: Project, app: AppSettings, reviewed: Record<string, StdioServer> = {}, opts: { blender?: boolean; studio?: boolean } = {}): Record<string, StdioServer> {
   const servers: Record<string, StdioServer> = { ...reviewed }
   // Only a role that asks for Blender gets it, and only once the owner has set the command up in Settings.
   const blender = app.blenderMcpCommand?.trim()
   if (opts.blender && blender) servers[BLENDER_MCP_NAME] = { command: blender, args: app.blenderMcpArgs ?? [] }
-  if (project.settings.robloxStudioMcp) {
+  // An agent set to "no Studio" doesn't get it even when the project has it on.
+  if (project.settings.robloxStudioMcp && opts.studio !== false) {
     const custom = app.studioMcpCommand.trim()
     const studio = custom ? { command: custom, args: app.studioMcpArgs } : defaultStudioMcp(process.platform, process.env)
     if (studio) servers[STUDIO_MCP_NAME] = studio
