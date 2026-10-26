@@ -370,3 +370,53 @@ test('costs: a resumed conversation counts only what the run added; autopilot st
   assert.equal(seen[3]!.resume, 's0')
   assert.ok(Math.abs(costs.summary().todayUsd - (1.5 + 0.2 + 0.3)) < 1e-9, `counted ${costs.summary().todayUsd}`)
 })
+
+test('context: a conversation past the limit starts over on the next message, and says so', async () => {
+  const { MAX_CONTEXT_TOKENS } = await import('../src/main/agentRunner')
+  const dir = tmp('hangar-ctx-')
+  const registry = new ProjectRegistry(join(tmp('hangar-ctx-reg-'), 'projects.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { sandbox: false } })
+  const sizes = [40_000, MAX_CONTEXT_TOKENS + 10_000, 20_000]
+  const resumes: unknown[] = []
+  let n = 0
+  const query: QueryFn = ({ options }) =>
+    (async function* () {
+      const i = n++
+      resumes.push(options.resume)
+      yield { type: 'system', subtype: 'init', session_id: options.resume ? String(options.resume) : `s${i}`, mcp_servers: [] }
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, cache_read_input_tokens: sizes[i]! - 10, cache_creation_input_tokens: 0 } } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 * (i + 1) }
+    })()
+  const logs: string[] = []
+  const runner: AgentRunner = new AgentRunner({
+    registry,
+    costs: new CostTracker(join(tmp('hangar-ctx-c-'), 'costs.json')),
+    getSettings: () => settings,
+    getApiKey: () => 'sk-ant-test',
+    engineAuth: async (k) => ({ env: { ANTHROPIC_API_KEY: k }, release: () => {} }),
+    loadQuery: async () => query,
+    emit: (e) => {
+      if (e.type === 'log') logs.push(e.entry.text)
+      if (e.type === 'approval' && e.request.toolName === 'Project setup') queueMicrotask(() => runner.respond(e.request.id, 'allow'))
+    },
+    persistFile: join(tmp('hangar-ctx-p-'), 'agents.json'),
+    trustFile: join(tmp('hangar-ctx-t-'), 'trust.json'),
+    appDataDir: tmp('hangar-ctx-app-'),
+    platform: 'linux',
+    reviews: new ReviewStore(join(tmp('hangar-ctx-rv-'), 'reviews.json'))
+  })
+  const main = () => runner.snapshot(project.id).find((a) => a.agentId === 'main')!
+  const run = async (prompt: string) => {
+    const before = n
+    runner.send(project.id, 'main', prompt)
+    await until(() => n > before && main().status === 'idle')
+  }
+  await run('one') // 40k
+  await run('two') // resumes, grows past the limit
+  assert.equal(resumes[1], 's0')
+  await run('three') // starts over
+  assert.equal(resumes[2], undefined)
+  assert.ok(logs.some((t) => /Started a new conversation: the last one had grown to \d+k tokens/.test(t)))
+  assert.equal(main().sessionId, 's2')
+})

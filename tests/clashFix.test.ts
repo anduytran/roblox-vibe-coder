@@ -321,3 +321,25 @@ test('autopilot: an unattended run stops after two sprints in a row that built n
   assert.equal(st.config.unattended, false)
   assert.match(st.away!.endReason ?? '', /last 2 sprints built nothing/)
 })
+
+test('autopilot: "Do it now" on a set-aside action runs in a fresh conversation', async () => {
+  const { Autopilot } = await import('../src/main/autopilot')
+  const registry = new ProjectRegistry(join(tmp('hangar-doit-'), 'p.json'))
+  const project = registry.add(tmp('hangar-doit-proj-'))
+  const sent: { prompt: string; opts: { origin?: unknown; fresh?: boolean } }[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-doit-a-'), 'a.json'),
+    registry,
+    reviews: new ReviewStore(join(tmp('hangar-doit-r-'), 'r.json')),
+    costs: new CostTracker(join(tmp('hangar-doit-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt, opts) => {
+      sent.push({ prompt, opts })
+    },
+    merge: async () => undefined
+  })
+  ap.setAside({ id: 'x1', projectId: project.id, agentId: 'lead', toolName: 'Bash', summary: '$ rojo build', inputJson: '{"command":"rojo build"}', reason: 'r', dangerous: false, canAlwaysAllow: false, truncated: false, ts: 1 })
+  ap.resolveSetAside(project.id, 'x1', true)
+  assert.equal(sent.at(-1)!.opts.fresh, true)
+  assert.match(sent.at(-1)!.prompt, /rojo build/)
+})

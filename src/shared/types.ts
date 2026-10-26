@@ -167,6 +167,8 @@ export interface QueuedTask {
   origin?: 'autopilot' | 'autopilot-report'
   /** Resolve this review's merge clash: Hangar merges the latest base into its branch, the agent fixes the conflicts. */
   fixClash?: string
+  /** Run in a new conversation, leaving the agent's own conversation where it was (a set-aside action done later). */
+  fresh?: boolean
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'

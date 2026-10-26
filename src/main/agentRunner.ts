@@ -37,6 +37,9 @@ import { firstLine, revealHidden, stripHidden } from '@shared/text'
 /** The always-present general agent for each project. Role agents come from .claude/agents/. */
 export const MAIN_AGENT_ID = 'main'
 
+/** A conversation bigger than this starts over on the next message (it's re-read in full on every turn). */
+export const MAX_CONTEXT_TOKENS = 150_000
+
 const MAX_LOG = 400
 const MAX_TURNS = 80
 const MAX_DETAILS = 20_000
@@ -71,7 +74,7 @@ export type CanUseTool = (
 export type QueryFn = (args: { prompt: string; options: Record<string, unknown> }) => AsyncIterable<unknown>
 
 interface Persisted {
-  agents: Record<string, { sessionId: string | null; log: LogEntry[]; sessionCostUsd?: number }>
+  agents: Record<string, { sessionId: string | null; log: LogEntry[]; sessionCostUsd?: number; contextTokens?: number }>
 }
 
 /**
@@ -243,6 +246,7 @@ export class AgentRunner {
       }
       this.states.set(key, s)
       if (saved?.sessionCostUsd) this.sessionCost.set(key, saved.sessionCostUsd)
+      if (saved?.contextTokens) this.contextSize.set(key, saved.contextTokens)
     }
     return s
   }
@@ -253,6 +257,9 @@ export class AgentRunner {
    */
   private readonly sessionCost = new Map<string, number>()
 
+  /** How big each agent's conversation has grown (tokens re-read on every turn), to start a new one past the limit. */
+  private readonly contextSize = new Map<string, number>()
+
   private publish(s: AgentState): void {
     this.deps.emit({ type: 'state', state: { ...s, queue: [...s.queue], log: [] } })
   }
@@ -261,7 +268,7 @@ export class AgentRunner {
     const key = keyOf(s.projectId, s.agentId)
     this.persisted.update((p) => ({
       ...p,
-      agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG), sessionCostUsd: s.sessionId ? (this.sessionCost.get(key) ?? 0) : 0 } }
+      agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG), sessionCostUsd: s.sessionId ? (this.sessionCost.get(key) ?? 0) : 0, contextTokens: s.sessionId ? (this.contextSize.get(key) ?? 0) : 0 } }
     }))
   }
 
@@ -316,7 +323,7 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
@@ -328,7 +335,8 @@ export class AgentRunner {
       createdAt: Date.now(),
       ...(opts.record ? { record: true } : {}),
       ...(opts.origin ? { origin: opts.origin } : {}),
-      ...(opts.fixClash ? { fixClash: opts.fixClash } : {})
+      ...(opts.fixClash ? { fixClash: opts.fixClash } : {}),
+      ...(opts.fresh ? { fresh: true } : {})
     }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
@@ -390,6 +398,7 @@ export class AgentRunner {
     if (s.status === 'working' || s.status === 'awaiting_approval') throw new Error('Stop the agent first.')
     s.sessionId = null
     this.sessionCost.delete(keyOf(projectId, agentId))
+    this.contextSize.delete(keyOf(projectId, agentId))
     s.log = []
     s.lastError = null
     s.status = s.queue.length ? 'queued' : 'idle'
@@ -740,8 +749,17 @@ export class AgentRunner {
       // Autopilot steps and clash fixes each start a fresh conversation: the design vault and the agent's knowledge
       // folder are its memory, so it doesn't re-read hours of earlier sprints every task. They also leave your own
       // conversation with the agent where it was.
-      const fresh = !!clash || !!task.origin
+      const fresh = !!clash || !!task.origin || !!task.fresh
       let costSoFar = 0
+      // A conversation past the limit is re-read in full on every turn, which is slow and uses up the plan: start a
+      // new one (notes, the vault and git history carry what matters).
+      const grown = this.contextSize.get(key) ?? 0
+      if (s.sessionId && !research && !fresh && grown > MAX_CONTEXT_TOKENS) {
+        this.log(s, { kind: 'system', text: `Started a new conversation: the last one had grown to ${Math.round(grown / 1000)}k tokens, which it re-read on every step. Its notes, the design vault and git history carry what matters.` })
+        s.sessionId = null
+        this.sessionCost.delete(key)
+        this.contextSize.delete(key)
+      }
       if (s.sessionId && !research && !fresh) {
         options.resume = s.sessionId
         costSoFar = this.sessionCost.get(key) ?? 0
@@ -755,6 +773,7 @@ export class AgentRunner {
         // Resuming didn't take (a new conversation started): its running total starts from nothing.
         if (c.sessionId && resumed && c.sessionId !== resumed && costSoFar) costSoFar = 0
         if (c.sessionId && !research && !fresh) s.sessionId = c.sessionId
+        if (c.contextTokens && !research && !fresh) this.contextSize.set(key, c.contextTokens)
         // The engine reports the conversation's total so far: count only what this run added.
         let runCost: number | undefined
         if (c.costUsd !== undefined) {
@@ -1390,7 +1409,7 @@ export function coordinateBlock(c: Coordinate, root: string, toolName: string, i
 export function coordinateInstructions(c: Coordinate): string {
   return `
 # How you work: you coordinate, the team builds
-- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (what to build, which files, the acceptance criteria). Run independent briefs at the same time.${
+- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (what to build, which files, the acceptance criteria). Run helpers in the foreground and wait for them (never run_in_background: each one finishing later wakes you to re-read everything); to run independent briefs at the same time, put their Agent calls in the same message.${
     c.qa ? `\n- Hand playtesting to "${c.qa}" with the Agent tool, then have the builders fix what it finds.` : ''
   }
 - You edit only your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}); Hangar refuses other file edits${c.qa ? ' and Studio use' : ''} from you. Don't edit files with shell commands either.
