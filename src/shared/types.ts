@@ -411,6 +411,27 @@ export interface AutopilotConfig {
   sprintBudgetUsd: number
   /** Merge finished work automatically when checks pass and the reviewer approves. */
   autoMerge: boolean
+  /**
+   * Keep going while you're away (overnight): check-ins answer themselves (the Lead goes ahead with its plan and
+   * records its decisions), changes that can't merge themselves wait in Reviews while work continues, approvals the
+   * safety checker won't clear are declined after a while. Ends at `unattendedUntil` or after `unattendedBudgetUsd`.
+   */
+  unattended?: boolean
+  unattendedUntil?: number | null
+  unattendedBudgetUsd?: number
+}
+
+/** What happened while autopilot ran unattended (shown as the morning summary). */
+export interface AwaySummary {
+  since: number
+  spentAtStart: number
+  tasks: number
+  merged: number
+  leftForYou: number
+  sprints: number
+  declined: number
+  endedAt?: number | null
+  endReason?: string | null
 }
 
 export type AutopilotStatus = 'off' | 'running' | 'waiting' | 'checkin' | 'paused'
@@ -445,6 +466,8 @@ export interface AutopilotState {
   sprintTasks: SprintReport['tasks']
   /** The Lead said this sprint's plan is done (when it decides the sprint's length). */
   sprintDoneSaid?: boolean
+  /** The current (or last) unattended run. */
+  away?: AwaySummary | null
   reports: SprintReport[]
   consecutiveFailures: number
   updatedAt: number

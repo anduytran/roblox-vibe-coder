@@ -122,6 +122,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
 
       {status === 'off' && <StartCard project={project} ap={ap} hasLead={hasLead} busy={busy} run={run} />}
 
+      {ap && ap.status !== 'off' && <UnattendedCard project={project} ap={ap} />}
       {ap && ap.status !== 'off' && <ConfigCard project={project} ap={ap} />}
 
       {ap && ap.reports.length > (status === 'checkin' ? 1 : 0) && (
@@ -229,6 +230,94 @@ function TaskList({ tasks }: { tasks: SprintReport['tasks'] }) {
         </li>
       ))}
     </ol>
+  )
+}
+
+/** The next given hour (7 → 7:00 tomorrow morning if it's already past 7 today). */
+function nextHour(h: number): number {
+  const d = new Date()
+  d.setHours(h, 0, 0, 0)
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1)
+  return d.getTime()
+}
+const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+/** Keep autopilot going while you sleep, and what it did while you were away. */
+function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState }) {
+  const on = !!ap.config.unattended
+  const [until, setUntil] = useState(7)
+  const [budget, setBudget] = useState(String(ap.config.unattendedBudgetUsd ?? 20))
+  const save = (patch: Partial<AutopilotState['config']>, ok?: string): void => {
+    void attempt(async () => {
+      setAutopilot(await window.hangar.autopilot.configure(project.id, patch))
+      if (ok) toast(ok)
+    })
+  }
+  const away = ap.away
+  return (
+    <section className={`card ${on ? 'card-accent' : ''}`}>
+      <h3>While you're away</h3>
+      {on ? (
+        <p className="small">
+          Running unattended until <strong>{ap.config.unattendedUntil ? clock(ap.config.unattendedUntil) : 'you turn it off'}</strong>, spending at most{' '}
+          <strong>{usd(ap.config.unattendedBudgetUsd ?? 20)}</strong>. Check-ins answer themselves (decisions go in Decisions.md), changes that can't merge
+          themselves wait in Reviews, and approvals nobody answers are declined after 10 minutes. The Mac stays awake.
+        </p>
+      ) : (
+        <p className="small muted">
+          Let autopilot keep going overnight: it won't stop for check-ins, reviews or approvals, and you get a summary in the morning. Keep Studio open if you
+          want the QA Tester to playtest.
+        </p>
+      )}
+      {!on && (
+        <div className="row gap-xs wrap">
+          <label className="field">
+            <span className="field-label">Stop at</span>
+            <select value={until} onChange={(e) => setUntil(Number(e.target.value))}>
+              {[5, 6, 7, 8, 9, 10].map((h) => (
+                <option key={h} value={h}>
+                  {clock(nextHour(h))}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">Spend at most (USD)</span>
+            <input value={budget} inputMode="decimal" onChange={(e) => setBudget(e.target.value)} />
+          </label>
+        </div>
+      )}
+      <div className="row gap-xs">
+        {on ? (
+          <Button onClick={() => save({ unattended: false }, 'Unattended mode off.')}>Turn off</Button>
+        ) : (
+          <Button
+            tone="primary"
+            onClick={() =>
+              save(
+                { unattended: true, unattendedUntil: nextHour(until), unattendedBudgetUsd: parseFloat(budget) || 20 },
+                `Running unattended until ${clock(nextHour(until))}. Sleep well.`
+              )
+            }
+          >
+            Keep going while I'm away
+          </Button>
+        )}
+      </div>
+      {away && (
+        <div className="decisions">
+          <span className="side-label">
+            {away.endedAt ? `While you were away (${clock(away.since)} – ${clock(away.endedAt)})` : `Since ${clock(away.since)}`}
+          </span>
+          <p className="small">
+            {away.tasks} task{away.tasks === 1 ? '' : 's'} done · {away.merged} merged · {away.leftForYou} waiting for you in Reviews · {away.sprints} sprint
+            {away.sprints === 1 ? '' : 's'} started on the Lead's plan · {away.declined} approval{away.declined === 1 ? '' : 's'} declined
+            {away.endReason ? ` · ended because ${away.endReason}` : ''}
+          </p>
+          {away.sprints > 0 && <p className="small muted">The Lead's decisions are in the Design tab, under Decisions.</p>}
+        </div>
+      )}
+    </section>
   )
 }
 

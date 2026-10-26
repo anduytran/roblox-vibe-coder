@@ -279,3 +279,57 @@ test("autopilot: the Lead hands building to the Scripter/UI Builder and ends eac
   const alone = make(false)
   assert.doesNotMatch(alone, /qa-tester|scripter/)
 })
+
+test('unattended: check-ins answer themselves, unmergeable work waits for the morning, and the run ends on time', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { Autopilot, AWAY_FEEDBACK } = await import('../src/main/autopilot')
+  const { ProjectRegistry } = await import('../src/main/projects')
+  const { ReviewStore } = await import('../src/main/reviews')
+  const { CostTracker } = await import('../src/main/costs')
+  const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
+  const registry = new ProjectRegistry(join(tmp('hangar-away-'), 'p.json'))
+  const project = registry.add(tmp('hangar-away-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-away-r-'), 'r.json'))
+  const sent: string[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-away-a-'), 'a.json'),
+    registry,
+    reviews,
+    costs: new CostTracker(join(tmp('hangar-away-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt) => {
+      sent.push(prompt)
+    },
+    merge: async () => {
+      throw new Error('no')
+    }
+  })
+  ap.start(project.id, { config: { sprintTasks: 1 } as never })
+  ap.configure(project.id, { unattended: true, unattendedUntil: Date.now() + 3600_000, unattendedBudgetUsd: 20 })
+  assert.equal(ap.isAway(project.id), true)
+  const done = (prompt: string, extra: { reviewId?: string | null; text?: string; origin?: 'autopilot' | 'autopilot-report' } = {}): void =>
+    ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: extra.reviewId ?? null })
+  // Task 1 ends in a review that can't merge itself (no checks, no reviewer): it waits in Reviews, work goes on.
+  const r = reviews.add({ projectId: project.id, agentId: 'lead', title: 'Storms', branch: 'hangar/lead-storms-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Storms', files: ['s.luau'], incomplete: null, note: null })
+  done(sent[0]!, { reviewId: r.id })
+  ap.onReview(reviews.get(r.id))
+  assert.match(sent[sent.length - 1]!, /sprint 1 is over/, 'not stuck waiting for you')
+  assert.equal(ap.get(project.id).away!.leftForYou, 1)
+  // The check-in answers itself and sprint 2 starts on the Lead's plan.
+  done(sent[sent.length - 1]!, { origin: 'autopilot-report', text: '## Built\n- Storms\n## Next sprint\n- Shop\n## Questions\n- Daily reward?' })
+  assert.equal(ap.get(project.id).sprint, 2)
+  assert.equal(ap.get(project.id).status, 'running')
+  assert.ok(sent[sent.length - 1]!.includes(AWAY_FEEDBACK.slice(0, 40)), 'the Lead is told to decide and record')
+  assert.equal(ap.get(project.id).away!.sprints, 1)
+  // Time's up: the next step stops, and the summary says why.
+  ap.configure(project.id, { unattendedUntil: Date.now() - 1 })
+  done(sent[sent.length - 1]!)
+  const st = ap.get(project.id)
+  assert.equal(st.status, 'paused')
+  assert.match(st.reason ?? '', /unattended run finished: the time you set is up/)
+  assert.ok(st.away!.endedAt)
+  assert.equal(st.config.unattended, false)
+})

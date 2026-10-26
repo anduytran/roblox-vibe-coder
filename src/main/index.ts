@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { normalizeModel } from '@shared/models'
-import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
@@ -21,6 +21,7 @@ import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
 import { ApprovalExplainer, checkerMayApprove } from './approvalExplainer'
+import { UNATTENDED_APPROVAL_WAIT_MS } from './autopilot'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
 import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
@@ -271,6 +272,17 @@ app.whenReady().then(() => {
       n.show()
     }
   })
+  // While any game runs unattended, the Mac doesn't go to sleep (the screen may).
+  let awakeId: number | null = null
+  const keepAwake = (): void => {
+    const needed = !!autopilot?.list().some((a) => a.config.unattended && (a.status === 'running' || a.status === 'waiting' || a.status === 'paused'))
+    if (needed && awakeId === null) awakeId = powerSaveBlocker.start('prevent-app-suspension')
+    else if (!needed && awakeId !== null) {
+      powerSaveBlocker.stop(awakeId)
+      awakeId = null
+    }
+  }
+
   // The safety checker (a project setting): may this request be looked at, and if it's plainly safe, approve it.
   const safetyCheckerFor = (r: ApprovalRequest): boolean => {
     try {
@@ -290,17 +302,32 @@ app.whenReady().then(() => {
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
     // With the safety checker on, an approval it clears never pings your phone or desktop; one it doesn't, does.
-    if (event.type === 'approval' && safetyCheckerFor(event.request)) {
-      void safetyCheck(event.request).then((cleared) => {
-        if (!cleared) {
-          notifier.onEvent(event)
-          remote?.onEvent(event)
+    if (event.type === 'approval' && (safetyCheckerFor(event.request) || autopilot?.isAway(event.request.projectId))) {
+      const r = event.request
+      void (safetyCheckerFor(r) ? safetyCheck(r) : Promise.resolve(false)).then((cleared) => {
+        if (cleared) return
+        notifier.onEvent(event)
+        remote?.onEvent(event)
+        // Unattended: nobody is there to answer, so after a while it's declined and the agent finds another way.
+        if (autopilot?.isAway(r.projectId)) {
+          const t = setTimeout(() => {
+            if (!runner.pendingApprovals().some((x) => x.id === r.id) || !autopilot?.isAway(r.projectId)) return
+            runner.respond(
+              r.id,
+              'deny',
+              'unattended mode (nobody answered)',
+              "The product owner is away and couldn't approve this. Do the task another way that doesn't need it, or leave this part out and say in your final message what still needs their approval."
+            )
+            autopilot?.noteDeclined(r.projectId)
+          }, UNATTENDED_APPROVAL_WAIT_MS)
+          t.unref?.()
         }
       })
       return
     }
     notifier.onEvent(event)
     remote?.onEvent(event)
+    if (event.type === 'autopilot') keepAwake()
     if (event.type === 'review') {
       autopilot?.onReview(event.review)
       // Studio was showing this change and it's merged or discarded: back to the game as it is now.

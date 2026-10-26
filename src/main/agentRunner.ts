@@ -385,7 +385,7 @@ export class AgentRunner {
     this.deps.emit({ type: 'reset', projectId, agentId })
   }
 
-  respond(id: string, decision: ApprovalDecision, by?: string): void {
+  respond(id: string, decision: ApprovalDecision, by?: string, denyMessage?: string): void {
     const p = this.pending.get(id)
     if (!p) return
     this.pending.delete(id)
@@ -402,7 +402,7 @@ export class AgentRunner {
       }
     }
     const allowed = decision === 'allow' || decision === 'always'
-    p.resolve(allowed ? { behavior: 'allow', updatedInput: p.input } : { behavior: 'deny', message: 'The user declined this action.' })
+    p.resolve(allowed ? { behavior: 'allow', updatedInput: p.input } : { behavior: 'deny', message: denyMessage ?? 'The user declined this action.' })
     this.deps.emit({ type: 'approval_resolved', id })
     const s = this.state(request.projectId, request.agentId)
     if (s.status === 'awaiting_approval' && ![...this.pending.values()].some((x) => x.request.agentId === s.agentId && x.request.projectId === s.projectId)) {

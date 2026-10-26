@@ -1,4 +1,4 @@
-import type { AgentEvent, AutopilotConfig, AutopilotState, QueuedTask, Review, SprintReport } from '@shared/types'
+import type { AgentEvent, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
@@ -71,8 +71,21 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   // 0 = the Lead decides; otherwise 1–20 tasks.
   sprintTasks: Number(c.sprintTasks) === 0 ? 0 : Math.round(Math.min(20, Math.max(1, Number.isFinite(c.sprintTasks) ? Number(c.sprintTasks) : base.sprintTasks))),
   sprintBudgetUsd: Math.min(500, Math.max(0.5, Number.isFinite(c.sprintBudgetUsd) ? Number(c.sprintBudgetUsd) : base.sprintBudgetUsd)),
-  autoMerge: typeof c.autoMerge === 'boolean' ? c.autoMerge : base.autoMerge
+  autoMerge: typeof c.autoMerge === 'boolean' ? c.autoMerge : base.autoMerge,
+  unattended: typeof c.unattended === 'boolean' ? c.unattended : (base.unattended ?? false),
+  unattendedUntil:
+    c.unattendedUntil === null ? null : Number.isFinite(c.unattendedUntil) ? Math.min(Number(c.unattendedUntil), Date.now() + 48 * 3600_000) : (base.unattendedUntil ?? null),
+  unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20)))
 })
+
+/** How long an approval waits for you during an unattended run before it's declined. */
+export const UNATTENDED_APPROVAL_WAIT_MS = 10 * 60_000
+/** How often a run paused by a plan or spending limit tries again while unattended. */
+const UNATTENDED_RETRY_MS = 30 * 60_000
+
+/** The note the Lead gets when a check-in answers itself. */
+export const AWAY_FEEDBACK =
+  "The product owner is away and left autopilot running unattended. Go ahead with the plan you proposed in your check-in. Decide any open questions yourself from the design docs, choosing the option that's easiest to change later, and record each decision with its reason in design-vault/Decisions.md (under \"Decided while you were away\") so the owner can review them in the morning."
 
 export class Autopilot {
   private store: JsonStore<{ states: Record<string, AutopilotState> }>
@@ -166,11 +179,83 @@ export class Autopilot {
     }
   }
 
+  /** Why an unattended run should stop now (time up, budget used), or null while it goes on. */
+  private awayOver(st: AutopilotState): string | null {
+    if (!st.config.unattended || !st.away) return null
+    if (st.config.unattendedUntil && Date.now() >= st.config.unattendedUntil) return 'the time you set is up'
+    if (this.spent(st.projectId) - st.away.spentAtStart >= (st.config.unattendedBudgetUsd ?? 20)) return 'its budget is used up'
+    return null
+  }
+
+  /** True while an unattended run is on and not over. */
+  isAway(projectId: string): boolean {
+    const st = this.get(projectId)
+    return !!st.config.unattended && !!st.away && !st.away.endedAt && this.awayOver(st) === null
+  }
+
+  private bumpAway(projectId: string, key: 'tasks' | 'merged' | 'leftForYou' | 'sprints' | 'declined'): void {
+    const st = this.get(projectId)
+    if (!st.away || st.away.endedAt) return
+    this.put({ ...st, away: { ...st.away, [key]: st.away[key] + 1 } })
+  }
+
+  /** An approval was declined because nobody answered during an unattended run. */
+  noteDeclined(projectId: string): void {
+    this.bumpAway(projectId, 'declined')
+  }
+
+  private endAway(projectId: string, why: string): AutopilotState {
+    const st = this.get(projectId)
+    const away = st.away ? { ...st.away, endedAt: Date.now(), endReason: why } : null
+    return this.put({ ...st, away, config: { ...st.config, unattended: false } })
+  }
+
+  private retryTimers = new Map<string, NodeJS.Timeout>()
+
+  /** Unattended and stopped by a plan or spending limit: try again in a while (until the run ends). */
+  private retryLater(projectId: string): void {
+    clearTimeout(this.retryTimers.get(projectId))
+    const t = setTimeout(() => {
+      this.retryTimers.delete(projectId)
+      const st = this.get(projectId)
+      if (st.status !== 'paused' || !this.isAway(projectId)) return
+      try {
+        this.resume(projectId)
+      } catch {
+        // not resumable any more
+      }
+    }, UNATTENDED_RETRY_MS)
+    t.unref?.()
+    this.retryTimers.set(projectId, t)
+  }
+
   // ---------- controls ----------
 
   configure(projectId: string, config: Partial<AutopilotConfig>): AutopilotState {
+    const before = this.get(projectId)
+    // Turning unattended on starts a fresh summary for the morning.
+    if (config.unattended === true && !before.config.unattended) {
+      this.put({ ...before, away: { since: Date.now(), spentAtStart: this.spent(projectId), tasks: 0, merged: 0, leftForYou: 0, sprints: 0, declined: 0, endedAt: null, endReason: null } })
+    }
+    if (config.unattended === false && before.away && !before.away.endedAt) this.put({ ...this.get(projectId), away: { ...before.away, endedAt: Date.now(), endReason: 'you turned it off' } })
     const st = this.get(projectId)
-    return this.put({ ...st, config: clampConfig(config, st.config) })
+    const next = this.put({ ...st, config: clampConfig(config, st.config) })
+    // Turned on while autopilot was waiting for you: carry on now (that's the point of going to bed).
+    if (config.unattended === true && !before.config.unattended && this.isAway(projectId)) {
+      if (next.status === 'checkin') {
+        this.bumpAway(projectId, 'sprints')
+        return this.start(projectId, { feedback: AWAY_FEEDBACK })
+      }
+      if (next.status === 'waiting' && next.awaitingReviewId) this.evaluate(next.awaitingReviewId)
+      else if (next.status === 'paused') {
+        try {
+          return this.resume(projectId)
+        } catch {
+          // stays paused
+        }
+      }
+    }
+    return this.get(projectId)
   }
 
   /** Start sprint 1 (or the next sprint) with optional extra direction for the Lead. */
@@ -223,6 +308,8 @@ export class Autopilot {
   }
 
   stop(projectId: string): AutopilotState {
+    clearTimeout(this.retryTimers.get(projectId))
+    if (this.get(projectId).away && !this.get(projectId).away!.endedAt) this.endAway(projectId, 'autopilot was stopped')
     const st = this.get(projectId)
     return this.put({ ...st, status: 'off', reason: null, awaitingReviewId: null })
   }
@@ -308,6 +395,13 @@ Reply with only these sections, short and concrete:
   /** After a task's outcome: next task, or the check-in when the sprint is used up. */
   private nextStep(st: AutopilotState): void {
     if (st.status !== 'running') return
+    // An unattended run that's over (time or budget) stops here; the morning summary says why.
+    const over = st.config.unattended && st.away && !st.away.endedAt ? this.awayOver(st) : null
+    if (over) {
+      this.endAway(st.projectId, over)
+      this.pause(st.projectId, `The unattended run finished: ${over}. See what happened on the Overview.`)
+      return
+    }
     const spent = this.spent(st.projectId) - st.spentAtSprintStart
     const enough = st.config.sprintTasks === 0 ? st.sprintDoneSaid === true || st.tasksDone >= LEAD_SPRINT_MAX : st.tasksDone >= st.config.sprintTasks
     if (enough || spent >= st.config.sprintBudgetUsd) this.queueReport(st)
@@ -316,7 +410,9 @@ Reply with only these sections, short and concrete:
 
   private record(projectId: string, title: string, outcome: SprintReport['tasks'][number]['outcome']): AutopilotState {
     const st = this.get(projectId)
-    return this.put({ ...st, tasksDone: st.tasksDone + 1, sprintTasks: [...st.sprintTasks, { title, outcome }].slice(-50) })
+    const next = this.put({ ...st, tasksDone: st.tasksDone + 1, sprintTasks: [...st.sprintTasks, { title, outcome }].slice(-50) })
+    if (outcome !== 'failed') this.bumpAway(projectId, 'tasks')
+    return this.get(projectId) ?? next
   }
 
   /** Called by the runner when any task ends. */
@@ -343,6 +439,11 @@ Reply with only these sections, short and concrete:
       }
       const report: SprintReport = { sprint: st.sprint, at: Date.now(), text: o.text.slice(0, 20_000), tasks: st.sprintTasks, spentUsd: Math.round((this.spent(o.projectId) - st.spentAtSprintStart) * 100) / 100 }
       this.put({ ...st, status: 'checkin', reason: null, reports: [...st.reports, report].slice(-30) })
+      // Unattended: the check-in answers itself and the next sprint starts on the Lead's own plan.
+      if (this.isAway(o.projectId)) {
+        this.bumpAway(o.projectId, 'sprints')
+        this.start(o.projectId, { feedback: AWAY_FEEDBACK })
+      }
       return
     }
 
@@ -360,6 +461,7 @@ Reply with only these sections, short and concrete:
       // A spending or plan limit: retrying can't help until it resets, so pause at once and say why.
       this.record(o.projectId, title, 'failed')
       this.pause(o.projectId, `${o.error} Resume once there's room again.`)
+      if (this.isAway(o.projectId)) this.retryLater(o.projectId)
       return
     }
     if (!o.ok) {
@@ -401,6 +503,7 @@ Reply with only these sections, short and concrete:
     if (review.status !== 'pending') {
       const outcome = review.status === 'merged' ? 'merged' : 'discarded'
       const after = this.record(review.projectId, review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title, outcome)
+      if (outcome === 'merged') this.bumpAway(review.projectId, 'merged')
       const next = this.put({ ...after, awaitingReviewId: null, status: after.status === 'waiting' ? 'running' : after.status, reason: after.status === 'waiting' ? null : after.reason })
       this.nextStep(next)
       return
@@ -414,13 +517,28 @@ Reply with only these sections, short and concrete:
       this.merging.add(reviewId)
       void this.deps
         .merge(reviewId)
-        .catch((err: Error) => this.put({ ...this.get(review.projectId), status: 'waiting', reason: `Couldn't merge “${this.reviewTitle(review)}” automatically: ${err.message}` }))
+        .catch((err: Error) => {
+          if (this.isAway(review.projectId)) return this.leaveForMorning(review)
+          this.put({ ...this.get(review.projectId), status: 'waiting', reason: `Couldn't merge “${this.reviewTitle(review)}” automatically: ${err.message}` })
+        })
         .finally(() => this.merging.delete(reviewId))
       return
     }
+    // Unattended: it waits in Reviews for the morning, and work goes on.
+    if (this.isAway(review.projectId)) return this.leaveForMorning(review)
     if (st.status !== 'waiting') {
       this.put({ ...st, status: 'waiting', reason: `“${this.reviewTitle(review)}” needs your review. ${st.config.autoMerge ? (blocker ?? '') : 'Auto-merge is off.'}`.trim() })
     }
+  }
+
+  /** A change that can't merge itself during an unattended run stays in Reviews; autopilot carries on without it. */
+  private leaveForMorning(review: Review): void {
+    const st = this.get(review.projectId)
+    if (st.awaitingReviewId !== review.id) return
+    const after = this.record(review.projectId, this.reviewTitle(review), 'waiting')
+    this.bumpAway(review.projectId, 'leftForYou')
+    const next = this.put({ ...this.get(review.projectId), awaitingReviewId: null, status: after.status === 'waiting' ? 'running' : after.status, reason: null })
+    this.nextStep(next)
   }
 
   private reviewTitle(review: Review): string {
