@@ -192,6 +192,8 @@ test('C3/H2: agents get no settings files, CLAUDE.md from Hangar, roles as subag
   assert.deepEqual(o.settingSources, [])
   assert.match(String((o.systemPrompt as { append: string }).append), /Use strict Luau\.[\s\S]*Your role: Scripter/)
   assert.deepEqual(Object.keys(o.agents as object).sort(), ['lead', 'qa-tester', 'studio-modeler', 'ui-builder'], 'researcher and Blender modeler are never subagents')
+  // A role with no model of its own runs on the project's model when another agent hands it work.
+  assert.equal((o.agents as Record<string, { model?: string }>)['qa-tester']!.model, o.model)
   const env = o.env as Record<string, string>
   assert.equal(env.HANGAR_TEST_SECRET, undefined)
   assert.equal(env.GIT_CONFIG_KEY_0, 'core.fsmonitor')

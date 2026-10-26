@@ -1,3 +1,5 @@
+import { ModelSelect } from './ModelSelect'
+import { DEFAULT_MODEL } from '@shared/models'
 import { useState } from 'react'
 import { attempt, setCosts, setKey, setSettings, toast, useStore, type SettingsTab } from '../store'
 import { PhoneRemoteSection } from './PhoneRemoteSection'
@@ -15,13 +17,12 @@ const SETTINGS_TABS: [SettingsTab, string, string][] = [
   ['privacy', 'Privacy & security', 'shield']
 ]
 
-const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 
 export function SettingsModal({ onClose, initialTab = 'general' }: { onClose: () => void; initialTab?: SettingsTab }) {
   const settings = useStore((s) => s.settings)
   const key = useStore((s) => s.key)
   const [keyDraft, setKeyDraft] = useState('')
-  const [model, setModel] = useState(settings?.defaultModel ?? MODELS[0]!)
+  const [model, setModel] = useState(settings?.defaultModel ?? DEFAULT_MODEL)
   const [concurrency, setConcurrency] = useState(String(settings?.maxConcurrentRuns ?? 3))
   const [perRun, setPerRun] = useState(String(settings?.perRunBudgetUsd ?? 2))
   const [daily, setDaily] = useState(settings?.globalDailyBudgetUsd?.toString() ?? '')
@@ -292,13 +293,7 @@ export function SettingsModal({ onClose, initialTab = 'general' }: { onClose: ()
               <h3>Agents</h3>
               <div className="grid-2">
                 <Field label="Default model">
-                  <select value={model} onChange={(e) => setModel(e.target.value)}>
-                    {[...new Set([model, ...MODELS])].map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                  <ModelSelect value={model} onChange={setModel} />
                 </Field>
                 <Field label="Agents running at once" hint="Others wait in their queues.">
                   <input inputMode="numeric" value={concurrency} onChange={(e) => setConcurrency(e.target.value)} />

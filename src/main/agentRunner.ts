@@ -590,7 +590,8 @@ export class AgentRunner {
           allRoles
             // Roles with their own connected tools (Blender) only get them in their own runs, never as a subagent.
             .filter((r) => r.id !== role?.id && r.mode !== 'research' && !r.mcp?.length)
-            .map((r) => [r.id, { description: r.description || r.name, prompt: r.prompt, ...(r.tools?.length ? { tools: r.tools } : {}), ...(r.model ? { model: r.model } : {}) }])
+            // A role with no model of its own uses the project's (not the model of whichever agent hands it work).
+            .map((r) => [r.id, { description: r.description || r.name, prompt: r.prompt, ...(r.tools?.length ? { tools: r.tools } : {}), model: r.model ?? project.settings.model ?? settings.defaultModel }])
         ),
         mcpServers: research ? {} : mcpServersFor(project, settings, review.servers, { blender: !!role?.mcp?.includes('blender') }),
         maxBudgetUsd: settings.perRunBudgetUsd,
@@ -658,7 +659,7 @@ export class AgentRunner {
         }
         if (c.finished) {
           finished = true
-          if (!c.finished.ok) s.lastError = c.finished.error ?? 'Run failed'
+          if (!c.finished.ok) s.lastError = friendlyError(c.finished.error ?? 'Run failed')
         }
       }
       if (controller.signal.aborted) {
@@ -1023,6 +1024,9 @@ function friendlyError(message: string): string {
   if (/credit balance|billing/i.test(message)) return 'Your Anthropic account is out of credits.'
   if (/sandbox/i.test(message) && /(unavailable|bubblewrap|bwrap|socat|not supported|failed to start)/i.test(message)) {
     return `The sandbox could not start, so nothing ran: ${message}. On Linux install bubblewrap and socat; or turn off the sandbox for this project in its Project tab.`
+  }
+  if (/selected model|model.{0,40}(not exist|not found|not available|access)|not_found_error.{0,80}model/i.test(message)) {
+    return `${message.trim().replace(/\.?$/, '.')} Pick a model from the list: the game's Project tab (General → Model), or the role's settings in the Agents tab.`
   }
   if (/Cannot find module|ERR_MODULE_NOT_FOUND/i.test(message)) return 'The Claude Agent SDK is not installed. Run "npm install" in the Hangar folder.'
   if (/ENOENT/i.test(message) && /claude/i.test(message)) return `Could not start the Claude Code engine: ${message}`

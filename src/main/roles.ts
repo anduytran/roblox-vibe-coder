@@ -1,3 +1,4 @@
+import { normalizeModel } from '@shared/models'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Role } from '@shared/types'
@@ -44,7 +45,8 @@ export function parseRole(id: string, text: string): Role | null {
     prompt: m[2]!.trim()
   }
   if (meta.tools) role.tools = parseList(meta.tools)
-  if (meta.model && meta.model !== 'inherit') role.model = meta.model
+  const model = normalizeModel(meta.model)
+  if (model) role.model = model
   if (meta.vault && validVaultFolder(meta.vault)) role.vault = meta.vault
   if (meta['vault-kind'] === 'design' || meta['vault-kind'] === 'ui') role.vaultKind = meta['vault-kind']
   if (meta.mode === 'research') role.mode = 'research'

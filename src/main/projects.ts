@@ -1,3 +1,4 @@
+import { normalizeModel } from '@shared/models'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
@@ -28,7 +29,8 @@ export class ProjectRegistry {
   }
 
   list(): Project[] {
-    return this.store.get().projects.map((p) => ({ ...p, settings: { ...DEFAULT_PROJECT_SETTINGS, ...p.settings } }))
+    // A model typed by hand before the dropdown ("claude-opus-5.5") is read as the model it means.
+    return this.store.get().projects.map((p) => ({ ...p, settings: { ...DEFAULT_PROJECT_SETTINGS, ...p.settings, model: normalizeModel(p.settings?.model) } }))
   }
 
   get(id: string): Project {
@@ -93,7 +95,7 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     allowedBashPrefixes: strings(s.allowedBashPrefixes),
     alwaysAllowTools: strings(s.alwaysAllowTools),
     dailyBudgetUsd: budget,
-    model: typeof s.model === 'string' && s.model.trim() ? s.model.trim() : null,
+    model: normalizeModel(s.model),
     sandbox: s.sandbox !== false,
     autonomous: Boolean(s.autonomous),
     testPlace:

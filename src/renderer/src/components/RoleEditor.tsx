@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Project, Role } from '@shared/types'
 import { confirmDialog, attempt, setRoles, toast } from '../store'
 import { Button, Field, Modal } from './ui'
+import { ModelSelect } from './ModelSelect'
 
 export function RoleEditor(props: { project: Project; role: Role; onClose: () => void; onSaved: (id: string) => void }) {
   const { project } = props
@@ -76,8 +77,8 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Level Designer" maxLength={60} />
         </Field>
-        <Field label="Model (optional)" hint="Leave empty to use the project or app default.">
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-sonnet-5-5" />
+        <Field label="Model">
+          <ModelSelect value={model} onChange={setModel} inheritLabel="Same as the project" />
         </Field>
       </div>
       <Field label="Description" hint="One line: what this agent is for. The Lead agent uses it to decide when to delegate.">

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { normalizeModel } from '@shared/models'
 import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, QueuedTask, Role } from '@shared/types'
@@ -173,7 +174,7 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   const num = (v: unknown, min: number, max: number, fallback: number): number =>
     typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
   const next = { ...current }
-  if (typeof patch.defaultModel === 'string' && patch.defaultModel.trim()) next.defaultModel = patch.defaultModel.trim()
+  if (typeof patch.defaultModel === 'string' && normalizeModel(patch.defaultModel)) next.defaultModel = normalizeModel(patch.defaultModel)!
   if (patch.maxConcurrentRuns !== undefined) next.maxConcurrentRuns = Math.round(num(patch.maxConcurrentRuns, 1, 6, current.maxConcurrentRuns))
   if (patch.perRunBudgetUsd !== undefined) next.perRunBudgetUsd = num(patch.perRunBudgetUsd, 0.05, 25, current.perRunBudgetUsd)
   if (patch.globalDailyBudgetUsd !== undefined) {
@@ -500,7 +501,7 @@ app.whenReady().then(() => {
       description: str(role.description ?? '', 'description').slice(0, 500),
       prompt: str(role.prompt, 'instructions'),
       ...(Array.isArray(role.tools) && role.tools.length ? { tools: role.tools.filter((t) => typeof t === 'string') } : {}),
-      ...(typeof role.model === 'string' && role.model.trim() ? { model: role.model.trim() } : {}),
+      ...(normalizeModel(role.model) ? { model: normalizeModel(role.model)! } : {}),
       ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {}),
       ...(role.vaultKind === 'design' ? { vaultKind: 'design' as const } : {}),
       ...(role.mode === 'research' ? { mode: 'research' as const } : {})

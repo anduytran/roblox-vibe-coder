@@ -4,6 +4,8 @@ import { attempt, confirmDialog, EMPTY_ROLES, removeProject, replaceProject, toa
 import { revealHidden } from '@shared/text'
 import { Button, Field, Icon, Toggle, usd } from './ui'
 import { SpendBars } from './SpendBars'
+import { ModelSelect } from './ModelSelect'
+import { DEFAULT_MODEL, modelLabel } from '@shared/models'
 import { VaultsCard } from './VaultsCard'
 import { ChecksCard } from './ChecksCard'
 import { GitHubCard } from './GitHubCard'
@@ -24,6 +26,7 @@ const CATEGORIES: [Category, string, string][] = [
 
 export function ProjectSettingsView({ project }: { project: Project }) {
   const totals = useStore((s) => s.costs)
+  const appModel = useStore((s) => s.settings?.defaultModel ?? DEFAULT_MODEL)
   const roles = useStore((s) => s.roles[project.id] ?? EMPTY_ROLES)
   const agentName = (id: string): string =>
     id === 'main' ? 'Main' : id === 'hangar:explain' ? 'Explain (approvals)' : revealHidden(roles.find((r) => r.id === id)?.name ?? id)
@@ -99,12 +102,14 @@ export function ProjectSettingsView({ project }: { project: Project }) {
                 <Field label="Display name">
                   <input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name !== project.name && update({ name }, 'Renamed.')} />
                 </Field>
-                <Field label="Model override" hint="Empty = app default. Roles can set their own model.">
-                  <input
+                <Field label="Model" hint="For this game's agents. Roles can pick their own.">
+                  <ModelSelect
                     value={model}
-                    placeholder="claude-sonnet-5-5"
-                    onChange={(e) => setModel(e.target.value)}
-                    onBlur={() => model !== (s.model ?? '') && update({ settings: { model: model.trim() || null } }, 'Model saved.')}
+                    inheritLabel={`App default (${modelLabel(appModel)})`}
+                    onChange={(m) => {
+                      setModel(m)
+                      update({ settings: { model: m || null } }, 'Model saved.')
+                    }}
                   />
                 </Field>
               </div>

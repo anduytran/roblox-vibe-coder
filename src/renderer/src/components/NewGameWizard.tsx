@@ -1,10 +1,11 @@
+import { ModelSelect } from './ModelSelect'
+import { DEFAULT_MODEL } from '@shared/models'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NewGameInput } from '@shared/types'
 import { checksFor, suggestGameName } from '@shared/newGame'
 import { addCreatedProject, attempt, closeWizard, setAutopilot, toast, useStore } from '../store'
 import { Button, Field, Icon, Modal, Toggle } from './ui'
 
-const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 const PLATFORMS: { id: NewGameInput['platforms'][number]; label: string }[] = [
   { id: 'phone', label: 'Phone & tablet' },
   { id: 'pc', label: 'PC' },
@@ -37,7 +38,7 @@ export function NewGameWizard() {
   const [platforms, setPlatforms] = useState<NewGameInput['platforms']>(['phone', 'pc'])
   const [notes, setNotes] = useState('')
   const [parentDir, setParentDir] = useState('')
-  const [model, setModel] = useState(settings?.defaultModel ?? MODELS[0]!)
+  const [model, setModel] = useState(settings?.defaultModel ?? DEFAULT_MODEL)
   const [daily, setDaily] = useState('15')
   const [studio, setStudio] = useState(true)
   const [sprintTasks, setSprintTasks] = useState(5)
@@ -225,11 +226,7 @@ export function NewGameWizard() {
           )}
           <div className="grid-2">
             <Field label="Model">
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {MODELS.map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </select>
+              <ModelSelect value={model} onChange={setModel} />
             </Field>
             <Field label="Daily spending limit for this game (USD)" hint="Empty = only the app-wide limit.">
               <input value={daily} onChange={(e) => setDaily(e.target.value)} inputMode="decimal" />
