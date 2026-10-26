@@ -330,3 +330,35 @@ test('explain: spending limits and a missing key stop it before any run', async 
   assert.equal(g.verdict, null, 'no flags and no AI verdict: nothing is claimed')
   assert.match(g.error ?? '', /expected format/)
 })
+
+test('explain: an action set aside while you were away is explained, and the explanation stays with it', async () => {
+  const { Autopilot } = await import('../src/main/autopilot')
+  const { ProjectRegistry } = await import('../src/main/projects')
+  const { ReviewStore } = await import('../src/main/reviews')
+  const h = harness({ pending: [] })
+  const registry = new ProjectRegistry(join(tmp('hangar-ex-ap-'), 'p.json'))
+  const project = registry.add(tmp('hangar-ex-ap-proj-'))
+  const ap = new Autopilot({
+    file: join(tmp('hangar-ex-ap-a-'), 'a.json'),
+    registry,
+    reviews: new ReviewStore(join(tmp('hangar-ex-ap-r-'), 'r.json')),
+    costs: new CostTracker(join(tmp('hangar-ex-ap-c-'), 'c.json')),
+    emit: () => {},
+    send: () => {},
+    merge: async () => undefined
+  })
+  const req = bash(stormbreak(project.path), { projectId: project.id, id: 'aside-1' })
+  ap.setAside(req)
+  const again = ap.setAsideRequest(project.id, 'aside-1')!
+  assert.equal(again.inputJson, req.inputJson, 'the details are kept for the explanation')
+  // Not waiting any more, so explain() refuses; explainRequest() works on the kept details.
+  await assert.rejects(h.explainer.explain('aside-1'), /no longer waiting/)
+  const e = await h.explainer.explainRequest(again)
+  assert.equal(e.status, 'done')
+  ap.explainedSetAside(project.id, 'aside-1', e)
+  assert.equal(ap.get(project.id).setAside![0]!.explanation!.verdict, 'safe')
+  // An item from before details were kept is explained from its summary.
+  const st = ap.get(project.id)
+  ;(st.setAside![0] as { inputJson?: string }).inputJson = undefined
+  assert.match(ap.setAsideRequest(project.id, 'aside-1')!.inputJson, /"command"/)
+})

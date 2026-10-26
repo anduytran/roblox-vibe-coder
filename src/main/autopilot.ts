@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
+import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
@@ -212,8 +212,32 @@ export class Autopilot {
   setAside(request: ApprovalRequest): void {
     this.bumpAway(request.projectId, 'declined')
     const st = this.get(request.projectId)
-    const item = { id: request.id, agentId: request.agentId, toolName: request.toolName, summary: request.summary.slice(0, 4000), reason: request.reason.slice(0, 300), dangerous: request.dangerous, at: Date.now() }
+    const item = {
+      id: request.id,
+      agentId: request.agentId,
+      toolName: request.toolName,
+      summary: request.summary.slice(0, 4000),
+      reason: request.reason.slice(0, 300),
+      dangerous: request.dangerous,
+      at: Date.now(),
+      inputJson: request.inputJson.slice(0, 8000)
+    }
     this.put({ ...st, setAside: [...(st.setAside ?? []), item].slice(-50) })
+  }
+
+  /** The action as an approval request again, for the safety checker to explain. */
+  setAsideRequest(projectId: string, id: string): ApprovalRequest | null {
+    const item = (this.get(projectId).setAside ?? []).find((x) => x.id === id)
+    if (!item) return null
+    const inputJson = item.inputJson ?? JSON.stringify(item.toolName === 'Bash' ? { command: item.summary.replace(/^\$ /, '') } : { summary: item.summary })
+    return { id: item.id, projectId, agentId: item.agentId, toolName: item.toolName, summary: item.summary, inputJson, reason: item.reason, dangerous: item.dangerous, canAlwaysAllow: false, truncated: inputJson.length >= 8000, ts: item.at }
+  }
+
+  /** Attach the safety checker's explanation to a set-aside action. */
+  explainedSetAside(projectId: string, id: string, explanation: ApprovalExplanation): AutopilotState {
+    const st = this.get(projectId)
+    if (!(st.setAside ?? []).some((x) => x.id === id)) return st
+    return this.put({ ...st, setAside: (st.setAside ?? []).map((x) => (x.id === id ? { ...x, explanation } : x)) })
   }
 
   /** "Do it now" (sent back to the agent that wanted it) or "Dismiss" for a set-aside action. */

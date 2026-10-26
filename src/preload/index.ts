@@ -41,6 +41,7 @@ const api: HangarApi = {
     stop: (id) => invoke(IPC.autopilotStop, id),
     configure: (id, config) => invoke(IPC.autopilotConfigure, id, config),
     resolveSetAside: (id, item, doIt) => invoke(IPC.autopilotSetAside, id, item, doIt),
+    explainSetAside: (id, item) => invoke(IPC.autopilotExplainSetAside, id, item),
     feedback: (id, text) => invoke(IPC.autopilotFeedback, id, text)
   },
   trends: {

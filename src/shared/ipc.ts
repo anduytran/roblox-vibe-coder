@@ -114,6 +114,7 @@ export const IPC = {
   autopilotResume: 'autopilot:resume',
   autopilotStop: 'autopilot:stop',
   autopilotConfigure: 'autopilot:configure',
+  autopilotExplainSetAside: 'autopilot:explainSetAside',
   autopilotSetAside: 'autopilot:setAside',
   autopilotFeedback: 'autopilot:feedback',
   trendsGet: 'trends:get',
@@ -195,6 +196,8 @@ export interface HangarApi {
     configure(projectId: string, config: Partial<AutopilotConfig>): Promise<AutopilotState>
     /** An action set aside while you were away: do it now (sent back to its agent) or dismiss it. */
     resolveSetAside(projectId: string, id: string, doIt: boolean): Promise<AutopilotState>
+    /** Have the safety checker explain a set-aside action that has no explanation yet. */
+    explainSetAside(projectId: string, id: string): Promise<AutopilotState>
     feedback(projectId: string, text: string): Promise<AutopilotState>
   }
   trends: {

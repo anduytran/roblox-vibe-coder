@@ -4,7 +4,7 @@ import { normalizeModel } from '@shared/models'
 import { cleanAgentSettings } from '@shared/agentConfig'
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
+import type { AgentEvent, ApprovalExplanation, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
@@ -300,6 +300,21 @@ app.whenReady().then(() => {
     runner.respond(r.id, 'allow', "Hangar's safety checker")
     return true
   }
+  /** Explain a set-aside action (once), so the morning list says what each one does and whether it looks safe. */
+  const explainingAside = new Set<string>()
+  const explainSetAside = async (projectId: string, id: string, known: ApprovalExplanation | null = null): Promise<void> => {
+    const ap = autopilot
+    if (!ap || explainingAside.has(id)) return
+    const request = ap.setAsideRequest(projectId, id)
+    if (!request) return
+    explainingAside.add(id)
+    try {
+      const e = known ?? (await explainerRef?.explainRequest(request).catch(() => null)) ?? null
+      if (e) ap.explainedSetAside(projectId, id, e)
+    } finally {
+      explainingAside.delete(id)
+    }
+  }
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
     // With the safety checker on, an approval it clears never pings your phone or desktop; one it doesn't, does.
@@ -312,7 +327,9 @@ app.whenReady().then(() => {
         // Unattended: nobody is there to answer, so the action is set aside for the morning at once and the agent
         // carries on with everything else instead of waiting.
         if (autopilot?.isAway(r.projectId) && runner.pendingApprovals().some((x) => x.id === r.id)) {
+          const known = explainerRef?.cached(r.id) ?? null
           autopilot.setAside(r)
+          void explainSetAside(r.projectId, r.id, known)
           runner.respond(
             r.id,
             'deny',
@@ -856,6 +873,10 @@ app.whenReady().then(() => {
   handle(IPC.autopilotResume, (id: unknown) => autopilot!.resume(pid(id)))
   handle(IPC.autopilotStop, (id: unknown) => autopilot!.stop(pid(id)))
   handle(IPC.autopilotConfigure, (id: unknown, config: unknown) => autopilot!.configure(pid(id), config && typeof config === 'object' ? (config as never) : {}))
+  handle(IPC.autopilotExplainSetAside, async (id: unknown, item: unknown) => {
+    await explainSetAside(str(id, 'project'), str(item, 'action'))
+    return autopilot!.get(str(id, 'project'))
+  })
   handle(IPC.autopilotSetAside, (id: unknown, item: unknown, doIt: unknown) => autopilot!.resolveSetAside(pid(id), str(item, 'action'), doIt === true))
   handle(IPC.autopilotFeedback, (id: unknown, text: unknown) => autopilot!.addFeedback(pid(id), str(text, 'feedback').slice(0, 8000)))
 

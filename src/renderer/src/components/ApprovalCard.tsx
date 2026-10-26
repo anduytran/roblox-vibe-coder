@@ -87,7 +87,7 @@ export function ApprovalCard({ request, onDecided }: { request: ApprovalRequest;
   )
 }
 
-function Explanation({ e, retrying, onRetry }: { e: ApprovalExplanation; retrying: boolean; onRetry: () => void }) {
+export function Explanation({ e, retrying, onRetry }: { e: ApprovalExplanation; retrying: boolean; onRetry: () => void }) {
   const verdict = e.verdict ? VERDICT[e.verdict] : null
   const raised = e.aiVerdict !== null && e.verdict !== null && e.aiVerdict !== e.verdict
   const yesNo = (v: boolean | null): string => (v === null ? 'not sure' : v ? 'yes' : 'no')

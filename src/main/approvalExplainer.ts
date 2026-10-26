@@ -534,6 +534,16 @@ export class ApprovalExplainer {
 
   constructor(private readonly deps: ExplainerDeps) {}
 
+  /** A finished explanation for an approval, if one was written (the safety checker's, say). */
+  cached(approvalId: string): ApprovalExplanation | null {
+    return this.done.get(approvalId) ?? null
+  }
+
+  /** Explain an action that's no longer waiting (one set aside while you were away). Not cached. */
+  explainRequest(request: ApprovalRequest): Promise<ApprovalExplanation> {
+    return this.run(request)
+  }
+
   explain(approvalId: string): Promise<ApprovalExplanation> {
     const pending = this.deps.pendingApprovals()
     const waiting = new Set(pending.map((r) => r.id))

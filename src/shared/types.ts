@@ -482,6 +482,10 @@ export interface SetAsideAction {
   reason: string
   dangerous: boolean
   at: number
+  /** The action's details (for the explanation). Missing on items from before this was kept. */
+  inputJson?: string
+  /** The safety checker's explanation, written when it was set aside. */
+  explanation?: ApprovalExplanation | null
 }
 
 /** What happened while autopilot ran unattended (shown as the morning summary). */

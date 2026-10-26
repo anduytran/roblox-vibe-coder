@@ -1,4 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Explanation } from './ApprovalCard'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
 import { attempt, confirmDialog, openUncommitted, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
 import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
@@ -256,6 +257,9 @@ function TaskList({ tasks }: { tasks: SprintReport['tasks'] }) {
 
 const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
+/** Set-aside actions this window already asked the safety checker about (so a re-render doesn't ask again). */
+const askedToExplain = new Set<string>()
+
 /** Keep autopilot going while you sleep, and what it did while you were away. */
 function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState }) {
   const on = !!ap.config.unattended
@@ -269,6 +273,23 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
     })
   }
   const away = ap.away
+  // Every set-aside action gets the safety checker's explanation; older ones (from before this) are explained now.
+  const [explaining, setExplaining] = useState<Set<string>>(() => new Set())
+  const explainAside = (id: string, again = false): void => {
+    if (!again && askedToExplain.has(id)) return
+    askedToExplain.add(id)
+    setExplaining((s) => new Set(s).add(id))
+    void attempt(async () => setAutopilot(await window.hangar.autopilot.explainSetAside(project.id, id))).finally(() =>
+      setExplaining((s) => {
+        const n = new Set(s)
+        n.delete(id)
+        return n
+      })
+    )
+  }
+  useEffect(() => {
+    for (const a of ap.setAside ?? []) if (!a.explanation) explainAside(a.id)
+  }, [ap.setAside]) // eslint-disable-line react-hooks/exhaustive-deps
   const save2 = (id: string, doIt: boolean, ok: string): void => {
     void attempt(async () => {
       setAutopilot(await window.hangar.autopilot.resolveSetAside(project.id, id, doIt))
@@ -309,6 +330,11 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
                 {a.agentId} · {timeAgo(a.at)} · {a.reason}
               </span>
               <pre className="approval-summary">{revealHidden(a.summary)}</pre>
+              {a.explanation ? (
+                <Explanation e={a.explanation} retrying={explaining.has(a.id)} onRetry={() => explainAside(a.id, true)} />
+              ) : (
+                <span className="small muted">{explaining.has(a.id) ? 'The safety checker is reading it…' : 'Not explained yet.'}</span>
+              )}
               <div className="row gap-xs">
                 <Button size="sm" tone="primary" onClick={() => save2(a.id, true, 'Sent back to the agent. Allow it on the approval card when it asks.')}>
                   Do it now
