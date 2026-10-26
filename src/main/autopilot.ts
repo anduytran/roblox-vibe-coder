@@ -56,6 +56,12 @@ export interface AutopilotDeps {
   fixClash?: (reviewId: string) => unknown
 }
 
+/**
+ * Blocked items never stop the build: the Lead writes down what each one waits for and builds the next thing that
+ * isn't blocked. (Twenty sprints once stalled on "playtest first" and "needs the product owner".)
+ */
+export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
+
 /** Tries at resolving one change's clash on its own before it waits for you. */
 export const MAX_CLASH_FIXES = 2
 
@@ -421,12 +427,14 @@ export class Autopilot {
 3. Write design-vault/Roadmap.md as milestones. Milestone 1 is a small playable vertical slice of the core loop.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
 5. Then build the first, most foundational piece of milestone 1 and playtest it.${team ? `\n   ${team.build}\n   ${team.test}` : ''}
+${KEEP_BUILDING}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
 2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own.
 3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'}
 4. Update Roadmap.md (mark what's done) and Decisions.md.
+${KEEP_BUILDING}
 Finish with: what you built, how you tested it, and what's next.${ending}${feedback}${recent}`
     // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
     const cur = this.get(st.projectId)
@@ -439,6 +447,8 @@ Finish with: what you built, how you tested it, and what's next.${ending}${feedb
     const prompt = `Autopilot: sprint ${st.sprint} is over. Write the check-in for the product owner. Don't change any files.
 Tasks this sprint and what happened to them:
 ${tasks}
+
+For details, read design-vault/Roadmap.md, Decisions.md and Inbox.md, and the latest commits (git log -n 15 --stat).
 
 Reply with only these sections, short and concrete:
 ## Built

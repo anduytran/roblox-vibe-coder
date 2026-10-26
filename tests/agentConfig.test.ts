@@ -316,3 +316,57 @@ test('max plan: no per-task dollar cap is given to the engine', async () => {
   await until(() => api.calls.length === 1)
   assert.equal(api.calls[0]!.options.maxBudgetUsd, 3, 'with an API key the cap stays')
 })
+
+test('costs: a resumed conversation counts only what the run added; autopilot steps start fresh', async () => {
+  const dir = tmp('hangar-cost-')
+  const registry = new ProjectRegistry(join(tmp('hangar-cost-reg-'), 'projects.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { sandbox: false } })
+  const totals = [1.0, 1.5, 0.2, 1.8]
+  const seen: { resume: unknown; session: string }[] = []
+  let n = 0
+  const query: QueryFn = ({ options }) =>
+    (async function* () {
+      const i = n++
+      const session = options.resume ? String(options.resume) : `s${i}`
+      seen.push({ resume: options.resume, session })
+      yield { type: 'system', subtype: 'init', session_id: session, mcp_servers: [] }
+      yield { type: 'result', subtype: 'success', total_cost_usd: totals[i] }
+    })()
+  const costs = new CostTracker(join(tmp('hangar-cost-c-'), 'costs.json'))
+  const logs: string[] = []
+  const runner: AgentRunner = new AgentRunner({
+    registry,
+    costs,
+    getSettings: () => settings,
+    getApiKey: () => 'sk-ant-test',
+    engineAuth: async (k) => ({ env: { ANTHROPIC_API_KEY: k }, release: () => {} }),
+    loadQuery: async () => query,
+    emit: (e) => {
+      if (e.type === 'log' && e.entry.kind === 'result') logs.push(e.entry.text)
+      if (e.type === 'approval' && e.request.toolName === 'Project setup') queueMicrotask(() => runner.respond(e.request.id, 'allow'))
+    },
+    persistFile: join(tmp('hangar-cost-p-'), 'agents.json'),
+    trustFile: join(tmp('hangar-cost-t-'), 'trust.json'),
+    appDataDir: tmp('hangar-cost-app-'),
+    platform: 'linux',
+    reviews: new ReviewStore(join(tmp('hangar-cost-rv-'), 'reviews.json'))
+  })
+  const main = () => runner.snapshot(project.id).find((a) => a.agentId === 'main')!
+  const run = async (prompt: string, origin?: 'autopilot') => {
+    const before = n
+    runner.send(project.id, 'main', prompt, origin ? { origin } : {})
+    await until(() => n > before && main().status === 'idle')
+  }
+  await run('one')
+  await run('two') // resumes s0, whose total goes 1.0 → 1.5
+  assert.equal(seen[1]!.resume, 's0')
+  assert.ok(Math.abs(costs.summary().todayUsd - 1.5) < 1e-9, `counted ${costs.summary().todayUsd}`)
+  assert.match(logs[1]!, /\$0\.5000/, 'the feed shows what the run cost, not the running total')
+  await run('autopilot step', 'autopilot') // a fresh conversation: 0.2
+  assert.equal(seen[2]!.resume, undefined)
+  assert.equal(main().sessionId, 's0', 'your own conversation with the agent is left where it was')
+  await run('three') // back in s0: 1.5 → 1.8
+  assert.equal(seen[3]!.resume, 's0')
+  assert.ok(Math.abs(costs.summary().todayUsd - (1.5 + 0.2 + 0.3)) < 1e-9, `counted ${costs.summary().todayUsd}`)
+})

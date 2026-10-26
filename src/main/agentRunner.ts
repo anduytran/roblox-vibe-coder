@@ -71,7 +71,7 @@ export type CanUseTool = (
 export type QueryFn = (args: { prompt: string; options: Record<string, unknown> }) => AsyncIterable<unknown>
 
 interface Persisted {
-  agents: Record<string, { sessionId: string | null; log: LogEntry[] }>
+  agents: Record<string, { sessionId: string | null; log: LogEntry[]; sessionCostUsd?: number }>
 }
 
 /**
@@ -242,9 +242,16 @@ export class AgentRunner {
         activity: null
       }
       this.states.set(key, s)
+      if (saved?.sessionCostUsd) this.sessionCost.set(key, saved.sessionCostUsd)
     }
     return s
   }
+
+  /**
+   * The engine's running cost total for each agent's conversation. A resumed conversation reports its total so far,
+   * not what this run cost, so only the difference is counted.
+   */
+  private readonly sessionCost = new Map<string, number>()
 
   private publish(s: AgentState): void {
     this.deps.emit({ type: 'state', state: { ...s, queue: [...s.queue], log: [] } })
@@ -254,7 +261,7 @@ export class AgentRunner {
     const key = keyOf(s.projectId, s.agentId)
     this.persisted.update((p) => ({
       ...p,
-      agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG) } }
+      agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG), sessionCostUsd: s.sessionId ? (this.sessionCost.get(key) ?? 0) : 0 } }
     }))
   }
 
@@ -382,6 +389,7 @@ export class AgentRunner {
     const s = this.state(projectId, agentId)
     if (s.status === 'working' || s.status === 'awaiting_approval') throw new Error('Stop the agent first.')
     s.sessionId = null
+    this.sessionCost.delete(keyOf(projectId, agentId))
     s.log = []
     s.lastError = null
     s.status = s.queue.length ? 'queued' : 'idle'
@@ -729,13 +737,33 @@ export class AgentRunner {
       if (!research && own.tools?.length) options.disallowedTools = disallowedFor(own.tools)
       // A researcher never resumes or keeps a session, so web content can't carry over into another run
       // (or into a normal agent if the role's kind is changed later), and project context can't flow in.
-      if (s.sessionId && !research && !clash) options.resume = s.sessionId
+      // Autopilot steps and clash fixes each start a fresh conversation: the design vault and the agent's knowledge
+      // folder are its memory, so it doesn't re-read hours of earlier sprints every task. They also leave your own
+      // conversation with the agent where it was.
+      const fresh = !!clash || !!task.origin
+      let costSoFar = 0
+      if (s.sessionId && !research && !fresh) {
+        options.resume = s.sessionId
+        costSoFar = this.sessionCost.get(key) ?? 0
+      }
+      const resumed = options.resume as string | undefined
 
       started = true
       for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
         if (!research) this.trackHelpers(s, role?.name ?? 'Main', allRoles, helpers, raw as StreamMessage, c)
-        if (c.sessionId && !research && !clash) s.sessionId = c.sessionId
+        // Resuming didn't take (a new conversation started): its running total starts from nothing.
+        if (c.sessionId && resumed && c.sessionId !== resumed && costSoFar) costSoFar = 0
+        if (c.sessionId && !research && !fresh) s.sessionId = c.sessionId
+        // The engine reports the conversation's total so far: count only what this run added.
+        let runCost: number | undefined
+        if (c.costUsd !== undefined) {
+          runCost = c.costUsd >= costSoFar ? c.costUsd - costSoFar : c.costUsd
+          costSoFar = c.costUsd
+          if (!research && !fresh) this.sessionCost.set(key, c.costUsd)
+          const total = `$${c.costUsd.toFixed(4)}`
+          for (const e of c.entries) if (e.kind === 'result' || e.kind === 'error') e.text = e.text.replace(total, `$${runCost.toFixed(4)}`)
+        }
         if (c.text) lastText = c.text
         if (clip) {
           for (const t of c.toolUses ?? []) {
@@ -751,9 +779,9 @@ export class AgentRunner {
           s.activity = c.activity
           this.publish(s)
         }
-        if (c.costUsd !== undefined) {
-          s.costUsd += c.costUsd
-          this.deps.costs.record(project.id, s.agentId, c.costUsd)
+        if (runCost !== undefined) {
+          s.costUsd += runCost
+          this.deps.costs.record(project.id, s.agentId, runCost)
           this.deps.emit({ type: 'cost', summary: this.deps.costs.summary() })
         }
         if (c.finished) {
