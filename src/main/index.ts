@@ -387,7 +387,7 @@ app.whenReady().then(() => {
     reviews: reviews.list().filter((r) => r.status === 'pending').map((r) => r.id),
     autopilot: autopilot.list().map((a) => ({ projectId: a.projectId, status: a.status }))
   })
-  remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot })
+  remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot, trends, emit })
   void remote.start().catch(() => undefined)
 
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void => {

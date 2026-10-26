@@ -288,6 +288,11 @@ Reply with only these sections, short and concrete:
     const title = o.task.origin === 'autopilot-report' ? 'Check-in report' : (/^Autopilot[^\n]*/.exec(o.task.prompt) ? this.titleFrom(o) : o.task.prompt.slice(0, 80))
 
     if (o.task.origin === 'autopilot-report') {
+      // Pausing and resuming while the check-in was being written queues a second one: the first one stands, so
+      // answers given to it are never matched with another report's questions, and a late one for a sprint that's
+      // over (already answered) is dropped.
+      const forSprint = Number(/^Autopilot: sprint (\d+) is over/.exec(o.task.prompt)?.[1] ?? st.sprint)
+      if (st.status === 'checkin' || forSprint !== st.sprint || st.reports.some((r) => r.sprint === st.sprint)) return
       if (!o.ok || !o.text.trim()) {
         this.put({ ...st, status: 'paused', reason: o.stopped ? 'Stopped while writing the check-in.' : `The check-in report failed: ${o.error ?? 'no report'}. Resume to try again.` })
         return

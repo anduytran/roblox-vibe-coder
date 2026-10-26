@@ -31,7 +31,7 @@ Saturation is measured among charting games, so it reflects competition among su
 - Auto-merge needs: checks passed (if configured), the reviewer agent's approval, no warnings or notes, and no changes to files that control how code or tools run (those always wait for you).
 - Two failed tasks in a row, a stopped task, or closing Hangar pauses autopilot; Resume carries on. "Stop all agents" pauses every autopilot.
 - "Steer the Lead" notes are handed to the Lead at the start of its next task; check-in feedback starts the next sprint.
-- The phone app shows check-ins, starts the next sprint, pauses and takes notes.
+- The phone app answers check-ins the way the desktop does (reorder or trim the plan, one answer per question, notes), starts the next sprint, pauses and takes notes.
 
 ## What it does
 
@@ -84,7 +84,7 @@ Settings → Phone remote. Hangar listens on `127.0.0.1` only; one command makes
 tailscale serve --bg --https=443 127.0.0.1:47621
 ```
 
-Never use `tailscale funnel` for this (that would expose it to the internet). Open the shown `https://<computer>.<tailnet>.ts.net/` address on your phone, add it to your Home Screen, and pair it with the 6-digit code from "Pair a phone". From the phone you can see every project and agent, queue tasks (with "Record playtest"), approve or deny everyday actions, review/merge/discard finished tasks, publish them to your test place, and stop all agents. Turn on notifications in the phone app's Settings tab (on iPhone, open it from the Home Screen first). Settings, permission rules and high-risk approvals can only be changed on the computer.
+Never use `tailscale funnel` for this (that would expose it to the internet). Open the shown `https://<computer>.<tailnet>.ts.net/` address on your phone, add it to your Home Screen, and pair it with the 6-digit code from "Pair a phone". From the phone you can see every project and agent, use an Inbox ordered like the desktop's, answer sprint check-ins, read ideas and what's trending (and save or unsave ideas), queue tasks (with "Record playtest"), approve or deny everyday actions, review/merge/discard finished tasks, publish them to your test place, and stop all agents. Generating or refining ideas costs money, so it stays on the computer. Turn on notifications in the phone app's Settings tab (on iPhone, open it from the Home Screen first). Settings, permission rules and high-risk approvals can only be changed on the computer.
 
 ## Playtest clips
 

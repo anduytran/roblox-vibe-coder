@@ -15,6 +15,9 @@ import type { ReviewActions } from './reviewActions'
 import type { Autopilot } from './autopilot'
 import { listRoles } from './roles'
 import { DECEPTIVE_CHARS, shellWords } from './permissions'
+import { checkinReply, phoneCheckin, phoneIdeas } from './phoneData'
+import type { Trends } from './trending'
+import { revealHidden } from '@shared/text'
 
 /**
  * Phone remote. Hangar listens on 127.0.0.1 only; `tailscale serve` makes it reachable over HTTPS
@@ -23,7 +26,7 @@ import { DECEPTIVE_CHARS, shellWords } from './permissions'
  * - Pairing: a 6-digit code shown on the desktop for 5 minutes, 5 attempts max; the phone receives a
  *   random device token, of which only a hash is stored. Unpair any device from the desktop.
  * - The phone can: see status, queue tasks, approve/deny normal approvals, review/merge/discard/publish
- *   finished tasks, and stop all agents. It can never change settings, rules or permissions, never
+ *   finished tasks, answer sprint check-ins, read and save ideas, and stop all agents. It can never change settings, rules or permissions, never
  *   choose "always allow", and high-risk (red) approvals must be approved on the computer.
  * - Every API call needs the device token in an Authorization header (no cookies, so no CSRF);
  *   Host and Origin are checked; bodies are size-limited; responses carry a strict CSP.
@@ -104,6 +107,10 @@ export class RemoteServer {
       runner: AgentRunner
       reviews: ReviewActions
       costs: CostTracker
+      /** Ideas: read, save and unsave only (generating ideas costs money, so it stays on the computer). */
+      trends?: Pick<Trends, 'current' | 'saveIdea' | 'unsaveIdea'>
+      /** Tells the desktop window about changes made from the phone that have no event of their own. */
+      emit?: (e: AgentEvent) => void
     }
   ) {
     this.store = new JsonStore<RemoteData>(file, { enabled: false, port: DEFAULT_PORT, devices: [], vapid: null })
@@ -391,13 +398,49 @@ export class RemoteServer {
       }
     }
 
+    if (a === 'ideas' && this.deps.trends) {
+      const trends = this.deps.trends
+      if (method === 'GET' && !b) return this.json(res, 200, phoneIdeas(trends.current()))
+      if (method === 'POST' && b && (c === 'save' || c === 'unsave')) {
+        const id = b.slice(0, 200)
+        const snapshot = c === 'save' ? trends.saveIdea(id) : trends.unsaveIdea(id)
+        this.deps.emit?.({ type: 'trends', snapshot })
+        return this.json(res, 200, phoneIdeas(snapshot))
+      }
+    }
+
+    // A check-in answered on the phone: answers by position, the plan as edited, and notes. The server reads the
+    // questions from the report it holds and builds the same feedback the desktop would.
+    if (method === 'POST' && a === 'autopilot' && b && c === 'checkin' && this.deps.autopilot) {
+      const ap = this.deps.autopilot
+      this.deps.registry.get(b) // must be a real project
+      const body = await this.body(req)
+      const st = ap.get(b)
+      const report = st.reports[st.reports.length - 1]
+      // The reply names the exact report it answers (its sprint and when it was written), so answers can only go
+      // with the questions they were typed under.
+      const named = typeof body.sprint === 'number' && typeof body.at === 'number'
+      if (st.status !== 'checkin' || !report || !named || body.sprint !== report.sprint || body.at !== report.at) return this.json(res, 409, { error: 'This check-in was already answered or replaced. Look again.' })
+      let reply: ReturnType<typeof checkinReply>
+      try {
+        reply = checkinReply(report, body)
+      } catch (e) {
+        return this.json(res, 400, { error: (e as Error).message })
+      }
+      const next = ap.start(b, { feedback: reply.feedback, answers: reply.answers })
+      return this.json(res, 200, { ok: true, status: next.status })
+    }
+
     if (method === 'POST' && a === 'autopilot' && b && this.deps.autopilot) {
       const ap = this.deps.autopilot
       const body = await this.body(req)
       this.deps.registry.get(b) // must be a real project
+      // The old way to answer a check-in (free text, no report named) is closed: a phone page from before the update
+      // could otherwise send answers typed under a report that has since been replaced.
+      if (c === 'continue') return this.json(res, 409, { error: 'Hangar was updated. Reload this page, then answer the check-in.' })
       const feedback = typeof body.feedback === 'string' ? body.feedback.slice(0, 8000) : ''
       const state =
-        c === 'continue' ? ap.start(b, { feedback }) : c === 'pause' ? ap.pause(b) : c === 'resume' ? ap.resume(b) : c === 'feedback' ? ap.addFeedback(b, feedback) : null
+        c === 'pause' ? ap.pause(b) : c === 'resume' ? ap.resume(b) : c === 'feedback' ? ap.addFeedback(b, feedback) : null
       if (!state) return this.json(res, 404, { error: 'Unknown action' })
       return this.json(res, 200, { ok: true, status: state.status })
     }
@@ -435,7 +478,8 @@ export class RemoteServer {
   private agentName(projectId: string, agentId: string): string {
     if (agentId === 'main') return 'Main'
     try {
-      return listRoles(this.deps.registry.get(projectId).path).find((r) => r.id === agentId)?.name ?? agentId
+      // Role names come from files in the repo: hidden characters are shown, not obeyed.
+      return revealHidden(listRoles(this.deps.registry.get(projectId).path).find((r) => r.id === agentId)?.name ?? agentId)
     } catch {
       return agentId
     }
@@ -444,7 +488,7 @@ export class RemoteServer {
   private stateFor(): unknown {
     const projects = this.deps.registry.list().map((p) => ({
       id: p.id,
-      name: p.name,
+      name: revealHidden(p.name),
       autonomous: p.settings.autonomous,
       autopilot: (() => {
         const ap = this.deps.autopilot?.get(p.id)
@@ -456,7 +500,9 @@ export class RemoteServer {
           tasksDone: ap.tasksDone,
           sprintTasks: ap.config.sprintTasks,
           reason: ap.reason,
-          report: ap.status === 'checkin' && report ? report.text.slice(0, 20_000) : null
+          awaitingReviewId: ap.awaitingReviewId,
+          report: ap.status === 'checkin' && report ? report.text.slice(0, 20_000) : null,
+          checkin: ap.status === 'checkin' && report ? phoneCheckin(report) : null
         }
       })(),
       hasTestPlace: p.settings.testPlace !== null,
@@ -485,6 +531,7 @@ export class RemoteServer {
       .filter((r) => r.status === 'pending')
       .map((r) => ({
         ...r,
+        title: revealHidden(r.title),
         agent: this.agentName(r.projectId, r.agentId),
         clip: r.clip ? { kind: r.clip.kind, count: r.clip.files.length } : null,
         // The report itself is loaded on demand (via /diff); the list only needs its provenance.

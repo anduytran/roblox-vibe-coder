@@ -58,10 +58,17 @@ label.check{display:flex;gap:10px;align-items:center;font-size:15px}label.check 
 .d-add{background:var(--add)}.d-del{background:var(--del)}.d-hunk{color:var(--info)}.d-meta{color:var(--muted);font-weight:600}
 video,img.frame{width:100%;border-radius:8px;background:#000}
 .frames{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start}.frames img{flex:0 0 85%;width:85%;height:auto;scroll-snap-align:center;border-radius:8px}
-.toast{position:fixed;left:16px;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));background:var(--solid);color:var(--solid-text);border-radius:12px;padding:12px 14px;z-index:9;font-weight:500;box-shadow:0 12px 32px rgba(0,0,0,.3)}
+.toast{pointer-events:none;position:fixed;left:16px;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));background:var(--solid);color:var(--solid-text);border-radius:12px;padding:12px 14px;z-index:9;font-weight:500;box-shadow:0 12px 32px rgba(0,0,0,.3)}
 .toast.err{background:var(--err);color:#fff}
 .empty{color:var(--muted);text-align:center;padding:32px 0}
-a{color:var(--accent)}`
+a{color:var(--accent)}
+.seg{display:flex;gap:4px;background:var(--bg3);border-radius:10px;padding:3px}.seg button{flex:1;font:inherit;font-size:14px;border:0;border-radius:8px;background:none;color:var(--muted);padding:8px 4px;min-height:40px}.seg button.on{background:var(--bg2);color:var(--text);font-weight:600}
+ol.plan{margin:0;padding:0;list-style:none;counter-reset:plan;display:flex;flex-direction:column;gap:6px}ol.plan li{display:flex;align-items:center;gap:6px;font-size:15px}ol.plan li span{min-width:0;overflow-wrap:anywhere}ol.plan li::before{counter-increment:plan;content:counter(plan) '.';color:var(--muted);min-width:1.4em}
+button.icon{font:inherit;min-width:40px;min-height:40px;border-radius:10px;border:1px solid var(--line);background:var(--bg3);color:var(--text)}button.icon:disabled{opacity:.35}
+label.q{display:flex;flex-direction:column;gap:6px;margin-top:8px}label.q textarea{min-height:72px}
+button.btn.on{color:var(--accent-text);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+details summary{padding:6px 0;cursor:pointer}
+.card ul{margin:4px 0 0;padding-left:20px}`
 
 const APP_JS = `(() => {
 'use strict'
@@ -74,7 +81,7 @@ const h = (tag, attrs, ...kids) => {
     else if (k === 'class') el.className = v
     else el.setAttribute(k, v === true ? '' : v)
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)))
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)))
   return el
 }
 let token = null
@@ -82,7 +89,31 @@ try { token = localStorage.getItem('hangar.token') } catch {}
 let state = null
 let tab = 'inbox'
 let openReview = null
+// The project whose check-in is open, and the Ideas screen's data and sub-tab.
+let openCheckin = null
+let ideas = null
+let ideasLoading = false
+let ideasTab = 'ideas'
+let ideasLoadedAt = 0
+let openIdea = null
 let timer = null
+// What you've typed, by field, so the screen redrawing (it refreshes every few seconds) never loses it.
+const drafts = {}
+function field(tag, key, attrs) {
+  const el = h(tag, Object.assign({}, attrs, { oninput: (e) => { drafts[key] = e.target.value } }))
+  el.value = drafts[key] || ''
+  return el
+}
+// Typing in a text box or choosing in a picker: a redraw would move the cursor or close the picker, so the refresh
+// waits (pickers let go of focus once you've chosen, so it never waits long; a checkbox doesn't count).
+const typing = () => { const a = document.activeElement; return !!a && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || (a.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/.test(a.type))) }
+function ago(ts) {
+  const s = Math.round((Date.now() - ts) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return Math.floor(s / 60) + 'm ago'
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago'
+  return new Date(ts).toLocaleDateString()
+}
 
 function toast(text, err) {
   const t = h('div', { class: 'toast' + (err ? ' err' : '') }, text)
@@ -116,19 +147,40 @@ function forget() {
 }
 
 async function act(fn, ok) {
-  try { await fn(); if (ok) toast(ok); await refresh() } catch (e) { toast(e.message, true) }
+  // Look again after a failure too: it often means something changed elsewhere (answered on the computer, an idea replaced).
+  try { await fn(); if (ok) toast(ok) } catch (e) {
+    toast(e.message, true)
+    if (tab === 'ideas') ideasLoadedAt = 0
+    // An open review stays as it is (its diff and clip) after a failed action.
+    if (openReview) return
+  }
+  await refresh()
 }
 
-async function refresh() {
+// Which check-in report is open, so a refresh redraws that screen only when the report itself changed.
+function checkinStamp() {
+  const p = openCheckin && state && state.projects.find((x) => x.id === openCheckin)
+  const ap = p && p.autopilot
+  return ap ? ap.status + ':' + (ap.checkin ? ap.checkin.at : '') : ''
+}
+
+async function refresh(opts) {
   if (!token) return
-  try { state = await api('/api/state'); render() } catch (e) { if (token) toast(e.message, true) }
+  try {
+    const before = checkinStamp()
+    state = await api('/api/state')
+    if (tab === 'ideas' && Date.now() - ideasLoadedAt > 30000) loadIdeas()
+    if (opts && opts.quiet && openCheckin && checkinStamp() === before) return
+    render()
+  } catch (e) { if (token) toast(e.message, true) }
 }
 
 function schedule() {
   clearInterval(timer)
-  timer = setInterval(() => { if (document.visibilityState === 'visible' && !openReview) refresh() }, 4000)
+  // Not while you're reading a review or with the cursor in a box; an open check-in redraws only if it changed.
+  timer = setInterval(() => { if (document.visibilityState === 'visible' && !openReview && !typing()) refresh({ quiet: true }) }, 4000)
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh() })
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { ideasLoadedAt = 0; refresh({ quiet: true }) } })
 
 // ---------- pairing ----------
 function pairView() {
@@ -155,7 +207,7 @@ function pairView() {
 function approvalCard(a) {
   const details = h('pre', { class: 'details', hidden: true }, a.details || '')
   return h('div', { class: 'card' + (a.dangerous ? ' danger' : ' warn') },
-    h('div', { class: 'row' }, h('strong', { class: 'grow' }, a.agent + (a.dangerous ? ' — high risk' : ' needs approval')), h('span', { class: 'small muted' }, projectName(a.projectId))),
+    h('div', { class: 'row' }, h('strong', { class: 'grow' }, a.agent + (a.dangerous ? ' — high risk' : ' needs approval')), h('span', { class: 'small muted' }, projectName(a.projectId) + ' · ' + ago(a.ts))),
     h('div', { class: 'small muted' }, a.reason),
     h('pre', {}, a.summary),
     a.details ? h('button', { class: 'btn', onclick: (e) => { details.hidden = !details.hidden; e.target.textContent = details.hidden ? 'Show full details' : 'Hide details' } }, 'Show full details') : null,
@@ -179,7 +231,7 @@ function reviewRow(r) {
   const what = r.kind === 'research' ? 'web research · ' + ((r.research && r.research.fetched.length) || 0) + ' pages' : r.files.length + ' file' + (r.files.length === 1 ? '' : 's')
   return h('div', { class: 'card', onclick: () => { openReview = r; render() } },
     h('div', { class: 'row' }, h('strong', { class: 'grow' }, r.title), r.clip ? h('span', { class: 'pill' }, r.clip.kind === 'video' ? '▶ clip' : '▶ frames') : null),
-    h('div', { class: 'small muted' }, r.agent + ' · ' + projectName(r.projectId) + ' · ' + what + (r.incomplete ? ' · stopped early' : '')),
+    h('div', { class: 'small muted' }, r.agent + ' · ' + projectName(r.projectId) + ' · ' + what + ' · ' + ago(r.createdAt) + (r.incomplete ? ' · stopped early' : '')),
     badges(r))
 }
 
@@ -232,17 +284,26 @@ function researchView(r) {
 }
 
 function inboxView() {
-  const items = []
+  // Approvals first and oldest first (a new one lands below the one you're reading), then everything else newest first.
+  const approvals = state.approvals.slice().sort((x, y) => x.ts - y.ts).map(approvalCard)
+  const rest = []
   for (const p of state.projects) {
-    if (p.autopilot && (p.autopilot.status === 'checkin' || p.autopilot.status === 'waiting')) {
-      items.push(h('div', { class: 'card warn', onclick: () => { tab = 'projects'; render() } },
-        h('strong', {}, p.name + (p.autopilot.status === 'checkin' ? ': sprint ' + p.autopilot.sprint + ' check-in' : ' needs you')),
-        h('div', { class: 'small muted' }, p.autopilot.status === 'checkin' ? 'Read it and start the next sprint (Projects tab).' : (p.autopilot.reason || 'A task is waiting for your review.'))))
+    const ap = p.autopilot
+    if (ap && ap.status === 'checkin') {
+      rest.push({ at: ap.checkin ? ap.checkin.at : 0, node: h('div', { class: 'card warn', onclick: () => { openCheckin = p.id; render() } },
+        h('div', { class: 'row' }, h('strong', { class: 'grow' }, p.name + ' · sprint ' + ap.sprint + ' check-in'), ap.checkin ? h('span', { class: 'small muted' }, ago(ap.checkin.at)) : null),
+        ap.checkin && ap.checkin.questions.length ? h('div', { class: 'small muted' }, ap.checkin.questions.length + ' question' + (ap.checkin.questions.length === 1 ? '' : 's') + ' for you') : null,
+        h('button', { class: 'btn primary' }, 'Answer')) })
+    } else if (ap && ap.status === 'waiting' && !state.reviews.some((r) => r.id === ap.awaitingReviewId)) {
+      // Waiting on a review that's listed below anyway shows once, as that review.
+      rest.push({ at: Infinity, node: h('div', { class: 'card warn', onclick: () => { tab = 'projects'; render() } },
+        h('strong', {}, p.name + ' needs you'),
+        h('div', { class: 'small muted' }, ap.reason || 'A task is waiting for your review.')) })
     }
   }
-  for (const a of state.approvals) items.push(approvalCard(a))
-  if (state.reviews.length) items.push(h('div', { class: 'small muted' }, 'Ready for review'))
-  for (const r of state.reviews) items.push(reviewRow(r))
+  for (const r of state.reviews) rest.push({ at: r.createdAt, node: reviewRow(r) })
+  rest.sort((x, y) => y.at - x.at)
+  const items = approvals.concat(rest.map((x) => x.node))
   if (!items.length) items.push(h('div', { class: 'empty' }, 'Nothing needs you right now.'))
   return h('main', {}, items)
 }
@@ -306,6 +367,133 @@ function reviewView(r) {
         : h('div', { class: 'small muted' }, 'Set a test place for this project on your computer to play builds on your phone.')))
 }
 
+// ---------- check-in ----------
+/** A sprint check-in to answer: what was built, how to try it, the plan (reorder, remove, add) and one box per question. */
+function checkinView(p) {
+  const ap = p && p.autopilot
+  const c = ap && ap.status === 'checkin' ? ap.checkin : null
+  const back = h('button', { class: 'btn', onclick: () => { openCheckin = null; render() } }, '← Back')
+  if (!c) { openCheckin = null; return h('main', {}, back, h('div', { class: 'empty' }, 'This check-in was already answered.')) }
+  const key = 'checkin:' + p.id + ':' + c.sprint + ':' + c.at
+  const d = drafts[key] || (drafts[key] = { plan: c.next.slice(), answers: c.questions.map(() => ''), add: '' })
+  const changed = JSON.stringify(d.plan) !== JSON.stringify(c.next)
+  const move = (i, j) => { if (j < 0 || j >= d.plan.length) return; const t = d.plan[i]; d.plan[i] = d.plan[j]; d.plan[j] = t; render() }
+  const addBox = h('input', { id: 'plan-add', placeholder: 'Add something to the plan…', maxlength: '300', disabled: d.plan.length >= 30 })
+  addBox.value = d.add
+  addBox.addEventListener('input', () => { d.add = addBox.value })
+  const add = () => {
+    const t = addBox.value.trim()
+    if (!t || d.plan.length >= 30) return
+    d.plan.push(t.slice(0, 300)); d.add = ''
+    render()
+    // Keep the keyboard up for the next item.
+    const next = document.getElementById('plan-add'); if (next) next.focus()
+  }
+  addBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add() } })
+  const notes = field('textarea', key + ':notes', { maxlength: '4000', placeholder: c.structured ? 'Anything else for the Lead (optional)' : "Answer the Lead's questions, say what to change or do next." })
+  const start = (e) => {
+    const btn = e.currentTarget
+    btn.disabled = true
+    act(async () => {
+      try {
+        await api('/api/autopilot/' + p.id + '/checkin', { method: 'POST', body: { sprint: c.sprint, at: c.at, answers: d.answers, plan: changed ? d.plan : null, notes: notes.value } })
+      } catch (err) { btn.disabled = false; throw err }
+      delete drafts[key]; delete drafts[key + ':notes']
+      openCheckin = null; tab = 'projects'
+    }, 'Sprint ' + (c.sprint + 1) + ' started')
+  }
+  const sect = (title, ...kids) => h('div', { class: 'sect' }, h('h3', {}, title), kids)
+  return h('main', {},
+    back,
+    h('div', { class: 'card' },
+      h('h2', {}, p.name + ' · sprint ' + c.sprint + ' check-in'),
+      h('div', { class: 'small muted' }, ago(c.at) + ' · $' + c.spentUsd.toFixed(2) + ' spent · ' + c.merged + ' of ' + c.tasks + ' tasks merged'),
+      c.structured ? [
+        c.intro ? h('pre', { class: 'summary' }, c.intro) : null,
+        sect('Built', c.built ? h('pre', { class: 'summary' }, c.built) : h('div', { class: 'small muted' }, "The Lead didn't list anything.")),
+        c.tryIt ? sect('Try it', h('pre', { class: 'summary' }, c.tryIt)) : null,
+        sect('Next sprint' + (changed ? ' (edited)' : ''),
+          h('ol', { class: 'plan' }, d.plan.map((item, i) => h('li', {},
+            h('span', { class: 'grow' }, item),
+            h('button', { class: 'icon', 'aria-label': 'Move up: ' + item, disabled: i === 0, onclick: () => move(i, i - 1) }, '↑'),
+            h('button', { class: 'icon', 'aria-label': 'Move down: ' + item, disabled: i === d.plan.length - 1, onclick: () => move(i, i + 1) }, '↓'),
+            h('button', { class: 'icon', 'aria-label': 'Remove: ' + item, onclick: () => { d.plan.splice(i, 1); render() } }, '×')))),
+          !d.plan.length ? h('div', { class: 'small muted' }, c.next.length ? "Nothing planned: the Lead won't do the items you removed." : "The Lead didn't propose a plan.") : null,
+          h('div', { class: 'row' }, addBox, h('button', { class: 'btn', onclick: add }, 'Add')),
+          changed ? h('button', { class: 'btn', onclick: () => { d.plan = c.next.slice(); render() } }, 'Undo changes') : null),
+        c.questions.length ? sect('Questions for you', c.questions.map((q, i) => {
+          const box = h('textarea', { maxlength: '2000', 'aria-label': q })
+          box.value = d.answers[i] || ''
+          box.addEventListener('input', () => { d.answers[i] = box.value })
+          return h('label', { class: 'q' }, h('div', { class: 'small' }, q), box)
+        })) : null
+      ] : h('pre', { class: 'summary' }, ap.report || ''),
+      notes,
+      c.structured ? h('details', {}, h('summary', { class: 'small muted' }, 'Full report'), h('pre', { class: 'summary' }, ap.report || '')) : null,
+      h('button', { class: 'btn primary', onclick: start }, 'Start sprint ' + (c.sprint + 1))))
+}
+
+// ---------- ideas ----------
+async function loadIdeas() {
+  if (ideasLoading) return
+  ideasLoading = true
+  try { ideas = await api('/api/ideas'); ideasLoadedAt = Date.now(); if (!typing()) render() } catch (e) { toast(e.message, true) } finally { ideasLoading = false }
+}
+
+function ideaCard(idea, saved) {
+  const open = openIdea === idea.id
+  const star = h('button', { class: 'btn' + (saved ? ' on' : ''), 'aria-pressed': saved ? 'true' : 'false', onclick: (e) => {
+    e.stopPropagation()
+    act(async () => { ideas = await api('/api/ideas/' + encodeURIComponent(idea.id) + '/' + (saved ? 'unsave' : 'save'), { method: 'POST', body: {} }) }, saved ? 'Removed from Saved' : 'Saved')
+  } }, saved ? '★ Saved' : '☆ Save')
+  const more = []
+  if (open) {
+    if (idea.detailed) {
+      if (idea.coreLoop) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Core loop'), h('div', { class: 'small' }, idea.coreLoop)))
+      if (idea.whyNow) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Why now'), h('div', { class: 'small' }, idea.whyNow)))
+      if (idea.features.length) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Features'), h('ul', { class: 'small' }, idea.features.map((f) => h('li', {}, f)))))
+      if (idea.firstVersion) more.push(h('div', { class: 'sect' }, h('h3', {}, 'First version'), h('div', { class: 'small' }, idea.firstVersion)))
+    } else more.push(h('div', { class: 'small muted' }, 'Open it on your computer to work out the details and refine it.'))
+    if (idea.inspiredBy.length) more.push(h('div', { class: 'small muted' }, 'Inspired by ' + idea.inspiredBy.join(', ')))
+  }
+  return h('div', { class: 'card', onclick: () => { openIdea = open ? null : idea.id; render() } },
+    h('div', { class: 'row' }, h('strong', { class: 'grow' }, idea.title), h('span', { class: 'pill' }, 'Score ' + idea.score)),
+    h('div', {}, idea.pitch),
+    h('div', { class: 'row' }, h('span', { class: 'small muted grow' }, idea.genre + ' · ' + idea.scope + (open ? '' : ' · tap for more')), star),
+    more)
+}
+
+function ideasView() {
+  if (!ideas) { loadIdeas(); return h('main', {}, h('div', { class: 'empty' }, 'Loading ideas…')) }
+  const savedIds = new Set(ideas.saved.map((i) => i.id))
+  const seg = (id, label) => h('button', { class: ideasTab === id ? 'on' : '', 'aria-pressed': ideasTab === id ? 'true' : 'false', onclick: () => { ideasTab = id; openIdea = null; render() } }, label)
+  const tabs = h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' },
+    seg('ideas', 'Ideas' + (ideas.ideas.length ? ' (' + ideas.ideas.length + ')' : '')),
+    seg('saved', 'Saved' + (ideas.saved.length ? ' (' + ideas.saved.length + ')' : '')),
+    seg('trending', 'Trending'))
+  let body
+  if (ideasTab === 'trending') {
+    body = !ideas.games.length
+      ? [h('div', { class: 'empty' }, 'No chart data yet. Load the charts on your computer (Ideas → Trending on Roblox).')]
+      : [
+          ideas.fetchedAt ? h('div', { class: 'small muted' }, 'Updated ' + ago(ideas.fetchedAt)) : null,
+          h('div', { class: 'card' }, h('h2', {}, 'Game spaces'),
+            h('div', { class: 'small muted' }, 'Demand, and how crowded each space is. Higher score = more room for a new game.'),
+            ideas.genres.map((g) => h('div', { class: 'agent' }, h('div', {}, h('div', {}, g.genre), h('div', { class: 'small muted' }, 'demand ' + g.demand + ' · ' + g.saturation + '% crowded · ' + g.games + ' game' + (g.games === 1 ? '' : 's'))), h('span', { class: 'pill' }, String(g.score))))),
+          h('div', { class: 'card' }, h('h2', {}, 'Trending games'),
+            ideas.games.map((g, i) => h('div', { class: 'agent' },
+              h('div', {}, h('div', {}, (i + 1) + '. ' + g.name), h('div', { class: 'small muted' }, g.genre + ' · ' + g.players.toLocaleString() + ' playing' + (g.growth != null ? ' · ' + (g.growth >= 0 ? '+' : '') + Math.round(g.growth * 100) + '% today' : ''))),
+              h('span', { class: 'pill' }, String(g.score)))))
+        ]
+  } else {
+    const list = ideasTab === 'saved' ? ideas.saved : ideas.ideas
+    body = list.length
+      ? list.map((i) => ideaCard(i, savedIds.has(i.id)))
+      : [h('div', { class: 'empty' }, ideasTab === 'saved' ? 'No saved ideas yet. Save one from Ideas.' : 'No ideas yet. Generate some on your computer (Ideas page).')]
+  }
+  return h('main', {}, tabs, ideas.error ? h('div', { class: 'small' }, '⚠ ' + ideas.error) : null, body)
+}
+
 // ---------- projects ----------
 function projectName(id) { const p = state && state.projects.find((x) => x.id === id); return p ? p.name : '' }
 
@@ -315,27 +503,32 @@ const AP_LABEL = { off: 'Autopilot off', running: 'Building', waiting: 'Needs yo
 function autopilotBox(p) {
   const ap = p.autopilot
   if (!ap || ap.status === 'off') return null
-  const feedback = h('textarea', { placeholder: ap.status === 'checkin' ? 'Answer the questions, say what to change or do next…' : 'A note for the Lead’s next task…' })
-  const post = (action, ok) => act(async () => { await api('/api/autopilot/' + p.id + '/' + action, { method: 'POST', body: { feedback: feedback.value } }); feedback.value = '' }, ok)
+  if (ap.status === 'checkin') {
+    return h('div', { class: 'sect' },
+      h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Autopilot · sprint ' + ap.sprint), h('span', { class: 'pill' }, AP_LABEL.checkin)),
+      h('button', { class: 'btn primary', onclick: () => { openCheckin = p.id; render() } }, 'Answer the check-in'))
+  }
+  const feedback = field('textarea', 'note:' + p.id, { placeholder: 'A note for the Lead’s next task…' })
+  const post = (action, ok) => act(async () => { await api('/api/autopilot/' + p.id + '/' + action, { method: 'POST', body: { feedback: feedback.value } }); feedback.value = ''; delete drafts['note:' + p.id] }, ok)
   return h('div', { class: 'sect' },
     h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Autopilot · sprint ' + ap.sprint), h('span', { class: 'pill ' + (ap.status === 'running' ? 'working' : ap.status === 'waiting' ? 'awaiting_approval' : '') }, AP_LABEL[ap.status] || ap.status)),
-    ap.status !== 'checkin' ? h('div', { class: 'small muted' }, ap.tasksDone + ' of ' + ap.sprintTasks + ' tasks done') : null,
+    h('div', { class: 'small muted' }, ap.tasksDone + ' of ' + ap.sprintTasks + ' tasks done'),
     ap.reason ? h('div', { class: 'small' }, ap.reason) : null,
-    ap.report ? h('pre', { class: 'summary' }, ap.report) : null,
     feedback,
     h('div', { class: 'row wrap' },
-      ap.status === 'checkin' ? h('button', { class: 'btn primary grow', onclick: () => post('continue', 'Sprint ' + (ap.sprint + 1) + ' started') }, 'Start sprint ' + (ap.sprint + 1)) : null,
       ap.status === 'paused' ? h('button', { class: 'btn primary grow', onclick: () => post('resume', 'Resumed') }, 'Resume') : null,
       ap.status === 'running' || ap.status === 'waiting' ? h('button', { class: 'btn grow', onclick: () => post('pause', 'Paused') }, 'Pause') : null,
-      ap.status !== 'checkin' ? h('button', { class: 'btn grow', onclick: () => { if (!feedback.value.trim()) return toast('Write a note first', true); post('feedback', 'Noted') } }, 'Add note') : null))
+      h('button', { class: 'btn grow', onclick: () => { if (!feedback.value.trim()) return toast('Write a note first', true); post('feedback', 'Noted') } }, 'Add note')))
 }
 
 function projectsView() {
   if (!state.projects.length) return h('main', {}, h('div', { class: 'empty' }, 'No projects yet. Add one on your computer.'))
   return h('main', {}, state.projects.map((p) => {
-    const agent = h('select', {}, p.agents.map((a) => h('option', { value: a.id }, a.name)))
-    const prompt = h('textarea', { placeholder: 'Task for the agent…' })
-    const record = h('input', { type: 'checkbox' })
+    const agent = h('select', { onchange: (e) => { drafts['agent:' + p.id] = e.target.value; e.target.blur() } }, p.agents.map((a) => h('option', { value: a.id }, a.name)))
+    if (p.agents.some((a) => a.id === drafts['agent:' + p.id])) agent.value = drafts['agent:' + p.id]
+    const prompt = field('textarea', 'task:' + p.id, { placeholder: 'Task for the agent…' })
+    const record = h('input', { type: 'checkbox', onchange: (e) => { drafts['record:' + p.id] = e.target.checked } })
+    record.checked = drafts['record:' + p.id] === true
     return h('div', { class: 'card' },
       h('div', { class: 'row' }, h('h2', { class: 'grow' }, p.name), p.autonomous ? h('span', { class: 'pill' }, 'Autonomous') : null),
       autopilotBox(p),
@@ -346,7 +539,7 @@ function projectsView() {
       h('label', { class: 'check' }, record, 'Record playtest'),
       h('button', { class: 'btn primary', onclick: () => {
         if (!prompt.value.trim()) return toast('Write a task first', true)
-        act(async () => { await api('/api/tasks', { method: 'POST', body: { projectId: p.id, agentId: agent.value, prompt: prompt.value, record: record.checked } }); prompt.value = '' }, 'Queued')
+        act(async () => { await api('/api/tasks', { method: 'POST', body: { projectId: p.id, agentId: agent.value, prompt: prompt.value, record: record.checked } }); prompt.value = ''; delete drafts['task:' + p.id]; delete drafts['record:' + p.id] }, 'Queued')
       } }, 'Queue task'))
   }))
 }
@@ -375,7 +568,7 @@ function settingsView() {
       h('button', { class: 'btn primary', onclick: enablePush }, 'Turn on notifications')),
     h('div', { class: 'card' },
       h('h2', {}, 'This phone'),
-      h('p', { class: 'small muted' }, 'From here you can approve everyday actions, review and merge work, queue tasks and stop agents. Settings and high-risk approvals stay on your computer.'),
+      h('p', { class: 'small muted' }, 'From here you can approve everyday actions, review and merge work, answer check-ins, save ideas, queue tasks and stop agents. Settings and high-risk approvals stay on your computer.'),
       h('button', { class: 'btn danger', onclick: () => { if (confirm('Unpair this phone?')) act(async () => { await api('/api/unpair', { method: 'POST', body: {} }); forget() }) } }, 'Unpair this phone')))
 }
 
@@ -388,10 +581,18 @@ function render() {
   const header = h('header', {},
     h('div', {}, h('h1', {}, 'Hangar'), h('div', { class: 'spend' }, 'Today $' + state.costs.todayUsd.toFixed(2))),
     h('button', { class: 'btn danger', disabled: !busy, onclick: () => { if (confirm('Stop every agent and clear all queues?')) act(() => api('/api/stop-all', { method: 'POST', body: {} }), 'All agents stopped') } }, 'Stop all'))
-  const count = state.approvals.length + state.reviews.length + state.projects.filter((p) => p.autopilot && (p.autopilot.status === 'checkin' || p.autopilot.status === 'waiting')).length
-  const navBtn = (id, label) => h('button', { class: tab === id ? 'on' : '', onclick: () => { tab = id; openReview = null; render() } }, label, id === 'inbox' && count ? h('span', { class: 'count' }, count) : null)
-  const view = openReview ? reviewView(state.reviews.find((r) => r.id === openReview.id) || openReview) : tab === 'inbox' ? inboxView() : tab === 'projects' ? projectsView() : settingsView()
-  app.replaceChildren(header, view, h('nav', {}, navBtn('inbox', 'Inbox'), navBtn('projects', 'Projects'), navBtn('settings', 'Settings')))
+  // What the Inbox lists: a waiting autopilot whose review is already listed counts once.
+  const count = state.approvals.length + state.reviews.length + state.projects.filter((p) => p.autopilot && (p.autopilot.status === 'checkin' || (p.autopilot.status === 'waiting' && !state.reviews.some((r) => r.id === p.autopilot.awaitingReviewId)))).length
+  const navBtn = (id, label) => h('button', { class: tab === id ? 'on' : '', 'aria-current': tab === id ? 'page' : false, onclick: () => {
+    tab = id; openReview = null; openCheckin = null
+    if (id === 'ideas') loadIdeas()
+    render()
+  } }, label, id === 'inbox' && count ? h('span', { class: 'count' }, count) : null)
+  const checkinProject = openCheckin && state.projects.find((p) => p.id === openCheckin)
+  const view = openReview ? reviewView(state.reviews.find((r) => r.id === openReview.id) || openReview)
+    : openCheckin ? checkinView(checkinProject)
+    : tab === 'inbox' ? inboxView() : tab === 'projects' ? projectsView() : tab === 'ideas' ? ideasView() : settingsView()
+  app.replaceChildren(header, view, h('nav', {}, navBtn('inbox', 'Inbox'), navBtn('projects', 'Projects'), navBtn('ideas', 'Ideas'), navBtn('settings', 'Settings')))
 }
 
 render()

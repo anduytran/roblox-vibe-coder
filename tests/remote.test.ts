@@ -208,7 +208,7 @@ test('remote: the phone can read check-ins and start the next sprint, pause and 
   const file = join(tmp('hangar-remote-ap-'), 'remote.json')
   writeFileSync(file, JSON.stringify({ enabled: false, port, devices: [], vapid: null }))
   const calls: unknown[][] = []
-  const st = { status: 'checkin', sprint: 2, tasksDone: 5, config: { sprintTasks: 5 }, reason: null, reports: [{ text: '## Built\nGliders' }] }
+  const st = { status: 'checkin', sprint: 2, tasksDone: 5, config: { sprintTasks: 5 }, reason: null, reports: [{ sprint: 2, at: 77, tasks: [], spentUsd: 0, text: '## Built\nGliders' }] }
   const autopilot = {
     get: () => st,
     start: (...a: unknown[]) => (calls.push(['start', ...a]), { status: 'running' }),
@@ -228,12 +228,14 @@ test('remote: the phone can read check-ins and start the next sprint, pause and 
     const state = await call(port, '/api/state', { token })
     assert.equal(state.json.projects[0].autopilot.status, 'checkin')
     assert.match(state.json.projects[0].autopilot.report, /Gliders/)
-    assert.equal((await call(port, '/api/autopilot/p1/continue', { token, body: { feedback: 'Add co-op' } })).status, 200)
-    assert.deepEqual(calls[0], ['start', 'p1', { feedback: 'Add co-op' }])
+    assert.equal((await call(port, '/api/autopilot/p1/continue', { token, body: { feedback: 'Add co-op' } })).status, 409, 'the old free-text route is closed')
+    assert.equal((await call(port, '/api/autopilot/p1/checkin', { token, body: { notes: 'Add co-op' } })).status, 409, 'a reply must name its report')
+    assert.equal((await call(port, '/api/autopilot/p1/checkin', { token, body: { sprint: 2, at: 77, notes: 'Add co-op' } })).status, 200)
+    assert.deepEqual(calls[0], ['start', 'p1', { feedback: 'Add co-op', answers: [] }])
     await call(port, '/api/autopilot/p1/pause', { token, body: {} })
     assert.equal(calls[1]![0], 'pause')
-    assert.equal((await call(port, '/api/autopilot/nope/continue', { token, body: {} })).status, 500, 'unknown project refused')
-    assert.equal((await call(port, '/api/autopilot/p1/continue', { body: {} })).status, 401, 'needs a paired phone')
+    assert.equal((await call(port, '/api/autopilot/nope/pause', { token, body: {} })).status, 500, 'unknown project refused')
+    assert.equal((await call(port, '/api/autopilot/p1/checkin', { body: {} })).status, 401, 'needs a paired phone')
     await call(port, '/api/stop-all', { token, body: {} })
     assert.ok(calls.some((c) => c[0] === 'pauseAll'), 'stop all also pauses autopilot')
   } finally {

@@ -126,7 +126,7 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - **Trends** come from two fixed Roblox hosts (`apis.roblox.com`, `games.roblox.com`), read-only, no credentials, responses size-limited; names and descriptions are cleaned of hidden characters and treated as untrusted text.
 - **Idea generation** runs Claude with no tools, no project, behind the key-hiding proxy; its output is shown to you and only becomes a brief if you click "Create this game" (you see it in the wizard first).
 - **New projects** are created only inside a folder you choose, never into a non-empty folder; the game name is sanitised before it's written into code.
-- **Phone**: a paired phone can start the next sprint, pause/resume and add notes (spending stays within the sprint, project and daily limits).
+- **Phone**: a paired phone can answer a check-in and start the next sprint, pause/resume and add notes (spending stays within the sprint, project and daily limits). A check-in reply names its sprint (a stale one is refused) and sends answers by position: the questions in the feedback come from the report Hangar holds, never from the phone. It can read ideas and trending data and save or unsave ideas, but not generate or refine them (that costs money). Names, titles and idea text reach the phone with hidden characters shown as ⟦U+…⟧.
 
 ## Claude Max mode (personal use, development builds only)
 

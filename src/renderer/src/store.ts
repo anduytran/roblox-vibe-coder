@@ -173,6 +173,9 @@ function applyEvent(e: AgentEvent): void {
     case 'autopilot':
       set((s) => ({ autopilot: { ...s.autopilot, [e.state.projectId]: e.state } }))
       break
+    case 'trends':
+      set({ trends: normalizeTrends(e.snapshot) })
+      break
     case 'openInbox':
       // Never over a dialog that's waiting for an answer.
       if (document.querySelector('.modal-backdrop')) break

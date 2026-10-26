@@ -453,6 +453,8 @@ export type AgentEvent =
   | { type: 'autopilot'; state: AutopilotState }
   /** Sent to the window only (from a clicked desktop notification): open the Inbox. */
   | { type: 'openInbox' }
+  /** Ideas changed somewhere other than the window (an idea saved on the phone). */
+  | { type: 'trends'; snapshot: TrendsSnapshot }
 
 export interface Result<T> {
   ok: boolean
