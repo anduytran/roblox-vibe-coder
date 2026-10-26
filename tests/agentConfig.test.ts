@@ -200,6 +200,8 @@ test('coordinator: the runner refuses the Lead\'s own code edits but not its hel
   await until(() => t.calls.length === 1)
   const o = t.calls[0]!.options
   assert.match((o.systemPrompt as { append: string }).append, /you coordinate, the team builds/)
+  assert.match((o.systemPrompt as { append: string }).append, /names the exact files to read and change/)
+  assert.match((o.agents as Record<string, { prompt: string }>).scripter!.prompt, /Read the files it names first and stay with them/)
   const can = o.canUseTool as CanUseTool
   const ac = new AbortController()
   assert.equal((await can('Edit', { file_path: join(dir, 'src', 'Shop.luau') }, { signal: ac.signal })).behavior, 'deny')
@@ -371,8 +373,10 @@ test('costs: a resumed conversation counts only what the run added; autopilot st
   assert.ok(Math.abs(costs.summary().todayUsd - (1.5 + 0.2 + 0.3)) < 1e-9, `counted ${costs.summary().todayUsd}`)
 })
 
-test('context: a conversation past the limit starts over on the next message, and says so', async () => {
-  const { MAX_CONTEXT_TOKENS } = await import('../src/main/agentRunner')
+test('context: a conversation far past its size (not summarized) starts over on the next message, and says so', async () => {
+  const { CONTEXT_BACKSTOP } = await import('../src/main/agentRunner')
+  const { autoContextTokens } = await import('../src/shared/agentConfig')
+  const MAX_CONTEXT_TOKENS = autoContextTokens('main') * CONTEXT_BACKSTOP
   const dir = tmp('hangar-ctx-')
   const registry = new ProjectRegistry(join(tmp('hangar-ctx-reg-'), 'projects.json'))
   const project = registry.add(dir)
@@ -419,4 +423,28 @@ test('context: a conversation past the limit starts over on the next message, an
   assert.equal(resumes[2], undefined)
   assert.ok(logs.some((t) => /Started a new conversation: the last one had grown to \d+k tokens/.test(t)))
   assert.equal(main().sessionId, 's2')
+})
+
+test('context: each agent gets a context size for its job, which the engine summarizes down to', async () => {
+  const { autoContextTokens, cleanContextTokens, contextTokensFor } = await import('../src/shared/agentConfig')
+  assert.equal(autoContextTokens('lead'), 120_000)
+  assert.equal(autoContextTokens('scripter'), 200_000)
+  assert.equal(autoContextTokens('qa-tester'), 100_000)
+  assert.equal(contextTokensFor('lead', 300_000), 300_000)
+  assert.equal(cleanContextTokens('250k'), 250_000)
+  assert.equal(cleanContextTokens(5), 100_000, 'the engine needs at least 100k')
+  assert.equal(cleanContextTokens(5_000_000), 1_000_000)
+  assert.equal(parseRole('x', serializeRole({ id: 'x', name: 'X', description: '', prompt: 'p', contextTokens: 180_000 }))!.contextTokens, 180_000)
+
+  const dir = tmp('hangar-cw-')
+  const { installTemplates } = await import('../src/main/roles')
+  installTemplates(dir)
+  const t = runnerFor(dir)
+  t.runner.send(t.project.id, 'lead', 'plan')
+  await until(() => t.calls.length === 1)
+  const o = t.calls[0]!.options
+  assert.equal((o.settings as { autoCompactWindow: number }).autoCompactWindow, 120_000)
+  const agents = o.agents as Record<string, { autoCompactWindow: number }>
+  assert.equal(agents.scripter!.autoCompactWindow, 200_000)
+  assert.equal(agents['qa-tester']!.autoCompactWindow, 100_000)
 })

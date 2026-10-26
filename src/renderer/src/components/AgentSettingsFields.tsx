@@ -1,5 +1,5 @@
 import type { AgentEffort, AgentSettings } from '@shared/types'
-import { EFFORTS, groupsFromTools, TOOL_GROUPS, toolsFromGroups, type ToolGroup } from '@shared/agentConfig'
+import { autoContextTokens, EFFORTS, groupsFromTools, TOOL_GROUPS, toolsFromGroups, type ToolGroup } from '@shared/agentConfig'
 import { useStore } from '../store'
 import { Field, Toggle } from './ui'
 
@@ -10,10 +10,12 @@ export interface AgentFormState {
   effort: AgentEffort | ''
   budget: string
   knowledge: string
+  /** 0 = Auto (sized for the role). */
+  context: number
 }
 
 export function agentFormState(a: AgentSettings): AgentFormState {
-  return { groups: groupsFromTools(a.tools), studio: a.studio !== false, effort: a.effort ?? '', budget: a.budgetUsd ? String(a.budgetUsd) : '', knowledge: a.knowledge ?? '' }
+  return { groups: groupsFromTools(a.tools), studio: a.studio !== false, effort: a.effort ?? '', budget: a.budgetUsd ? String(a.budgetUsd) : '', knowledge: a.knowledge ?? '', context: a.contextTokens ?? 0 }
 }
 
 /** What to save. Defaults are left out, so the role file only lists what was changed. */
@@ -24,7 +26,8 @@ export function agentSettingsFrom(f: AgentFormState): AgentSettings {
     effort: f.effort || undefined,
     budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : undefined,
     studio: f.studio ? undefined : false,
-    knowledge: f.knowledge.trim() || undefined
+    knowledge: f.knowledge.trim() || undefined,
+    contextTokens: f.context || undefined
   }
 }
 
@@ -93,6 +96,20 @@ export function AgentSettingsFields(props: {
           </Field>
         )}
       </div>
+      <Field
+        label="Context size"
+        hint="How much of the conversation it keeps word for word. Past this, the engine summarizes the older part, so each step stays quick and light on usage. Auto is sized for the role."
+      >
+        <select value={f.context} onChange={(e) => set({ context: Number(e.target.value) })}>
+          <option value={0}>Auto ({Math.round(autoContextTokens(props.agentId || 'x') / 1000)}k for this role)</option>
+          {[...new Set([100, 150, 200, 300, 500, 1000, ...(f.context ? [Math.round(f.context / 1000)] : [])])].sort((a, b) => a - b).map((k) => (
+            <option key={k} value={k * 1000}>
+              {k === 1000 ? '1M' : `${k}k`}
+              {k >= 500 ? ' (uses a lot of the plan on long runs)' : ''}
+            </option>
+          ))}
+        </select>
+      </Field>
       <Field label="Knowledge folder" hint="Its own notes inside the project. It searches them before working and adds what it learns. Plain Markdown, reviewed in git like code.">
         <input value={f.knowledge} onChange={(e) => set({ knowledge: e.target.value })} placeholder={`knowledge/${props.agentId || '<name>'}`} />
       </Field>

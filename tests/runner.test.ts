@@ -314,7 +314,7 @@ test('sandbox: not available on Windows, and the run says so', async () => {
   const { runner, project, calls, status } = setup({ platform: 'win32' })
   runner.send(project.id, 'main', 'go')
   await until(() => calls.length === 1)
-  assert.equal(calls[0]!.options.settings, undefined)
+  assert.equal((calls[0]!.options.settings as { sandbox?: unknown }).sandbox, undefined, 'no sandbox settings (only the context size)')
   assert.ok(runner.snapshot(project.id)[0]!.log.some((e) => /Not sandboxed: .*Windows/.test(e.text)))
   calls[0]!.release()
   await until(() => status('main') === 'idle')

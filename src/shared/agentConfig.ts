@@ -64,6 +64,8 @@ export function cleanAgentSettings(v: unknown): AgentSettings {
   if (budget) out.budgetUsd = budget
   if (o.studio === false) out.studio = false
   if (typeof o.knowledge === 'string' && FOLDER.test(o.knowledge.trim())) out.knowledge = o.knowledge.trim()
+  const ctx = cleanContextTokens(o.contextTokens)
+  if (ctx) out.contextTokens = ctx
   return out
 }
 
@@ -72,4 +74,29 @@ export function cleanMainAgent(v: unknown): MainAgentSettings | undefined {
   const out: MainAgentSettings = { ...cleanAgentSettings(o) }
   if (typeof o.prompt === 'string' && o.prompt.trim()) out.prompt = o.prompt.trim().slice(0, 20000)
   return Object.keys(out).length ? out : undefined
+}
+
+/** Context sizes the engine accepts (it summarizes the conversation once it reaches one). */
+export const CONTEXT_MIN = 100_000
+export const CONTEXT_MAX = 1_000_000
+
+/**
+ * The context size for an agent's job, unless it has its own: the Lead plans from notes (helpers read the code),
+ * builders need several code files open, QA and research read output and pages that needn't stay around.
+ */
+export function autoContextTokens(agentId: string): number {
+  if (agentId === 'lead') return 120_000
+  if (agentId === 'qa-tester' || agentId === 'researcher') return 100_000
+  if (agentId === 'scripter' || agentId === 'ui-builder' || agentId === 'studio-modeler' || agentId === 'blender-modeler') return 200_000
+  return 150_000
+}
+
+export function contextTokensFor(agentId: string, own?: number): number {
+  return cleanContextTokens(own) ?? autoContextTokens(agentId)
+}
+
+/** A context size within what the engine accepts, or undefined. Accepts 200000, "200k" or "200000". */
+export function cleanContextTokens(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? (/^\s*(\d+(?:\.\d+)?)\s*k\s*$/i.test(v) ? parseFloat(v) * 1000 : parseFloat(v)) : NaN
+  return Number.isFinite(n) && n > 0 ? Math.round(Math.min(CONTEXT_MAX, Math.max(CONTEXT_MIN, n))) : undefined
 }

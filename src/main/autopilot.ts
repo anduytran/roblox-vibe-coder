@@ -189,7 +189,7 @@ export class Autopilot {
     if (!builders.length && !qa) return null
     return {
       build: builders.length
-        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each (what to build, which files, the acceptance criteria). Run them in the foreground and wait (not run_in_background); independent briefs go in the same message so they run at the same time. Do only glue too small to hand off.`
+        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each for one small piece: the exact files to read and change, what to build, and the acceptance criteria. Run them in the foreground and wait (not run_in_background); independent briefs go in the same message so they run at the same time. Do only glue too small to hand off.`
         : 'Build it yourself.',
       test: qa
         ? 'Then hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, play it in Studio when Studio tools are available, and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'

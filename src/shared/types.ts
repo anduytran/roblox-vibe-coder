@@ -18,6 +18,8 @@ export interface AgentSettings {
   studio?: boolean
   /** A folder of notes (inside the project) this agent searches before working and adds to as it learns. */
   knowledge?: string
+  /** Context size in tokens: past it, the conversation is summarized so it stays small. Missing: sized for the role. */
+  contextTokens?: number
 }
 
 /** The Main agent's own settings (it has no role file): its extra instructions and the shared settings. */
