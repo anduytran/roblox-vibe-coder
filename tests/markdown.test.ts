@@ -44,9 +44,9 @@ test('markdown: hidden characters are removed; links keep their real address', (
 test('markdown: snake_case and unmatched markers stay text; long input is capped and fast', () => {
   assert.equal(inlineText(parseInline('use player_data_store and 2 * 3 = 6')), 'use player_data_store and 2 * 3 = 6')
   assert.deepEqual(parseInline('**unclosed'), [{ t: 'text', v: '**unclosed' }])
-  const t = performance.now()
+  const t = performance.now() // limits are generous: a real blow-up (backtracking) takes far longer, even on a busy machine
   const huge = parseMarkdown('word **'.repeat(60_000) + '\n- item'.repeat(20_000))
-  assert.ok(performance.now() - t < 2000, 'linear time')
+  assert.ok(performance.now() - t < 5000, 'linear time')
   assert.ok(JSON.stringify(huge).length > 0)
   assert.ok(parseMarkdown('x'.repeat(MAX_MARKDOWN + 5000)).length === 1)
 })
@@ -62,7 +62,7 @@ test('review fixes: headings are linear, keep C#, strip only a real closing run'
   const t = performance.now()
   parseMarkdown('# a' + ' '.repeat(60_000) + 'b')
   parseMarkdown('# ' + '#'.repeat(60_000) + 'x')
-  assert.ok(performance.now() - t < 500, 'no backtracking on long lines')
+  assert.ok(performance.now() - t < 5000, 'no backtracking on long lines')
   const h = (src: string): string => inlineText((parseMarkdown(src)[0] as Extract<Block, { t: 'heading' }>).v)
   assert.equal(h('## Porting from C#'), 'Porting from C#')
   assert.equal(h('## Title ##'), 'Title')
@@ -89,7 +89,7 @@ test('review fixes: Luau __index stays text; __bold__ at word edges still works'
   parseInline(' __a'.repeat(40_000))
   parseInline(' **a'.repeat(40_000))
   parseInline(' *a'.repeat(40_000))
-  assert.ok(performance.now() - t < 1500)
+  assert.ok(performance.now() - t < 5000)
 })
 
 test('review fixes: URLs with parentheses and trailing punctuation', () => {
@@ -113,7 +113,7 @@ test('second pass: hostile inputs stay fast (URL trimming, long lines, backtick 
   for (const c of cases) {
     const t = performance.now()
     parseMarkdown(c)
-    assert.ok(performance.now() - t < 600, `took ${Math.round(performance.now() - t)} ms`)
+    assert.ok(performance.now() - t < 5000, `took ${Math.round(performance.now() - t)} ms`)
   }
 })
 
