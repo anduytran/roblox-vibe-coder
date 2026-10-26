@@ -121,7 +121,8 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
                 <span key={i} className={i < ap.tasksDone ? 'done' : i === ap.tasksDone && status === 'running' ? 'now' : ''} />
               ))}
             </div>
-            {status === 'running' && leadActivity && <div className="activity">Task {ap.tasksDone + 1}: {leadActivity}</div>}
+            {status === 'running' && leadActivity && !ap.parallel?.items.length && <div className="activity">Task {ap.tasksDone + 1}: {leadActivity}</div>}
+            {ap.parallel && ap.parallel.phase !== 'single' && <SprintPieces project={project} parallel={ap.parallel} running={status === 'running'} />}
             {ap.sprintTasks.length > 0 && <TaskList tasks={ap.sprintTasks} />}
             <div className="field">
               <span className="field-label">Steer the Lead</span>
@@ -267,6 +268,39 @@ function TaskList({ tasks }: { tasks: SprintReport['tasks'] }) {
 
 const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
+const PIECE_DONE: Record<string, string> = { merged: 'Merged', waiting: 'Waiting for you in Reviews', discarded: 'Discarded', 'no-changes': 'Nothing to merge', failed: 'Failed' }
+
+/** A sprint built in parallel: the Lead planning, each piece and how it's going, then the wrap-up. */
+function SprintPieces({ project, parallel, running }: { project: Project; parallel: NonNullable<AutopilotState['parallel']>; running: boolean }) {
+  const agents = useStore((s) => s.agents[project.id])
+  const roles = useStore((s) => s.roles[project.id])
+  const name = (id: string): string => roles?.find((r) => r.id === id)?.name ?? id
+  if (parallel.phase === 'planning') return <div className="activity">{running ? 'The Lead is planning pieces to build at the same time…' : 'The Lead was planning this sprint.'}</div>
+  return (
+    <div className="sprint-pieces">
+      <span className="side-label">{parallel.phase === 'wrapup' ? 'Built at the same time · the Lead is wrapping up' : 'Being built at the same time'}</span>
+      <ul className="task-list">
+        {parallel.items.map((item) => {
+          const a = agents?.[item.agentId]
+          const status =
+            item.status === 'done'
+              ? (PIECE_DONE[item.outcome ?? ''] ?? 'Done')
+              : item.status === 'review'
+                ? 'In review'
+                : a?.status === 'working' || a?.status === 'awaiting_approval'
+                  ? (a.activity ?? 'Building…')
+                  : 'Waiting its turn'
+          return (
+            <li key={item.id}>
+              <strong>{name(item.agentId)}</strong>: {revealHidden(item.title)} <span className="muted small">· {status}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 /** Set-aside actions this window already asked the safety checker about (so a re-render doesn't ask again). */
 const askedToExplain = new Set<string>()
 
@@ -398,6 +432,12 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         )}
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
+      <Toggle
+        checked={ap.config.parallel !== false}
+        onChange={(v) => save({ parallel: v })}
+        label="Build the sprint's pieces at the same time"
+        hint="The Lead plans pieces that don't touch the same files, and each agent builds its piece in its own copy of the game at once; Studio playtests take turns. Off: one task after another."
+      />
       {!plan.on && <label className="field">
         <span className="field-label">Most to spend while you're away (USD)</span>
         <input value={awayBudget} inputMode="decimal" onChange={(e) => setAwayBudget(e.target.value)} onBlur={() => parseFloat(awayBudget) > 0 && parseFloat(awayBudget) !== (ap.config.unattendedBudgetUsd ?? 20) && save({ unattendedBudgetUsd: parseFloat(awayBudget) })} />

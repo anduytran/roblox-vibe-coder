@@ -30,7 +30,13 @@ export function StudioSyncControl({ project }: { project: Project }) {
     return (
       <span className="studio-sync studio-sync-on" role="status">
         <span className="studio-dot" aria-hidden />
-        {status === 'starting' ? 'Starting sync…' : sync.reviewId ? `Studio shows the change “${revealHidden(sync.reviewTitle ?? 'from Reviews')}”` : 'Syncing to Studio'}
+        {status === 'starting'
+          ? 'Starting sync…'
+          : sync.showing?.kind === 'task'
+            ? `Studio is lent to a playtest: ${revealHidden(sync.showing.label)}`
+            : sync.reviewId
+              ? `Studio shows the change “${revealHidden(sync.reviewTitle ?? 'from Reviews')}”`
+              : 'Syncing to Studio'}
         {status === 'running' && <span className="muted"> · in Studio: Plugins → Rojo → Connect</span>}
         {sync.reviewId && (
           <button className="link small" disabled={busy} onClick={start}>
