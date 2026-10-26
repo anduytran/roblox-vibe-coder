@@ -1,5 +1,5 @@
 // IPC channel names and the API surface exposed to the renderer as window.hangar.
-import type {
+import type { Brief,
   AgentEvent,
   AgentState,
   AppSettings,
@@ -91,6 +91,8 @@ export const IPC = {
   reviewsRecheck: 'reviews:recheck',
   reviewsFixClash: 'reviews:fixClash',
   reviewsMergeAll: 'reviews:mergeAll',
+  briefsAgent: 'briefs:agent',
+  briefsProject: 'briefs:project',
   reviewsCancelMergeAll: 'reviews:cancelMergeAll',
   testPlaceKeyStatus: 'testPlaceKey:status',
   testPlaceKeySet: 'testPlaceKey:set',
@@ -316,6 +318,12 @@ export interface HangarApi {
     mergeAll(projectId: string, acknowledged: Record<string, string[]>): Promise<{ merged: string[]; fixing: string[]; queued: string[]; skipped: { id: string; title: string; reason: string }[] }>
     /** Stop a Merge all that's still waiting to merge changes. */
     cancelMergeAll(projectId: string): Promise<void>
+  }
+  briefs: {
+    /** What an agent did since you last looked, what it's doing, and what needs you (rewritten only when there's news). */
+    agent(projectId: string, agentId: string, refresh?: boolean): Promise<Brief>
+    /** The same for the whole game, for its Overview. */
+    project(projectId: string, refresh?: boolean): Promise<Brief>
   }
   vault: {
     status(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Explanation } from './ApprovalCard'
+import { BriefCard } from './BriefCard'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
 import { attempt, confirmDialog, openUncommitted, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
 import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
@@ -50,8 +51,17 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
     }).finally(() => setBusy(false))
   }
 
+  const reviewCount = useStore((s) => (s.reviews[project.id] ?? []).filter((r) => r.status === 'pending').length)
   return (
     <div className="settings-page overview">
+      {(ap?.sprint ?? 0) > 0 || reviewCount > 0 ? (
+        <BriefCard
+          key={project.id}
+          title="Brief"
+          watch={`${status}:${ap?.sprint ?? 0}:${ap?.tasksDone ?? 0}:${reviewCount}`}
+          load={(refresh) => window.hangar.briefs.project(project.id, refresh)}
+        />
+      ) : null}
       <section className="card overview-status">
         <div className="row between">
           <div>

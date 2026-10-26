@@ -4,6 +4,7 @@ import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
 import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
+import { BriefCard } from './BriefCard'
 import { MainAgentEditor, RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
 import { Button, Icon, StatusPill, timeAgo, usd } from './ui'
@@ -204,6 +205,15 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
           </Button>
         </div>
       </header>
+
+      {log.length > 0 && role.mode !== 'research' && (
+        <BriefCard
+          key={`${project.id}:${role.id}`}
+          title={`Brief: ${role.name}`}
+          watch={`${role.id}:${state?.status ?? 'idle'}`}
+          load={(refresh) => window.hangar.briefs.agent(project.id, role.id, refresh)}
+        />
+      )}
 
       {state?.lastError && state.status === 'error' && (
         <div className="error-bar">

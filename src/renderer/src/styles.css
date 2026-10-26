@@ -4333,3 +4333,17 @@ kbd {
   flex: none;
   transform: translateY(2px);
 }
+
+/* Check-in briefs (Agents tab, Overview) */
+.brief-card {
+  display: grid;
+  gap: 8px;
+}
+.brief-title {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+.brief-text p {
+  margin: 4px 0;
+}

@@ -21,6 +21,7 @@ import { ReviewActions } from './reviewActions'
 import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
+import { Briefer } from './briefs'
 import { ApprovalExplainer, checkerMayApprove } from './approvalExplainer'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
@@ -484,6 +485,20 @@ app.whenReady().then(() => {
     appDataDir: dataDir()
   })
   explainerRef = explainer
+  const briefer = new Briefer({
+    loadQuery,
+    engineAuth,
+    getApiKey: getCredential,
+    getSettings: () => settings.get(),
+    costs,
+    file: join(dataDir(), 'briefs.json'),
+    getProject: (id) => registry.get(id),
+    agents: (id) => runner.snapshot(id),
+    agentName: (id, agentId) => (agentId === 'main' ? 'Main' : (listRoles(registry.get(id).path).find((r) => r.id === agentId)?.name ?? agentId)),
+    reviews: (id) => reviews.list(id),
+    autopilot: (id) => autopilot!.get(id),
+    approvals: () => runner.pendingApprovals()
+  })
   // What's already waiting at startup doesn't notify again.
   notifier.seed({
     reviews: reviews.list().filter((r) => r.status === 'pending').map((r) => r.id),
@@ -707,6 +722,8 @@ app.whenReady().then(() => {
     }
     return reviewActions.mergeAll(str(id, 'project'), ack)
   })
+  handle(IPC.briefsAgent, (id: unknown, agentId: unknown, refresh?: unknown) => briefer.agent(str(id, 'project'), str(agentId, 'agent'), { refresh: refresh === true }))
+  handle(IPC.briefsProject, (id: unknown, refresh?: unknown) => briefer.project(str(id, 'project'), { refresh: refresh === true }))
   handle(IPC.reviewsCancelMergeAll, (id: unknown) => reviewActions.cancelMergeAll(str(id, 'project')))
   handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))

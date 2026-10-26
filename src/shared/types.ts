@@ -274,6 +274,20 @@ export interface Review {
   pushError?: string | null
 }
 
+/** A short brief for the owner checking in (on an agent, or on a game's Overview). */
+export interface Brief {
+  text: string
+  /** When it was written, and the period it covers (from `since`). */
+  at: number
+  since: number
+  /** The latest activity it includes. */
+  upTo: number
+  /** What the agents' status was then (a brief is rewritten when it changes). */
+  status: string
+  /** Why it couldn't be written this time (the last brief, if any, is still shown). */
+  error: string | null
+}
+
 export interface ReviewClash {
   /** Files both sides changed. */
   files: string[]
