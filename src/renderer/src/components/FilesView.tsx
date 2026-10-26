@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { FileListing, FileView, GitStatus, Project } from '@shared/types'
-import { CODE_HIDDEN_CHARS, readableNote, revealCodeHidden, revealHidden } from '@shared/text'
+import { CODE_HIDDEN_CHARS, DECEPTIVE_CHARS, FRONT_MATTER, readableNote, revealCodeHidden, revealHidden } from '@shared/text'
+import { MAX_MARKDOWN } from '@shared/markdown'
 import { attempt, useStore } from '../store'
 import { EmptyState } from './EmptyState'
 import { SafeText } from './SafeText'
 import { Button, Icon, Skeleton, timeAgo } from './ui'
 
 const codeHidden = new RegExp(CODE_HIDDEN_CHARS.source, 'u')
+const anyHidden = new RegExp(DECEPTIVE_CHARS.source, 'u')
+
+/**
+ * Files that become agents' instructions: every hidden character in them is shown, not just the ones that disguise
+ * code. Matched without case, as macOS and Windows find "claude.md" and ".Claude/" too.
+ */
+const isInstructions = (path: string): boolean => {
+  const p = path.toLowerCase()
+  return p === 'claude.md' || p.startsWith('.claude/')
+}
+const reveal = (path: string, text: string): string => (isInstructions(path) ? revealHidden(text) : revealCodeHidden(text))
+const showLabel = (): string => (window.hangar.platform === 'darwin' ? 'Show in Finder' : 'Show in folder')
 
 const size = (n: number): string => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`)
 
@@ -37,6 +50,8 @@ export function FilesView({ project }: { project: Project }) {
   const [rootError, setRootError] = useState(false)
   const [changes, setChanges] = useState<Map<string, string>>(new Map())
   const [formatted, setFormatted] = useState(true)
+  // Bumped to read the open file again (picking it again, Refresh).
+  const [readSeq, setReadSeq] = useState(0)
   // Agents change files as they work: look again (open folders and the open file) when any of them logs a step.
   const logTick = useStore((s) =>
     Object.values(s.agents[project.id] ?? {})
@@ -87,8 +102,10 @@ export function FilesView({ project }: { project: Project }) {
   }, [loadDir, loadChanges])
 
   useEffect(() => {
-    const t = setTimeout(() => void reloadTree(), loaded.current ? 1000 : 0)
-    loaded.current = true
+    const t = setTimeout(() => {
+      loaded.current = true
+      void reloadTree()
+    }, loaded.current ? 1000 : 0)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, logTick])
@@ -114,21 +131,28 @@ export function FilesView({ project }: { project: Project }) {
     return () => {
       stale = true
     }
-  }, [project.id, pick, logTick])
+  }, [project.id, pick, logTick, readSeq])
 
   const toggle = (path: string): void => {
     const next = new Set(open)
     if (next.has(path)) next.delete(path)
     else {
       next.add(path)
-      if (!dirs[path]) void loadDir(path)
+      // Listed again on every open, with any folders still open inside it (the cached listing shows meanwhile):
+      // an agent may have changed them while they were closed.
+      void loadDir(path)
+      for (const p of next) if (p.startsWith(`${path}/`)) void loadDir(p)
     }
     setOpen(next)
   }
   const choose = (path: string): void => {
-    setPick(path)
-    setFile(null)
-    setFileError(null)
+    if (path === pick) {
+      setReadSeq((n) => n + 1)
+    } else {
+      setPick(path)
+      setFile(null)
+      setFileError(null)
+    }
     // Opening a file shows the folders it's in (key files can be deep).
     const parts = path.split('/')
     const next = new Set(open)
@@ -136,7 +160,7 @@ export function FilesView({ project }: { project: Project }) {
       const dir = parts.slice(0, i).join('/')
       if (!next.has(dir)) {
         next.add(dir)
-        if (!dirs[dir]) void loadDir(dir)
+        void loadDir(dir)
       }
     }
     setOpen(next)
@@ -168,13 +192,15 @@ export function FilesView({ project }: { project: Project }) {
           const isOpen = open.has(e.path)
           const mark = e.kind === 'file' ? changes.get(e.path) : changedDirs.has(e.path) ? '•' : undefined
           return (
-            <div key={e.path} role="none">
+            <div key={e.path}>
               <button
                 className={`files-item ${pick === e.path ? 'files-item-on' : ''}`}
                 style={{ paddingLeft: 8 + depth * 14 }}
-                role="treeitem"
+                data-path={e.path}
+                data-dir={e.kind === 'dir' ? '1' : undefined}
                 aria-expanded={e.kind === 'dir' ? isOpen : undefined}
-                aria-selected={pick === e.path}
+                aria-current={pick === e.path ? 'true' : undefined}
+                aria-label={`${revealHidden(e.name)}${e.kind === 'dir' ? ', folder' : ''}${mark ? `, ${mark === '•' ? 'has uncommitted changes' : `${(CHANGE[mark] ?? mark).toLowerCase()}, not committed`}` : ''}`}
                 title={revealHidden(e.path)}
                 onClick={() => (e.kind === 'dir' ? toggle(e.path) : choose(e.path))}
               >
@@ -183,18 +209,19 @@ export function FilesView({ project }: { project: Project }) {
                 </span>
                 <span className="files-name">{revealHidden(e.name)}</span>
                 {mark && (
-                  <span className={`files-mark files-mark-${mark === '?' ? 'q' : mark === '•' ? 'dot' : mark}`} title={mark === '•' ? 'Has uncommitted changes' : (CHANGE[mark] ?? mark)}>
+                  <span aria-hidden className={`files-mark files-mark-${mark === '?' ? 'q' : mark === '•' ? 'dot' : mark}`} title={mark === '•' ? 'Has uncommitted changes' : (CHANGE[mark] ?? mark)}>
                     {mark === '?' ? 'N' : mark}
                   </span>
                 )}
               </button>
-              {e.kind === 'dir' && isOpen && <div role="group">{renderDir(e.path, depth + 1)}</div>}
+              {e.kind === 'dir' && isOpen && renderDir(e.path, depth + 1)}
             </div>
           )
         })}
-        {listing.more > 0 && (
+        {(listing.more > 0 || listing.capped) && (
           <div className="small muted files-note" style={{ paddingLeft: 10 + depth * 14 }}>
-            {listing.more} more not shown
+            {listing.more.toLocaleString()}
+            {listing.capped ? '+' : ''} more not shown (open the folder in your editor)
           </div>
         )}
         {listing.entries.length === 0 && (
@@ -206,9 +233,35 @@ export function FilesView({ project }: { project: Project }) {
     )
   }
 
+  // Arrow keys move through the tree (Tab still works); Right opens a folder, Left closes it or goes to its folder.
+  const onTreeKey = (ev: React.KeyboardEvent<HTMLElement>): void => {
+    const items = [...ev.currentTarget.querySelectorAll<HTMLButtonElement>('button.files-item')]
+    const at = items.indexOf(document.activeElement as HTMLButtonElement)
+    if (at < 0) return
+    const el = items[at]!
+    const path = el.dataset.path
+    let to = -1
+    if (ev.key === 'ArrowDown') to = Math.min(items.length - 1, at + 1)
+    else if (ev.key === 'ArrowUp') to = Math.max(0, at - 1)
+    else if (ev.key === 'Home') to = 0
+    else if (ev.key === 'End') to = items.length - 1
+    else if (ev.key === 'ArrowRight' && path && el.dataset.dir && !open.has(path)) toggle(path)
+    else if (ev.key === 'ArrowLeft' && path) {
+      if (el.dataset.dir && open.has(path)) toggle(path)
+      else if (path.includes('/')) to = items.findIndex((b) => b.dataset.path === path.slice(0, path.lastIndexOf('/')))
+    } else return
+    ev.preventDefault()
+    if (to >= 0) items[to]!.focus()
+  }
+
   const isMarkdown = !!pick && /\.(md|markdown)$/i.test(pick)
   const text = file?.text ?? ''
-  const sneaky = !!file?.text && codeHidden.test(file.text)
+  const sneaky = !!file?.text && (pick && isInstructions(pick) ? anyHidden : codeHidden).test(file.text)
+  // Markdown: front matter is always shown as written (it decides a role's tools and mode); the rest can be formatted.
+  // Agents' instruction files are formatted as they are, with no note clean-up, so the page shows what agents read.
+  const front = isMarkdown ? (FRONT_MATTER.exec(text)?.[0] ?? '') : ''
+  const body = front ? text.slice(front.length) : text
+  const formattedText = pick ? reveal(pick, isInstructions(pick) ? body : readableNote(body)) : ''
   const change = pick ? changes.get(pick) : undefined
 
   return (
@@ -227,15 +280,21 @@ export function FilesView({ project }: { project: Project }) {
         <div className="row between files-head">
           <span className="side-label">All files</span>
           <span className="row gap-xs">
-            <button className="link small" onClick={() => void reloadTree()}>
+            <button
+              className="link small"
+              onClick={() => {
+                void reloadTree()
+                setReadSeq((n) => n + 1)
+              }}
+            >
               Refresh
             </button>
             <button className="link small" onClick={() => void attempt(() => window.hangar.files.reveal(project.id, ''))}>
-              Show in Finder
+              {showLabel()}
             </button>
           </span>
         </div>
-        <div role="tree" aria-label="All files">
+        <div className="files-list" aria-label="All files" onKeyDown={onTreeKey}>
           {renderDir('', 0)}
         </div>
         {dirs['']!.skipped > 0 && <p className="small muted files-note">Links and .git aren't shown.</p>}
@@ -269,7 +328,7 @@ export function FilesView({ project }: { project: Project }) {
                 )}
                 <Button size="sm" tone="ghost" onClick={() => void attempt(() => window.hangar.files.reveal(project.id, pick))}>
                   <Icon name="folder" />
-                  Show in Finder
+                  {showLabel()}
                 </Button>
               </span>
             </header>
@@ -280,7 +339,7 @@ export function FilesView({ project }: { project: Project }) {
                 <Skeleton lines={10} label="Loading the file" />
               ) : file.kind === 'binary' ? (
                 <EmptyState compact icon="folder" title="Not a text file">
-                  {size(file.size)}. Use Show in Finder to open it with another app.
+                  {size(file.size)}. Use {showLabel()} to open it with another app.
                 </EmptyState>
               ) : (
                 <>
@@ -293,9 +352,14 @@ export function FilesView({ project }: { project: Project }) {
                   {!text.trim() ? (
                     <p className="muted">This file is empty.</p>
                   ) : isMarkdown && formatted ? (
-                    <SafeText className="files-md" text={readableNote(text)} />
+                    <>
+                      {front && <pre className="files-text files-front">{reveal(pick, front)}</pre>}
+                      {formattedText.length > MAX_MARKDOWN && <p className="small warn">Formatted shows the first {MAX_MARKDOWN.toLocaleString()} characters. Switch to Plain for all of it.</p>}
+                      {/* Revealed before formatting, so the ⟦U+…⟧ marks survive (formatting would drop the characters silently). */}
+                      <SafeText className="files-md" text={formattedText} />
+                    </>
                   ) : (
-                    <pre className="files-text">{revealCodeHidden(text)}</pre>
+                    <pre className="files-text">{reveal(pick, text)}</pre>
                   )}
                 </>
               )}

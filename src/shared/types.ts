@@ -254,6 +254,8 @@ export interface FileListing {
   entries: { name: string; path: string; kind: 'dir' | 'file'; size: number; mtime: number }[]
   /** Entries past the limit that aren't listed. */
   more: number
+  /** The folder was too big to read to the end, so there are more than `more`. */
+  capped: boolean
   /** Links, `.git` and other non-files left out. */
   skipped: number
 }

@@ -68,8 +68,14 @@ export function firstLine(text: string): string {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line
 }
 
+/**
+ * "---" front matter at the top of a Markdown file: the same rule roles.ts uses to read a role's tools, model and
+ * mode, so what Hangar shows as front matter is exactly what agents get as settings. Anchored, so linear.
+ */
+export const FRONT_MATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/
+
 /** Obsidian note text made readable in Hangar: front matter dropped, [[Note|alias]] links shown as their names. */
 export function readableNote(text: string): string {
-  const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+  const body = text.replace(FRONT_MATTER, '')
   return body.replace(/\[\[([^\]|\n]{1,200})(?:\|([^\]\n]{1,200}))?\]\]/g, (_, name: string, alias?: string) => alias ?? name)
 }
