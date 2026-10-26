@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { CheckResult, Project, Review, ReviewChecks } from '@shared/types'
 import { buildAgentEnv } from './agentRunner'
 import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
@@ -62,6 +62,13 @@ const real = (p: string): string => {
 }
 const expand = (p: string, home: string): string => (p.startsWith('~/') ? join(home, p.slice(2)) : p)
 const sbString = (p: string): string => JSON.stringify(p)
+/** Every folder above `p`, up to the root. */
+const ancestors = (p: string): string[] => {
+  const out: string[] = []
+  for (let cur = dirname(p); cur !== dirname(cur); cur = dirname(cur)) out.push(cur)
+  out.push(dirname(p) === p ? p : '/')
+  return [...new Set(out)]
+}
 
 /**
  * Wrap a command in the OS sandbox. Returns null when the sandbox isn't available.
@@ -88,7 +95,10 @@ export function sandboxCommand(
       '(deny file-write*)',
       `(allow file-write* (subpath ${sbString(work)}) (subpath ${sbString(tmp)}) (subpath "/private/var/folders") (subpath "/private/tmp") (literal "/dev/null") (regex #"^/dev/tty"))`,
       ...secrets.map((d) => `(deny file-read* (subpath ${sbString(real(d))}))`),
-      `(allow file-read* (subpath ${sbString(work)}))`
+      `(allow file-read* (subpath ${sbString(work)}))`,
+      // The checkout sits inside Hangar's (unreadable) data folder. Tools like Rojo look up each folder above where
+      // they run (resolving paths), so those folders' own details, never their contents or listings, stay readable.
+      ...ancestors(work).map((p) => `(allow file-read-metadata (literal ${sbString(p)}))`)
     ].join('\n')
     return { file: '/usr/bin/sandbox-exec', argv: ['-p', profile, program, ...args] }
   }
