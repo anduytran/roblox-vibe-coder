@@ -234,20 +234,12 @@ function TaskList({ tasks }: { tasks: SprintReport['tasks'] }) {
   )
 }
 
-/** The next given hour (7 → 7:00 tomorrow morning if it's already past 7 today). */
-function nextHour(h: number): number {
-  const d = new Date()
-  d.setHours(h, 0, 0, 0)
-  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1)
-  return d.getTime()
-}
 const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
 /** Keep autopilot going while you sleep, and what it did while you were away. */
 function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState }) {
   const on = !!ap.config.unattended
-  const [until, setUntil] = useState(7)
-  const [budget, setBudget] = useState(String(ap.config.unattendedBudgetUsd ?? 20))
+  const limit = ap.config.unattendedBudgetUsd ?? 20
   const save = (patch: Partial<AutopilotState['config']>, ok?: string): void => {
     void attempt(async () => {
       setAutopilot(await window.hangar.autopilot.configure(project.id, patch))
@@ -263,54 +255,16 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
   }
   return (
     <section className={`card ${on ? 'card-accent' : ''}`}>
-      <h3>While you're away</h3>
-      {on ? (
-        <p className="small">
-          Running unattended until <strong>{ap.config.unattendedUntil ? clock(ap.config.unattendedUntil) : 'you turn it off'}</strong>, spending at most{' '}
-          <strong>{usd(ap.config.unattendedBudgetUsd ?? 20)}</strong>. Check-ins answer themselves (decisions go in Decisions.md), changes that can't merge
-          themselves wait in Reviews, and actions that need your OK are set aside for you while the agents carry on with everything else. The Mac stays awake.
-        </p>
-      ) : (
-        <p className="small muted">
-          Let autopilot keep going overnight: it won't stop for check-ins, reviews or approvals, and you get a summary in the morning. Keep Studio open if you
-          want the QA Tester to playtest.
-        </p>
-      )}
-      {!on && (
-        <div className="row gap-xs wrap">
-          <label className="field">
-            <span className="field-label">Stop at</span>
-            <select value={until} onChange={(e) => setUntil(Number(e.target.value))}>
-              {[5, 6, 7, 8, 9, 10].map((h) => (
-                <option key={h} value={h}>
-                  {clock(nextHour(h))}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">Spend at most (USD)</span>
-            <input value={budget} inputMode="decimal" onChange={(e) => setBudget(e.target.value)} />
-          </label>
-        </div>
-      )}
-      <div className="row gap-xs">
-        {on ? (
-          <Button onClick={() => save({ unattended: false }, 'Unattended mode off.')}>Turn off</Button>
-        ) : (
-          <Button
-            tone="primary"
-            onClick={() =>
-              save(
-                { unattended: true, unattendedUntil: nextHour(until), unattendedBudgetUsd: parseFloat(budget) || 20 },
-                `Running unattended until ${clock(nextHour(until))}. Sleep well.`
-              )
-            }
-          >
-            Keep going while I'm away
-          </Button>
-        )}
-      </div>
+      <Toggle
+        checked={on}
+        onChange={(v) => save(v ? { unattended: true, unattendedUntil: null } : { unattended: false }, v ? 'Autopilot keeps going while you\'re away.' : 'Back to normal: autopilot checks in with you.')}
+        label="Keep going while I'm away"
+        hint={
+          on
+            ? `On until you turn it off, or ${usd(limit)} is spent. Check-ins answer themselves, clashes get fixed, anything that needs you waits in Reviews or below, and the Mac stays awake.`
+            : `Autopilot won't stop for check-ins, reviews or approvals; you get a summary when you're back. Stops after ${usd(limit)} (change it in Sprint settings).`
+        }
+      />
       {away && (
         <div className="decisions">
           <span className="side-label">
@@ -352,6 +306,7 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
 function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
   const [tasks, setTasks] = useState(ap.config.sprintTasks)
   const [budget, setBudget] = useState(String(ap.config.sprintBudgetUsd))
+  const [awayBudget, setAwayBudget] = useState(String(ap.config.unattendedBudgetUsd ?? 20))
   const save = (patch: Partial<AutopilotState['config']>): void => {
     void attempt(async () => setAutopilot(await window.hangar.autopilot.configure(project.id, patch)))
   }
@@ -376,6 +331,11 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         </label>
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
+      <label className="field">
+        <span className="field-label">Most to spend while you're away (USD)</span>
+        <input value={awayBudget} inputMode="decimal" onChange={(e) => setAwayBudget(e.target.value)} onBlur={() => parseFloat(awayBudget) > 0 && parseFloat(awayBudget) !== (ap.config.unattendedBudgetUsd ?? 20) && save({ unattendedBudgetUsd: parseFloat(awayBudget) })} />
+        <span className="field-hint">“Keep going while I'm away” stops once this much is spent.</span>
+      </label>
     </section>
   )
 }

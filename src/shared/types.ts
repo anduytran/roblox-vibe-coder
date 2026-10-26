@@ -452,8 +452,9 @@ export interface AutopilotConfig {
   autoMerge: boolean
   /**
    * Keep going while you're away (overnight): check-ins answer themselves (the Lead goes ahead with its plan and
-   * records its decisions), changes that can't merge themselves wait in Reviews while work continues, approvals the
-   * safety checker won't clear are declined after a while. Ends at `unattendedUntil` or after `unattendedBudgetUsd`.
+   * records its decisions), changes that can't merge themselves wait in Reviews while work continues, and approvals the
+   * safety checker won't clear are set aside for you. Ends when turned off, at `unattendedUntil` (if set) or after
+   * `unattendedBudgetUsd`.
    */
   unattended?: boolean
   unattendedUntil?: number | null
