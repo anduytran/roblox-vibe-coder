@@ -329,7 +329,7 @@ app.whenReady().then(() => {
         // carries on with everything else instead of waiting.
         if (autopilot?.isAway(r.projectId) && runner.pendingApprovals().some((x) => x.id === r.id)) {
           const known = explainerRef?.cached(r.id) ?? null
-          autopilot.setAside(r)
+          autopilot.setAside(r, runner.currentTaskId(r.projectId, r.agentId))
           void explainSetAside(r.projectId, r.id, known)
           runner.respond(
             r.id,
@@ -431,7 +431,10 @@ app.whenReady().then(() => {
     costs,
     emit,
     onReview: (r) => void pipeline?.start(r),
-    onTaskDone: (o) => autopilot?.onTaskDone(o),
+    onTaskDone: (o) => {
+      autopilot?.onTaskDone(o)
+      autopilot?.taskEnded(o.projectId, o.task.id, o.reviewId)
+    },
     researchProxy: () => webEgress.issue(),
     // Studio is lent to one task at a time for its playtest; afterwards it shows your game folder again.
     studio: {
@@ -491,6 +494,8 @@ app.whenReady().then(() => {
     fixClash: (id) => reviewActions.fixClash(id),
     usesPlan: () => settings.get().authMode === 'max'
   })
+  // Nothing is running yet, so actions set aside before Hangar closed belong to tasks that are over.
+  autopilot.clearSetAside()
   const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
   const explainer = new ApprovalExplainer({
     loadQuery,

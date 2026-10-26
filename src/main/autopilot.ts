@@ -268,7 +268,7 @@ export class Autopilot {
   }
 
   /** An action needing your OK during an unattended run: kept for the morning (the agent carries on without it). */
-  setAside(request: ApprovalRequest): void {
+  setAside(request: ApprovalRequest, taskId?: string | null): void {
     this.bumpAway(request.projectId, 'declined')
     const st = this.get(request.projectId)
     const item = {
@@ -279,9 +279,34 @@ export class Autopilot {
       reason: request.reason.slice(0, 300),
       dangerous: request.dangerous,
       at: Date.now(),
-      inputJson: request.inputJson.slice(0, 8000)
+      inputJson: request.inputJson.slice(0, 8000),
+      ...(taskId ? { taskId } : {})
     }
     this.put({ ...st, setAside: [...(st.setAside ?? []), item].slice(-50) })
+  }
+
+  /**
+   * A task ended: the actions it set aside aren't needed any more (it carried on without them, and its working copy
+   * is gone). They're listed on its review instead, so you can see what was skipped.
+   */
+  taskEnded(projectId: string, taskId: string, reviewId: string | null): void {
+    const st = this.get(projectId)
+    const done = (st.setAside ?? []).filter((x) => x.taskId === taskId)
+    if (!done.length) return
+    this.put({ ...st, setAside: (st.setAside ?? []).filter((x) => x.taskId !== taskId) })
+    if (!reviewId) return
+    try {
+      const review = this.deps.reviews.get(reviewId)
+      const skipped = [...(review.skippedActions ?? []), ...done.map((x) => x.summary.split('\n')[0]!.slice(0, 200))].slice(-20)
+      this.deps.emit({ type: 'review', review: this.deps.reviews.update(reviewId, { skippedActions: skipped }) })
+    } catch {
+      // the review is gone
+    }
+  }
+
+  /** At startup no task is running, so nothing set aside earlier is still needed. */
+  clearSetAside(): void {
+    for (const st of this.list()) if (st.setAside?.length) this.put({ ...st, setAside: [] })
   }
 
   /** The action as an approval request again, for the safety checker to explain. */

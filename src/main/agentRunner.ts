@@ -541,11 +541,21 @@ export class AgentRunner {
     }
   }
 
+  /** The task each agent is running now (by project and agent). */
+  private readonly current = new Map<string, string>()
+
+  /** The id of the task an agent is running now, if any. */
+  currentTaskId(projectId: string, agentId: string): string | null {
+    return this.current.get(keyOf(projectId, agentId)) ?? null
+  }
+
   private async run(s: AgentState, task: QueuedTask): Promise<void> {
     const box = { ok: false, stopped: false, text: '', error: null as string | null, reviewId: null as string | null }
+    this.current.set(keyOf(s.projectId, s.agentId), task.id)
     try {
       await this.runTask(s, task, box)
     } finally {
+      this.current.delete(keyOf(s.projectId, s.agentId))
       try {
         this.deps.onTaskDone?.({ projectId: s.projectId, agentId: s.agentId, task, ...box, error: box.ok ? null : (s.lastError ?? box.error) })
       } catch {

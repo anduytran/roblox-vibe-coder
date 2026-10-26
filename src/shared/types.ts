@@ -267,6 +267,8 @@ export interface Review {
   clash?: ReviewClash | null
   /** How many times an agent has tried to resolve a clash in this change. */
   clashFixes?: number
+  /** Actions that needed your OK while you were away and were skipped (the agent carried on without them). */
+  skippedActions?: string[]
   /** Merge all will merge it as soon as it can (an agent finishes, its checks finish, or its clash is fixed). */
   mergeQueued?: boolean
   /** After merging: sent to GitHub (or why it couldn't be). */
@@ -535,6 +537,8 @@ export interface SetAsideAction {
   at: number
   /** The action's details (for the explanation). Missing on items from before this was kept. */
   inputJson?: string
+  /** The task that wanted it: when that task ends, the action is no longer needed (it's noted on its review). */
+  taskId?: string
   /** The safety checker's explanation, written when it was set aside. */
   explanation?: ApprovalExplanation | null
 }

@@ -283,6 +283,19 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         )}
         {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
         {review.note && <div className="error-bar">{review.note}</div>}
+        {(review.skippedActions?.length ?? 0) > 0 && (
+          <div className="callout callout-amber">
+            <span className="small">
+              While you were away, this task skipped {review.skippedActions!.length} action{review.skippedActions!.length === 1 ? '' : 's'} that needed your OK, and carried on without
+              {review.skippedActions!.length === 1 ? ' it' : ' them'}. Check the result still does what it should:
+            </span>
+            <ul className="small mono">
+              {review.skippedActions!.map((a, i) => (
+                <li key={i}>{revealHidden(a)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {!isPending && <p className="muted">This task was {review.status}.</p>}
         {review.status === 'merged' && review.pushed && <p className="muted small">Pushed to GitHub ({review.pushed.repo}) {timeAgo(review.pushed.at)}.</p>}
         {review.status === 'merged' && review.pushError && <div className="error-bar">Merged, but not pushed to GitHub: {review.pushError} Push from the Project tab.</div>}
