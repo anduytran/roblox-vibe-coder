@@ -320,7 +320,17 @@ export class AgentRunner {
   // ---------- commands ----------
 
   /** True while any agent in the project is running (the working tree may be changing). */
+  /** Whether a running task is working on this branch (adding to a change, or resolving its clash). */
+  branchInUse(projectId: string, branch: string): boolean {
+    return Object.entries(this.inflight.get().tasks).some(([key, r]) => (r.projectId ?? key) === projectId && r.branch === branch)
+  }
+
+  /**
+   * Whether an agent is using the game folder. In autonomous mode agents work in their own copies, so the folder is
+   * never theirs: operations on it just take their turn (see inFolder).
+   */
   projectBusy(projectId: string): boolean {
+    if (this.isAutonomous(projectId)) return false
     if (this.wrapping.has(projectId) || this.locked.has(projectId)) return true
     return [...this.states.values()].some((s) => s.projectId === projectId && (s.status === 'working' || s.status === 'awaiting_approval'))
   }
@@ -330,6 +340,8 @@ export class AgentRunner {
    * start in the project until `fn` finishes (so a merge or checkout can't interleave with a new task).
    */
   async withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    // Autonomous: agents are in their own copies, so this only waits for other operations on the game folder.
+    if (this.isAutonomous(projectId)) return this.inFolder(projectId, fn)
     if (this.projectBusy(projectId)) throw new Error('An agent is working in this project. Wait for it to finish (or stop it) first.')
     this.locked.add(projectId)
     try {
@@ -478,6 +490,12 @@ export class AgentRunner {
 
   private runIdleWork(): void {
     for (const [projectId, fn] of [...this.idleWork]) {
+      if (this.isAutonomous(projectId)) {
+        // Nothing to wait for but the folder's turn.
+        this.idleWork.delete(projectId)
+        void this.inFolder(projectId, fn).catch(() => undefined)
+        continue
+      }
       if (this.projectBusy(projectId)) continue
       this.idleWork.delete(projectId)
       this.locked.add(projectId)
@@ -497,8 +515,7 @@ export class AgentRunner {
     while (this.runningCount() < max) {
       const next = [...this.states.values()]
         .filter((s) => s.status === 'queued' && s.queue.length > 0 && !this.locked.has(s.projectId))
-        // In autonomous mode a project works on one branch at a time, so its tasks run one after another.
-        .filter((s) => !(this.isAutonomous(s.projectId) && this.projectBusy(s.projectId)))
+        // Different agents work at the same time: in autonomous mode each task has its own copy of the game.
         .sort((a, b) => (this.order.get(a.queue[0]!) ?? 0) - (this.order.get(b.queue[0]!) ?? 0))[0]
       if (!next) return
       const task = next.queue.shift()!

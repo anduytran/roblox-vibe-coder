@@ -152,7 +152,7 @@ test('autonomous: tasks in one project run one at a time; discard deletes the br
   assert.equal(t.g('branch', '--list', second.branch).trim(), '')
 })
 
-test('autonomous: your unsaved edits are saved as a commit before a task starts, and review actions wait for running agents', async () => {
+test('autonomous: your unsaved edits are saved as a commit before a task starts; a change its agent is still adding to waits', async () => {
   const t = setup()
   writeFileSync(join(t.dir, 'game.luau'), 'print("my unsaved work")\n')
   t.runner.send(t.project.id, 'main', 'change y')
@@ -165,7 +165,7 @@ test('autonomous: your unsaved edits are saved as a commit before a task starts,
   assert.deepEqual(r.files, ['change_y.luau'], "the review holds only the agent's work")
   t.runner.send(t.project.id, 'main', 'change z')
   await until(() => t.gates.length === 2)
-  await assert.rejects(t.actions.merge(r.id), /agent is working/)
+  await assert.rejects(t.actions.merge(r.id), /still adding to this change/)
   t.gates[1]!()
   // A follow-up in the same conversation: added to the same review.
   await until(() => t.reviews.get(r.id).messages === 2)
@@ -176,9 +176,8 @@ test('autonomous: a task that changes nothing leaves no branch or review; a stop
   t.runner.send(t.project.id, 'main', 'just look around')
   await until(() => t.gates.length === 1)
   t.gates[0]!()
-  await until(() => t.status('main') === 'idle' && !t.runner.projectBusy(t.project.id))
+  await until(() => t.status('main') === 'idle' && t.g('branch', '--list', 'hangar/*').trim() === '')
   assert.equal(t.reviews.list().length, 0)
-  assert.equal(t.g('branch', '--list', 'hangar/*').trim(), '')
 
   t.runner.send(t.project.id, 'main', 'change then stop')
   await until(() => t.gates.length === 2)
@@ -321,4 +320,37 @@ test('one conversation is one review: follow-ups add to it; after a merge, or fo
   await until(() => t.gates.length === 4)
   t.gates[3]!()
   await until(() => t.reviews.list().length === 3)
+})
+
+test('autonomous: different agents work at the same time, each in its own copy, and merges don\'t wait for them', async () => {
+  const { saveRole } = await import('../src/main/roles')
+  const t = setup()
+  saveRole(t.dir, { id: 'scripter', name: 'Scripter', description: 'code', prompt: 'Write code.' })
+  t.g('add', '.')
+  t.g('commit', '-qm', 'roles')
+  t.runner.send(t.project.id, 'main', 'change one')
+  await until(() => t.gates.length === 1)
+  t.gates[0]!()
+  await until(() => t.reviews.list().length === 1)
+  const first = t.reviews.list()[0]!
+  // Two agents at once.
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'change two')
+  t.runner.send(t.project.id, 'scripter', 'change three')
+  await until(() => t.gates.length === 3)
+  assert.equal(t.maxActive(), 2, 'both ran at the same time')
+  assert.notEqual(t.cwds[1], t.cwds[2], 'each in its own copy')
+  assert.equal(await currentBranch(t.dir), 'main')
+  // A merge goes through while they work.
+  await t.actions.merge(first.id)
+  assert.equal(t.reviews.get(first.id).status, 'merged')
+  assert.equal(existsSync(join(t.dir, 'change_one.luau')), true)
+  t.gates[1]!()
+  t.gates[2]!()
+  await until(() => t.reviews.list().filter((r) => r.status === 'pending').length === 2)
+  const pending = t.reviews.list().filter((r) => r.status === 'pending')
+  assert.deepEqual(pending.map((r) => r.files).flat().sort(), ['change_three.luau', 'change_two.luau'])
+  // The merge made while they ran is kept, not "put back".
+  assert.ok(pending.every((r) => !/put them back/.test(r.note ?? '')))
+  assert.equal(existsSync(join(t.dir, 'change_one.luau')), true)
 })

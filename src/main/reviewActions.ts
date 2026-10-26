@@ -10,6 +10,9 @@ import type { ProjectRegistry } from './projects'
 import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 
+/** Refusing to merge a change its agent is still working on. */
+const BRANCH_BUSY = 'An agent is still adding to this change. Merge it once it has finished.'
+
 const CLIP_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -85,6 +88,7 @@ export class ReviewActions {
     if (warnings.length && !opts.force) throw new Error(`${warnings.join(' ')} Choose "Merge anyway" to merge regardless.`)
     const unseen = warnings.filter((w) => !(opts.acknowledged ?? []).includes(w))
     if (unseen.length) throw new Error(`Something changed since you looked: ${unseen.join(' ')} Look again before merging.`)
+    if (this.deps.runner.branchInUse(review.projectId, review.branch)) throw new Error(BRANCH_BUSY)
     return this.deps.runner.withProjectLock(review.projectId, () => this.mergeHeld(review, root))
   }
 
@@ -250,8 +254,9 @@ export class ReviewActions {
         this.mergeWhenFixed.set(id, { tries: 0 })
         continue
       }
-      // Still being checked: wait for it (the next review update tries again), keeping the order.
-      if (r.checks?.status === 'running' || r.aiReview?.status === 'running') return
+      // Still being checked, or its agent is still adding to it: wait (the next review update tries again), keeping
+      // the order.
+      if (r.checks?.status === 'running' || r.aiReview?.status === 'running' || this.deps.runner.branchInUse(projectId, r.branch)) return
       const warnings = mergeWarnings(r)
       const unseen = warnings.filter((w) => !(q.acknowledged[id] ?? []).includes(w))
       if (unseen.length) {

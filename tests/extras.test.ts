@@ -291,7 +291,8 @@ test('researcher: only web tools, no project access, never a subagent; findings 
 
   // Other agents never get the researcher as a subagent, and don't see research before approval.
   t.runner.send(t.project.id, 'lead', 'plan the shop')
-  await until(() => t.calls.length === 2 && t.status('lead') === 'idle' && !t.runner.projectBusy(t.project.id))
+  // Done once its copy of the game is removed (the task is wrapped up).
+  await until(() => t.calls.length === 2 && t.status('lead') === 'idle' && t.g('worktree', 'list').trim().split('\n').length === 1)
   const lead = t.calls[1]!.options
   assert.ok(!Object.keys(lead.agents as object).includes('researcher'))
   assert.doesNotMatch(String((lead.systemPrompt as { append: string }).append), /research\/ folder/)
@@ -299,6 +300,7 @@ test('researcher: only web tools, no project access, never a subagent; findings 
   // Approving saves it to research/ and commits only that file.
   writeFileSync(join(t.dir, 'scratch.txt'), 'uncommitted user work')
   t.registry.update(t.project.id, { settings: { autonomous: false } })
+  await until(() => !t.runner.projectBusy(t.project.id))
   const approved = await t.actions.merge(r.id)
   assert.equal(approved.status, 'merged')
   const saved = approved.research!.savedAs!
@@ -610,9 +612,15 @@ test('audit2: review actions hold the project, so no task can start in the middl
   t.runner.send(t.project.id, 'main', 'change while merging')
   await tick(30)
   assert.equal(t.calls.length, 0, 'task waits')
-  await assert.rejects(t.runner.withProjectLock(t.project.id, async () => 1), /working in this project/)
+  // Another operation on the game folder takes its turn after this one, instead of being refused.
+  let second = false
+  const next = t.runner.withProjectLock(t.project.id, async () => (second = true))
+  await tick(30)
+  assert.equal(second, false, 'waits its turn')
   release()
   await held
+  await next
+  assert.equal(second, true)
   await until(() => t.calls.length === 1)
 })
 
