@@ -47,12 +47,18 @@ export interface AutopilotDeps {
   emit: (e: AgentEvent) => void
   send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin'] }) => void
   merge: (reviewId: string) => Promise<unknown>
+  /** Hand a merge clash to the agent that made the change (used while you're away). */
+  fixClash?: (reviewId: string) => unknown
 }
+
+/** Tries at resolving one change's clash on its own before it waits for you. */
+export const MAX_CLASH_FIXES = 2
 
 /** Why a finished task can't be merged without you (null = it can). */
 export function autoMergeBlocker(review: Review): string | null {
   if (review.kind === 'research') return 'Research always needs your approval.'
   if (review.incomplete) return 'The task stopped before it finished.'
+  if (review.clash) return review.clash.fixing ? 'An agent is resolving its clash with the main branch.' : `It clashes with newer work on ${review.base}. Use Fix with AI, or discard it.`
   if (review.note) return review.note
   // Never merge changes to files that decide how code, tools or agents run without a person looking.
   const sensitive = review.files.filter((f) => isProtectedPath(f) || runsAsCode(f))
@@ -529,6 +535,17 @@ Reply with only these sections, short and concrete:
     // Checks and the reviewer agent are still working.
     if (review.checks?.status === 'running' || review.aiReview?.status === 'running') return
     if (st.status !== 'running' && st.status !== 'waiting') return
+    // A clash: while you're away, the agent that made the change resolves it (a couple of tries at most); the fixed
+    // change then goes through the checks and the reviewer again and comes back here.
+    if (review.clash?.fixing) return
+    if (review.clash && st.config.autoMerge && this.isAway(review.projectId) && this.deps.fixClash && (review.clashFixes ?? 0) < MAX_CLASH_FIXES) {
+      try {
+        this.deps.fixClash(reviewId)
+        return
+      } catch {
+        // falls through: it waits for you
+      }
+    }
     const blocker = autoMergeBlocker(review)
     if (st.config.autoMerge && blocker === null) {
       if (this.merging.has(reviewId)) return
@@ -536,6 +553,14 @@ Reply with only these sections, short and concrete:
       void this.deps
         .merge(reviewId)
         .catch((err: Error) => {
+          // A clash is recorded on the review: decide again with that (resolve it, or wait).
+          let now: Review | null = null
+          try {
+            now = this.deps.reviews.get(reviewId)
+          } catch {
+            // gone
+          }
+          if (now?.clash && now.status === 'pending') return this.evaluate(reviewId)
           if (this.isAway(review.projectId)) return this.leaveForMorning(review)
           this.put({ ...this.get(review.projectId), status: 'waiting', reason: `Couldn't merge “${this.reviewTitle(review)}” automatically: ${err.message}` })
         })

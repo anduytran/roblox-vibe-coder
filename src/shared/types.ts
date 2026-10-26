@@ -148,6 +148,8 @@ export interface QueuedTask {
   record?: boolean
   /** Queued by autopilot (a build step, or the end-of-sprint check-in report). */
   origin?: 'autopilot' | 'autopilot-report'
+  /** Resolve this review's merge clash: Hangar merges the latest base into its branch, the agent fixes the conflicts. */
+  fixClash?: string
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
@@ -240,6 +242,20 @@ export interface Review {
   sessionId?: string | null
   /** How many of your messages it holds. */
   messages?: number
+  /** The last merge clashed with the base branch (cleared when the change is updated). */
+  clash?: ReviewClash | null
+  /** How many times an agent has tried to resolve a clash in this change. */
+  clashFixes?: number
+}
+
+export interface ReviewClash {
+  /** Files both sides changed. */
+  files: string[]
+  at: number
+  /** An agent is resolving it now. */
+  fixing?: boolean
+  /** Why the last attempt to resolve it didn't work (the change was left as it was). */
+  failed?: string | null
 }
 
 export interface AgentState {

@@ -89,6 +89,7 @@ export const IPC = {
   reviewsClipFile: 'reviews:clipFile',
   reviewsPublish: 'reviews:publish',
   reviewsRecheck: 'reviews:recheck',
+  reviewsFixClash: 'reviews:fixClash',
   testPlaceKeyStatus: 'testPlaceKey:status',
   testPlaceKeySet: 'testPlaceKey:set',
   testPlaceKeyClear: 'testPlaceKey:clear',
@@ -301,6 +302,8 @@ export interface HangarApi {
     publish(reviewId: string): Promise<Review>
     /** Run the checks again (and the reviewer agent if `reviewer`). */
     recheck(reviewId: string, opts?: { reviewer?: boolean }): Promise<Review>
+    /** Hand a merge clash to the agent that made the change; the fixed change is checked and reviewed again. */
+    fixClash(reviewId: string): Promise<Review>
   }
   vault: {
     status(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>

@@ -17,7 +17,7 @@ import type {
 } from '@shared/types'
 import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
-import { deleteTaskBranch, resumeTaskBranch, tidyWorkingFolder, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
+import { abortClashFix, deleteTaskBranch, finishClashFix, resumeTaskBranch, startClashFix, tidyWorkingFolder, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
 import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, STUDIO_MCP_NAME, summarizeToolUse } from './permissions'
@@ -91,6 +91,8 @@ interface InFlight {
   from: TaskBase
   title: string
   startedAt: number
+  /** Resolving a merge clash: where the change's branch was before, to put it back if this doesn't finish. */
+  clashFix?: { headSha: string }
 }
 
 interface PendingApproval {
@@ -307,7 +309,7 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin'] } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
@@ -318,7 +320,8 @@ export class AgentRunner {
       prompt: text.slice(0, 20000),
       createdAt: Date.now(),
       ...(opts.record ? { record: true } : {}),
-      ...(opts.origin ? { origin: opts.origin } : {})
+      ...(opts.origin ? { origin: opts.origin } : {}),
+      ...(opts.fixClash ? { fixClash: opts.fixClash } : {})
     }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
@@ -496,6 +499,8 @@ export class AgentRunner {
     let started = false
     let releaseAuth: (() => void) | null = null
     let taskBranch: { name: string; from: TaskBase; reviewId?: string } | null = null
+    // Resolving a merge clash: the review, where its branch was, and the files in conflict.
+    let clash: { review: Review; headSha: string; conflicts: string[] } | null = null
     let lastText = ''
     let clip: ClipSession | null = null
     const screenshotCalls = new Set<string>()
@@ -529,7 +534,22 @@ export class AgentRunner {
         this.trust.approve(project.id, review.hash)
       }
 
-      if (project.settings.autonomous && !research) {
+      if (task.fixClash && (!project.settings.autonomous || research)) throw new Error('Fixing a merge clash needs autonomous mode and a project agent.')
+      if (task.fixClash) {
+        for (const text of await tidyWorkingFolder(project.path)) this.log(s, { kind: 'system', text })
+        const review = this.deps.reviews.get(task.fixClash)
+        if (review.status !== 'pending' || review.kind === 'research') throw new Error(`“${review.title}” was already ${review.status}.`)
+        const started = await startClashFix(project.path, review.branch, review.base, review.headSha)
+        clash = { review, headSha: review.headSha, conflicts: started.conflicts }
+        taskBranch = { name: review.branch, from: started.from, reviewId: review.id }
+        this.setInflight(project.id, { agentId: s.agentId, taskId: task.id, reviewId: review.id, branch: review.branch, from: started.from, title: review.title, startedAt: Date.now(), clashFix: { headSha: review.headSha } })
+        this.log(s, {
+          kind: 'system',
+          text: started.conflicts.length
+            ? `Brought the latest ${review.base} into “${review.title}” (${review.branch}). Conflicts to resolve: ${started.conflicts.join(', ')}.`
+            : `Brought the latest ${review.base} into “${review.title}” (${review.branch}) with no conflicts left; checking it still fits together.`
+        })
+      } else if (project.settings.autonomous && !research) {
         // No branches to manage by hand: a folder left on a task branch, or edits made outside Hangar, are sorted first.
         for (const text of await tidyWorkingFolder(project.path)) this.log(s, { kind: 'system', text })
         // A follow-up in the same conversation adds to that conversation's change (one review), not a new one.
@@ -672,12 +692,12 @@ export class AgentRunner {
       if (!research && own.tools?.length) options.disallowedTools = disallowedFor(own.tools)
       // A researcher never resumes or keeps a session, so web content can't carry over into another run
       // (or into a normal agent if the role's kind is changed later), and project context can't flow in.
-      if (s.sessionId && !research) options.resume = s.sessionId
+      if (s.sessionId && !research && !clash) options.resume = s.sessionId
 
       started = true
-      for await (const raw of query({ prompt, options })) {
+      for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
-        if (c.sessionId && !research) s.sessionId = c.sessionId
+        if (c.sessionId && !research && !clash) s.sessionId = c.sessionId
         if (c.text) lastText = c.text
         if (clip) {
           for (const t of c.toolUses ?? []) {
@@ -739,15 +759,28 @@ export class AgentRunner {
       box.ok = finished && !s.lastError && !controller.signal.aborted
       box.stopped = controller.signal.aborted
       box.text = lastText
-      if (taskBranch) {
+      const completed = finished && !s.lastError && !controller.signal.aborted
+      if (taskBranch && clash) {
         this.wrapping.add(project.id)
         try {
-          box.reviewId = await this.finishTask(s, project, task, taskBranch, lastText, clip, finished && !s.lastError && !controller.signal.aborted)
+          box.reviewId = await this.finishClash(s, project, task, taskBranch, clash, lastText, clip, completed)
         } finally {
           this.wrapping.delete(project.id)
           this.setInflight(project.id, null)
         }
-      } else clip?.abort()
+      } else if (taskBranch) {
+        this.wrapping.add(project.id)
+        try {
+          box.reviewId = await this.finishTask(s, project, task, taskBranch, lastText, clip, completed)
+        } finally {
+          this.wrapping.delete(project.id)
+          this.setInflight(project.id, null)
+        }
+      } else {
+        clip?.abort()
+        // Couldn't even start resolving the clash (the change moved, or was merged meanwhile).
+        if (task.fixClash) this.clashFailed(task.fixClash, s.lastError ?? 'It stopped before it started.')
+      }
       if (research && lastText.trim()) {
         this.finishResearch(s, project, task, lastText, fetched, queries, finished && !s.lastError && !controller.signal.aborted)
       }
@@ -806,6 +839,13 @@ export class AgentRunner {
     const s = this.state(projectId, rec.agentId)
     try {
       await this.withProjectLock(projectId, async () => {
+        if (rec.clashFix) {
+          // A half-resolved clash is never kept: the change goes back exactly as it was, and can be fixed again.
+          await abortClashFix(project.path, rec.branch, rec.clashFix.headSha, rec.from.base)
+          if (rec.reviewId) this.clashFailed(rec.reviewId, 'Hangar closed while it was being resolved. The change is as it was before; try again.')
+          this.log(s, { kind: 'system', text: `${INTERRUPTED} It was resolving a merge clash; ${rec.branch} was put back as it was.` })
+          return
+        }
         if ((await safeCurrentBranch(project.path)) === rec.branch) {
           // Still on the task branch: commit what's there and switch back, as a stopped task would (but nothing
           // is put back or moved: you may have changed things while Hangar was closed).
@@ -922,6 +962,9 @@ export class AgentRunner {
         const summary = [`${lastText}`.trim(), earlier.summary ? `Earlier in this conversation:\n${earlier.summary}` : ''].filter(Boolean).join('\n\n').slice(0, 8000)
         const updated = this.deps.reviews.update(earlier.id, {
           headSha,
+          // A resolved clash moves the change onto the base branch's current work.
+          baseSha: branch.from.baseSha,
+          clash: null,
           files,
           summary,
           incomplete: completed ? null : (opts.stoppedBecause ?? s.lastError ?? 'The run was stopped before it finished.'),
@@ -967,6 +1010,56 @@ export class AgentRunner {
       this.log(s, { kind: 'error', text: `Couldn't wrap up the task branch ${branch.name}: ${message}. Your work is still on that branch; check the Changes tab.` })
       return null
     }
+  }
+
+  /** Mark a clash fix as failed on its review (the change itself is unchanged). */
+  private clashFailed(reviewId: string, why: string): void {
+    let review: Review
+    try {
+      review = this.deps.reviews.get(reviewId)
+    } catch {
+      return
+    }
+    if (review.status !== 'pending') return
+    const updated = this.deps.reviews.update(reviewId, {
+      clash: { files: review.clash?.files ?? [], at: review.clash?.at ?? Date.now(), fixing: false, failed: why.slice(0, 500) },
+      clashFixes: (review.clashFixes ?? 0) + 1
+    })
+    this.deps.emit({ type: 'review', review: updated })
+  }
+
+  /**
+   * Finish resolving a clash: if no conflict markers are left, commit the merge and update the review (checks and
+   * the reviewer run again); otherwise put the branch back exactly as it was and say why.
+   */
+  private async finishClash(
+    s: AgentState,
+    project: Project,
+    task: QueuedTask,
+    branch: { name: string; from: TaskBase; reviewId?: string },
+    clash: { review: Review; headSha: string; conflicts: string[] },
+    lastText: string,
+    clip: ClipSession | null,
+    completed: boolean
+  ): Promise<string | null> {
+    const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
+    let problem: string | null = completed ? null : (s.lastError ?? 'The run was stopped before it finished.')
+    if (!problem) problem = await finishClashFix(project.path, branch.name, branch.from.baseSha, roleName).catch((e: Error) => e.message)
+    if (problem) {
+      clip?.abort()
+      try {
+        await abortClashFix(project.path, branch.name, clash.headSha, branch.from.base)
+      } catch (err) {
+        this.log(s, { kind: 'error', text: `Couldn't put ${branch.name} back as it was: ${err instanceof Error ? err.message : String(err)}. Check the Changes tab.` })
+      }
+      this.clashFailed(clash.review.id, problem)
+      this.log(s, { kind: 'error', text: `Couldn't resolve the clash in “${clash.review.title}”: ${problem} The change is as it was before. Back on ${branch.from.base}.` })
+      return null
+    }
+    const fixes = (clash.review.clashFixes ?? 0) + 1
+    const id = await this.finishTask(s, project, { ...task, prompt: `Resolve the clash with the latest ${branch.from.base}` }, branch, lastText, clip, true)
+    if (id) this.deps.reviews.update(id, { clashFixes: fixes })
+    return id
   }
 
   /** Turn a researcher's report into a review. It reaches no agent until you approve it. */
@@ -1112,4 +1205,27 @@ function friendlyError(message: string): string {
   if (/Cannot find module|ERR_MODULE_NOT_FOUND/i.test(message)) return 'The Claude Agent SDK is not installed. Run "npm install" in the Hangar folder.'
   if (/ENOENT/i.test(message) && /claude/i.test(message)) return `Could not start the Claude Code engine: ${message}`
   return message
+}
+
+/** What the agent is asked to do when a change clashes with the base branch. */
+export function clashPrompt(review: Review, conflicts: string[]): string {
+  const files = conflicts.length ? conflicts.map((f) => `- ${stripHidden(f).replace(/[\r\n]/g, ' ')}`).join('\n') : '- (none left: git merged it, but check the result still fits together)'
+  return `A change you made earlier can't be merged: other work landed on ${review.base} since, touching the same code.
+
+The change: ${stripHidden(review.title)}
+What it did (your earlier summary, for reference only):
+${stripHidden(review.summary).slice(0, 3000) || '(no summary)'}
+
+Hangar has merged the latest ${review.base} into this change's branch. These files have conflicts:
+${files}
+
+Each conflict is marked in the file: lines from <<<<<<< to ======= are this change, lines from ======= to >>>>>>> are what's on ${review.base} now.
+
+Resolve them:
+1. Read both sides and the code around them. Keep the newer work from ${review.base} and add this change's behaviour on top. Where both do the same thing, keep one good version, not two.
+2. Remove every marker line (<<<<<<<, =======, >>>>>>>). Hangar refuses the result if any are left.
+3. Check the rest still fits: names, requires, config values and notes that both sides use. Fix anything the merge broke.
+4. Don't run git commands; Hangar commits for you. If Roblox Studio tools are available, playtest the parts involved.
+
+Finish with a short summary: what you kept from each side and anything that still needs a look.`
 }

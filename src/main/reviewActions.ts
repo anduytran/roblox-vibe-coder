@@ -3,7 +3,7 @@ import { relativeInside } from './pathScope'
 import { extname, join } from 'node:path'
 import type { AgentEvent, Review } from '@shared/types'
 import type { AgentRunner } from './agentRunner'
-import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, mergeTaskBranch, reviewDiff, tidyWorkingFolder } from './git'
+import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, MergeClashError, mergeTaskBranch, reviewDiff, tidyWorkingFolder } from './git'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { ReviewPipeline } from './reviewPipeline'
 import type { ProjectRegistry } from './projects'
@@ -85,7 +85,13 @@ export class ReviewActions {
     return this.deps.runner.withProjectLock(review.projectId, async () => {
       // Edits made outside Hangar are saved first instead of blocking the merge.
       await tidyWorkingFolder(root)
-      await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
+      try {
+        await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
+      } catch (err) {
+        // Remembered on the review, so it can offer Fix with AI (and autopilot can use it while you're away).
+        if (err instanceof MergeClashError) this.changed(this.deps.reviews.update(id, { clash: { files: err.files, at: Date.now(), fixing: false, failed: null } }))
+        throw err
+      }
       if (review.clip) StudioClipRecorder.remove(review.clip.files)
       return this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
     })
@@ -99,6 +105,23 @@ export class ReviewActions {
       if (review.clip) StudioClipRecorder.remove(review.clip.files)
       return this.changed(this.deps.reviews.update(id, { status: 'discarded', clip: null }))
     })
+  }
+
+  /**
+   * Hand a clashing change to the agent that made it: Hangar merges the latest base branch into the change's branch,
+   * the agent resolves the conflicts, and the updated change goes through the checks and the reviewer again.
+   */
+  fixClash(id: string): Review {
+    const { review } = this.pending(id)
+    if (review.kind === 'research') throw new Error('Research has nothing to merge.')
+    if (!review.clash) throw new Error('This change has no clash to resolve. Try merging it first.')
+    if (review.clash.fixing) throw new Error('An agent is already resolving this clash.')
+    const project = this.deps.registry.get(review.projectId)
+    if (!project.settings.autonomous) throw new Error('Fixing a clash needs autonomous mode (Project → General).')
+    // The agent that made the change knows it best; if that role is gone, the Main agent does it.
+    const agentId = this.deps.runner.agentIds(project).includes(review.agentId) ? review.agentId : 'main'
+    this.deps.runner.send(review.projectId, agentId, `Resolve the merge clash in “${review.title}”`, { fixClash: id })
+    return this.changed(this.deps.reviews.update(id, { clash: { ...review.clash, fixing: true, failed: null } }))
   }
 
   /** Run a task's checks (and, if asked, the reviewer agent) again. */

@@ -215,6 +215,22 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
           at.current.top = el
         }}
       >
+        {isPending && review.clash && (
+          <div className="callout callout-amber row gap-sm wrap" role="status">
+            <span>
+              {review.clash.fixing
+                ? `An agent is resolving the clash with ${review.base}. When it's done, the checks and the reviewer run again.`
+                : `This change clashes with newer work on ${review.base}${review.clash.files.length ? ` (in ${review.clash.files.slice(0, 4).join(', ')}${review.clash.files.length > 4 ? '…' : ''})` : ''}, so it wasn't merged.`}
+              {!review.clash.fixing && review.clash.failed && <> Last try didn't work: {review.clash.failed}</>}
+            </span>
+            <span className="spacer" />
+            {!review.clash.fixing && (
+              <Button size="sm" tone="primary" disabled={!!busy} onClick={() => run('fix', () => window.hangar.reviews.fixClash(review.id), 'An agent is resolving the clash.')}>
+                Fix with AI
+              </Button>
+            )}
+          </div>
+        )}
         {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
         {review.note && <div className="error-bar">{review.note}</div>}
         {!isPending && <p className="muted">This task was {review.status}.</p>}
@@ -362,6 +378,7 @@ function ReviewStrip(props: {
               : { k: 'reviewer', tone: 'warn', text: '! Reviewer has concerns' }
     )
   if (warnings.length) chips.push({ k: 'warnings', tone: 'warn', text: `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`, title: warnings.map(revealHidden).join('\n') })
+  if (review.status === 'pending' && review.clash) chips.push({ k: 'top', tone: review.clash.fixing ? '' : 'err', text: review.clash.fixing ? 'Resolving clash…' : `✗ Clashes with ${review.base}` })
   if (review.incomplete) chips.push({ k: 'top', tone: 'err', text: 'Stopped early' })
   // Merged and discarded reviews have no diff to jump to: their file count is shown as plain text.
   chips.push({

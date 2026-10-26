@@ -349,6 +349,10 @@ function reviewView(r) {
       h('div', { class: 'small muted' }, r.agent + ' · ' + (project ? project.name : '') + ' · branch ' + r.branch),
       r.incomplete ? h('div', { class: 'small' }, '⚠ ' + r.incomplete) : null,
       r.note ? h('div', { class: 'small' }, '⚠ ' + r.note) : null,
+      r.clash ? h('div', { class: 'small' }, r.clash.fixing
+        ? 'An agent is resolving the clash with ' + r.base + '. The checks and the reviewer run again after.'
+        : '⚠ Clashes with newer work on ' + r.base + (r.clash.files.length ? ' (' + r.clash.files.slice(0, 4).join(', ') + ')' : '') + ', so it was not merged.' + (r.clash.failed ? ' Last try did not work: ' + r.clash.failed : '')) : null,
+      r.clash && !r.clash.fixing ? h('button', { class: 'btn primary', onclick: () => act(async () => { await api('/api/reviews/' + r.id + '/fixclash', { method: 'POST', body: {} }); done('An agent is resolving the clash')() }) }, 'Fix with AI') : null,
       clipBox,
       checksSection(r),
       aiSection(r),

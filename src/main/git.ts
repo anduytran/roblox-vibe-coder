@@ -489,6 +489,87 @@ async function restoreOtherRefs(root: string, from: TaskBase, branch: string): P
 /** The task branch no longer builds on where the task started: kept for you to look at, never reviewed or merged. */
 export class RewrittenBranchError extends Error {}
 
+/** A merge refused because the change and the base branch both changed the same lines. */
+export class MergeClashError extends Error {
+  constructor(
+    message: string,
+    readonly files: string[]
+  ) {
+    super(message)
+  }
+}
+
+const hasMergeHead = (root: string): Promise<boolean> => git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true, () => false)
+
+/** Lines git writes around a conflict. */
+const MARKERS = ['^<<<<<<<( |$)', '^>>>>>>>( |$)', '^\\|\\|\\|\\|\\|\\|\\|( |$)']
+
+/**
+ * Start fixing a clash: the review's branch, with the latest base branch merged in and the conflicts left in the
+ * files for an agent to resolve. The task's starting point becomes the base's current commit, so once fixed, the
+ * review shows (and merges) only the change on top of what's there now.
+ */
+export async function startClashFix(root: string, branch: string, base: string, headSha: string): Promise<{ from: TaskBase; conflicts: string[] }> {
+  assertTaskBranch(branch)
+  if (!SHA.test(headSha)) throw new Error('Invalid review.')
+  let from = await prepareTaskBase(root)
+  if (from.base !== base) {
+    await git(root, ['checkout', base])
+    from = await prepareTaskBase(root)
+  }
+  const tip = (await git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
+  if (tip !== headSha) throw new Error('The change\'s branch moved since it was reviewed, so Hangar won\'t fix it automatically.')
+  await git(root, ['checkout', branch])
+  let conflicts: string[] = []
+  try {
+    await git(root, ['merge', '--no-ff', '--no-commit', from.baseSha])
+  } catch (e) {
+    conflicts = conflictedFiles((await gitStatus(root)).files)
+    if (!conflicts.length) {
+      await abortClashFix(root, branch, headSha, from.base)
+      throw e
+    }
+  }
+  return { from, conflicts }
+}
+
+/** Files that still hold conflict marker lines (tracked or new, in the working folder). */
+export async function filesWithMarkers(root: string): Promise<string[]> {
+  const out = await git(root, ['grep', '-l', '-I', '--untracked', '-E', ...MARKERS.flatMap((m) => ['-e', m]), '--'], { okExitCodes: [1] })
+  return out.split('\n').map((l) => l.trim()).filter(Boolean)
+}
+
+/**
+ * Check the agent's fix and commit it as the merge. Returns why it can't be used (and changes nothing), or null when
+ * it was committed. The caller then finishes the task as usual (switch back, update the review).
+ */
+export async function finishClashFix(root: string, branch: string, baseSha: string, agentName: string): Promise<string | null> {
+  assertTaskBranch(branch)
+  await assertSafeRepo(root)
+  if ((await currentBranch(root)) !== branch) return 'The agent switched branches.'
+  const left = await filesWithMarkers(root)
+  if (left.length) return `Conflict markers are still in ${left.slice(0, 4).join(', ')}${left.length > 4 ? '…' : ''}.`
+  if (await hasMergeHead(root)) {
+    await git(root, ['add', '-A'])
+    const who = agentName.replace(/[<>\n]/g, '').slice(0, 40)
+    await git(root, ['-c', `user.name=Hangar (${who})`, '-c', 'user.email=hangar@localhost', 'commit', '--no-verify', '-m', 'Bring in the latest work and resolve the clash'])
+  }
+  // The fix must sit on top of the base's current work (an agent running git itself could have undone the merge).
+  const onTop = await git(root, ['merge-base', '--is-ancestor', baseSha, 'HEAD']).then(() => true, () => false)
+  return onTop ? null : 'The latest work from the main branch is no longer part of the change.'
+}
+
+/** Put the change's branch back exactly as it was before the fix, and the folder back on the base branch. */
+export async function abortClashFix(root: string, branch: string, headSha: string, base: string): Promise<void> {
+  assertTaskBranch(branch)
+  if (!SHA.test(headSha)) throw new Error('Invalid review.')
+  await assertSafeRepo(root)
+  if (await hasMergeHead(root)) await git(root, ['merge', '--abort']).catch(() => undefined)
+  if ((await currentBranch(root)) === branch) await git(root, ['reset', '--hard', '-q', headSha])
+  else await git(root, ['update-ref', `refs/heads/${branch}`, headSha])
+  await git(root, ['checkout', base])
+}
+
 export interface FinishedTask {
   files: string[]
   /** The task branch's final commit; what the review shows and what merge applies. */
@@ -607,8 +688,9 @@ export async function mergeTaskBranch(root: string, base: string, branch: string
     const conflicts = conflictedFiles((await gitStatus(root).catch(() => null))?.files ?? [])
     await git(root, ['reset', '--hard', '-q', 'HEAD'])
     if (conflicts.length) {
-      throw new Error(
-        `This change clashes with work already on ${base} (in ${conflicts.slice(0, 4).join(', ')}${conflicts.length > 4 ? '…' : ''}). Nothing was merged. Discard it, or ask the agent to redo it on top of the latest ${base}.`
+      throw new MergeClashError(
+        `This change clashes with work already on ${base} (in ${conflicts.slice(0, 4).join(', ')}${conflicts.length > 4 ? '…' : ''}). Nothing was merged. Use Fix with AI, or discard it.`,
+        conflicts
       )
     }
     throw e

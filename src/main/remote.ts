@@ -381,7 +381,7 @@ export class RemoteServer {
         res.writeHead(200, { 'content-type': type, 'content-length': size, 'cache-control': 'no-store', ...this.securityHeaders() })
         return void stream.pipe(res)
       }
-      if (method === 'POST' && (c === 'merge' || c === 'discard' || c === 'publish' || c === 'recheck')) {
+      if (method === 'POST' && (c === 'merge' || c === 'discard' || c === 'publish' || c === 'recheck' || c === 'fixclash')) {
         const body = c === 'merge' || c === 'recheck' ? await this.body(req) : {}
         const review: Review =
           c === 'merge'
@@ -393,7 +393,9 @@ export class RemoteServer {
               ? await this.deps.reviews.discard(b)
               : c === 'recheck'
                 ? await this.deps.reviews.recheck(b, { reviewer: body.reviewer === true })
-                : await this.deps.reviews.publish(b)
+                : c === 'fixclash'
+                  ? this.deps.reviews.fixClash(b)
+                  : await this.deps.reviews.publish(b)
         return this.json(res, 200, { review })
       }
     }

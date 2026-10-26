@@ -447,7 +447,8 @@ app.whenReady().then(() => {
     costs,
     emit,
     send: (projectId, agentId, prompt, opts) => runner.send(projectId, agentId, prompt, opts),
-    merge: (id) => reviewActions.merge(id)
+    merge: (id) => reviewActions.merge(id),
+    fixClash: (id) => reviewActions.fixClash(id)
   })
   const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
   const explainer = new ApprovalExplainer({
@@ -674,6 +675,7 @@ app.whenReady().then(() => {
       acknowledged: Array.isArray(opts?.acknowledged) ? opts.acknowledged.filter((w): w is string => typeof w === 'string').slice(0, 20) : []
     })
   )
+  handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))
   handle(IPC.reviewsCheckout, (id: unknown) => reviewActions.checkout(str(id, 'review')))
