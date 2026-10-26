@@ -314,19 +314,37 @@ export class AgentRunner {
     }
   }
 
-  stopAll(): void {
+  /** Stops every agent and empties every queue; returns what was taken out of the queues. */
+  stopAll(): { projectId: string; tasks: QueuedTask[] }[] {
+    const removed: { projectId: string; tasks: QueuedTask[] }[] = []
     for (const s of this.states.values()) {
+      if (s.queue.length) removed.push({ projectId: s.projectId, tasks: s.queue })
       s.queue = []
       this.stop(s.projectId, s.agentId)
       this.publish(s)
     }
+    return removed
   }
 
-  clearQueue(projectId: string, agentId: string): void {
+  /** Empties an agent's queue; returns what was taken out (autopilot pauses if one of them was its step). */
+  clearQueue(projectId: string, agentId: string): QueuedTask[] {
     const s = this.state(projectId, agentId)
+    const removed = s.queue
     s.queue = []
     if (s.status === 'queued') s.status = 'idle'
     this.publish(s)
+    return removed
+  }
+
+  /** Takes one task out of an agent's queue (not one that has started). Returns it, or null if it's gone already. */
+  removeQueued(projectId: string, agentId: string, taskId: string): QueuedTask | null {
+    const s = this.state(projectId, agentId)
+    const i = s.queue.findIndex((t) => t.id === taskId)
+    if (i < 0) return null
+    const [task] = s.queue.splice(i, 1)
+    if (s.status === 'queued' && !s.queue.length) s.status = 'idle'
+    this.publish(s)
+    return task!
   }
 
   resetSession(projectId: string, agentId: string): void {

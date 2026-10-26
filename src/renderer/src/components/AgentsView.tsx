@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentState, LogEntry, Project, Role } from '@shared/types'
-import { attempt, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AgentState, LogEntry, Project, QueuedTask, Role } from '@shared/types'
+import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '@shared/feed'
+import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
+import { attempt, confirmDialog, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
@@ -106,21 +108,52 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
   const approvals = useMemo(() => allApprovals.filter((a) => a.projectId === project.id && a.agentId === role.id), [allApprovals, project.id, role.id])
   const [draft, setDraft] = useState('')
   const [record, setRecord] = useState(false)
+  // Grouped by default; the raw log shows every entry exactly as it was recorded.
+  const [raw, setRaw] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
-  const log = state?.log ?? []
+  const log = state?.log ?? EMPTY_LOG
   const busy = state?.status === 'working' || state?.status === 'awaiting_approval'
+  const items = useMemo(() => (raw ? [] : groupFeed(log)), [log, raw])
+  // The tool calls and runs you opened. Kept here, not in each row, so a row stays open when its stretch of
+  // calls folds into a run.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+  const setOpen = useCallback((keys: string[], on: boolean) => {
+    setOpened((prev) => {
+      const next = new Set(prev)
+      for (const k of keys) {
+        if (on) next.add(k)
+        else next.delete(k)
+      }
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     const el = feedRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [log[log.length - 1]?.id, log.length, approvals.length])
+  }, [log[log.length - 1]?.id, log.length, approvals.length, raw])
 
   const send = (): void => {
     const text = draft.trim()
     if (!text) return
     setDraft('')
     void attempt(() => window.hangar.agents.send(project.id, role.id, text, { record }))
+  }
+  // Taking autopilot's own step out of the queue pauses autopilot, so it never waits on a task that won't run.
+  const confirmAutopilot = (tasks: QueuedTask[]): Promise<boolean> =>
+    tasks.some((t) => t.origin)
+      ? confirmDialog({ title: "Remove autopilot's task?", body: 'Autopilot pauses. Resume it from the Overview to queue its next step again.', confirmLabel: 'Remove and pause', tone: 'danger' })
+      : Promise.resolve(true)
+  const removeQueued = (task: QueuedTask): void => {
+    void confirmAutopilot([task]).then((ok) => {
+      if (ok) void attempt(() => window.hangar.agents.removeQueued(project.id, role.id, task.id))
+    })
+  }
+  const clearQueue = (): void => {
+    void confirmAutopilot(state?.queue ?? []).then((ok) => {
+      if (ok) void attempt(() => window.hangar.agents.clearQueue(project.id, role.id))
+    })
   }
 
   return (
@@ -131,7 +164,9 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
             <h2>{role.name}</h2>
             <StatusPill status={state?.status ?? 'idle'} />
           </div>
-          <p className="muted small">{role.description}</p>
+          <p className="muted small panel-desc" title={role.description}>
+            {role.description}
+          </p>
           {role.mode === 'research' && (
             <p className="role-badge">Web researcher · searches and reads public web pages only · its reports wait in Reviews until you approve them</p>
           )}
@@ -142,6 +177,13 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
               Edit role
             </Button>
           )}
+          <Button size="sm" tone="ghost" aria-pressed={raw} disabled={log.length === 0} title="Every log entry as recorded, without grouping" onClick={() => {
+              // Positions don't carry over between the two views: land on the latest entries.
+              stick.current = true
+              setRaw(!raw)
+            }}>
+            {raw ? 'Grouped view' : 'Raw log'}
+          </Button>
           <Button
             size="sm"
             tone="ghost"
@@ -177,30 +219,21 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
             </code>
           </EmptyState>
         )}
-        {log.map((e) => (
-          <FeedEntry key={e.id} entry={e} />
-        ))}
-        {approvals.map((a) => (
-          <ApprovalCard key={a.id} request={a} onDecided={(d) => d === 'always' && void refreshProjects()} />
-        ))}
+        {raw ? log.map((e) => <FeedEntry key={e.id} entry={e} />) : items.map((it, i) => <FeedRow key={it.key} item={it} live={busy && i === items.length - 1} opened={opened} setOpen={setOpen} />)}
+        {/* The cards themselves are pinned below, so they're in view however long the feed is. */}
+        {approvals.length > 0 && (
+          <div className="entry entry-marker">
+            {approvals.length === 1 ? 'Waiting for your approval' : `${approvals.length} actions waiting for your approval`} ↓
+          </div>
+        )}
         {state?.activity && busy && approvals.length === 0 && <div className="activity">{state.activity}</div>}
       </div>
 
-      {state && state.queue.length > 0 && (
-        <div className="queue">
-          <div className="row between">
-            <span className="side-label">Up next ({state.queue.length})</span>
-            <button className="link" onClick={() => void attempt(() => window.hangar.agents.clearQueue(project.id, role.id))}>
-              Clear queue
-            </button>
-          </div>
-          <ol>
-            {state.queue.map((q) => (
-              <li key={q.id} title={q.prompt}>
-                {q.prompt}
-              </li>
-            ))}
-          </ol>
+      {approvals.length > 0 && (
+        <div className="approval-strip" role="region" aria-label="Waiting for your approval">
+          {approvals.map((a) => (
+            <ApprovalCard key={a.id} request={a} onDecided={(d) => d === 'always' && void refreshProjects()} />
+          ))}
         </div>
       )}
 
@@ -208,7 +241,8 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <textarea
           value={draft}
           placeholder={busy ? `Queue another task for ${role.name}…` : `Message ${role.name}…`}
-          rows={3}
+          // While an approval is pinned above, the box shrinks to one line so the card's buttons stay in view.
+          rows={approvals.length ? 1 : 3}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -220,6 +254,8 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <div className="composer-foot">
           <span className="muted small">
             Enter to send · Shift+Enter for a new line{busy ? ' · new messages are queued' : ''}
+            {/* With an approval pinned above, the queue is just a count until it's answered (room for the card's buttons). */}
+            {approvals.length > 0 && state && state.queue.length > 0 ? ` · ${state.queue.length} queued` : ''}
             {role.mode === 'research'
               ? ' · Web only · no project access'
               : `${project.settings.robloxStudioMcp ? ' · Roblox Studio tools on' : ''}${
@@ -235,7 +271,111 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
             {busy ? 'Queue' : 'Send'}
           </Button>
         </div>
+        {state && state.queue.length > 0 && approvals.length === 0 && (
+          <div className="queue-chips">
+            <span className="side-label" id={`queue-${role.id}`}>
+              Up next ({state.queue.length})
+            </span>
+            <ol className="queue-chip-list" aria-labelledby={`queue-${role.id}`}>
+              {state.queue.map((q, i) => {
+                const text = firstLine(q.prompt) || 'Task'
+                return (
+                  <li key={q.id} className="queue-chip" title={revealHidden(q.prompt.slice(0, 2000))}>
+                    <span className="queue-chip-n">{i + 1}</span>
+                    {q.origin && <span className="tag">autopilot</span>}
+                    <span className="queue-chip-text">{text}</span>
+                    <button className="icon-btn" aria-label={`Remove “${text}” from the queue`} onClick={() => removeQueued(q)}>
+                      ×
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+            {state.queue.length > 1 && (
+              <button className="link small" onClick={clearQueue}>
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+const EMPTY_LOG: LogEntry[] = []
+
+type Opened = { opened: ReadonlySet<string>; setOpen: (keys: string[], on: boolean) => void }
+
+function FeedRow({ item, live, opened, setOpen }: { item: FeedItem; live: boolean } & Opened) {
+  if (item.type === 'entry') return <FeedEntry entry={item.entry} />
+  if (item.type === 'tool') return <ToolRow call={item.call} opened={opened} setOpen={setOpen} />
+  return <ToolRun runKey={item.key} calls={item.calls} live={live} opened={opened} setOpen={setOpen} />
+}
+
+/** One tool call and its result: the call on one line; open it for the whole call and its output. */
+function ToolRow({ call, opened, setOpen }: { call: ToolCall } & Opened) {
+  const open = opened.has(call.use.id)
+  const failed = call.result?.kind === 'error'
+  const callText = revealHidden(call.use.text)
+  return (
+    <div className={`entry tool-row ${failed ? 'tool-row-err' : ''}`}>
+      <button className="tool-line" aria-expanded={open} title={callText.slice(0, 2000)} onClick={() => setOpen([call.use.id], !open)}>
+        <span className="dv-caret" aria-hidden>
+          {open ? '▾' : '▸'}
+        </span>
+        <span className="tool-text">{callText}</span>
+        {call.result ? (
+          <span className={`small ${failed ? 'err' : 'muted'}`}>{failed ? 'error' : sizeLabel(call.result)}</span>
+        ) : (
+          <span className="small muted">no output</span>
+        )}
+      </button>
+      {open && (
+        <div className="tool-detail">
+          <div className="entry-text tool-call-full">{callText}</div>
+          {call.result && <div className={`entry-text tool-output ${failed ? 'err' : ''}`}>{revealCodeHidden(call.result.text)}</div>}
+          <span className="small muted">{new Date(call.use.ts).toLocaleString()}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Three or more tool calls in a row, folded to one line. The newest call shows while the agent is working on it. */
+function ToolRun({ runKey, calls, live, opened, setOpen }: { runKey: string; calls: ToolCall[]; live: boolean } & Opened) {
+  // Open when you opened it, or opened one of its calls before they folded together. In that case the run
+  // itself is marked open too, so closing that call's details doesn't fold the whole run away.
+  const viaCall = !opened.has(runKey) && calls.some((c) => opened.has(c.use.id))
+  useEffect(() => {
+    if (viaCall) setOpen([runKey], true)
+  }, [viaCall, runKey, setOpen])
+  const open = opened.has(runKey) || viaCall
+  const errors = calls.filter((c) => c.result?.kind === 'error').length
+  const last = calls[calls.length - 1]!
+  return (
+    <div className="entry tool-run">
+      <button className="tool-line" aria-expanded={open} onClick={() => (open ? setOpen([runKey, ...calls.map((c) => c.use.id)], false) : setOpen([runKey], true))}>
+        <span className="dv-caret" aria-hidden>
+          {open ? '▾' : '▸'}
+        </span>
+        <strong className="small">{calls.length} tool calls</strong>
+        <span className="tool-text muted">{runSummary(calls)}</span>
+        {errors > 0 && (
+          <span className="tag tag-err">
+            {errors} error{errors === 1 ? '' : 's'}
+          </span>
+        )}
+      </button>
+      {open ? (
+        <div className="tool-run-list">
+          {calls.map((c) => (
+            <ToolRow key={c.use.id} call={c} opened={opened} setOpen={setOpen} />
+          ))}
+        </div>
+      ) : (
+        live && <div className="tool-latest muted small">{revealHidden(last.use.text)}</div>
+      )}
     </div>
   )
 }
@@ -247,7 +387,8 @@ function FeedEntry({ entry }: { entry: LogEntry }) {
   return (
     <div className={`entry entry-${entry.kind}`} title={new Date(entry.ts).toLocaleString()}>
       {entry.kind === 'user' && <span className="entry-tag">You · {timeAgo(entry.ts)}</span>}
-      <div className="entry-text">{text}</div>
+      {/* Characters that make text read differently from what it is (bidi controls, invisible ones) are shown as ⟦U+…⟧. */}
+      <div className="entry-text">{revealCodeHidden(text)}</div>
       {long && (
         <button className="link small" onClick={() => setOpen(!open)}>
           {open ? 'Show less' : 'Show more'}

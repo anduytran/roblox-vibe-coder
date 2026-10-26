@@ -74,10 +74,12 @@ export class Autopilot {
   constructor(private readonly deps: AutopilotDeps) {
     this.store = new JsonStore(deps.file, { states: {} as Record<string, AutopilotState> })
     // Queued tasks don't survive a restart, so a running autopilot resumes only when you say so.
+    // Feedback put into a step that never finished goes back for the next one, whatever the status.
     for (const st of Object.values(this.store.get().states)) {
+      const back = this.giveBack(st)
       if (st.status === 'running' || st.status === 'waiting') {
-        this.put({ ...st, status: 'paused', reason: 'Hangar was closed. Resume to carry on where it left off.' })
-      }
+        this.put({ ...back, status: 'paused', reason: 'Hangar was closed. Resume to carry on where it left off.' })
+      } else if (back !== st) this.put(back)
     }
   }
 
@@ -191,6 +193,30 @@ export class Autopilot {
     return this.put({ ...st, status: 'off', reason: null, awaitingReviewId: null })
   }
 
+  /**
+   * Autopilot's own step was taken out of the Lead's queue before it ran: its feedback goes back for the next
+   * step, and autopilot pauses so it isn't left waiting for a task that will never finish.
+   */
+  removedFromQueue(projectId: string, tasks: QueuedTask[]): void {
+    if (!tasks.some((t) => t.origin === 'autopilot' || t.origin === 'autopilot-report')) return
+    this.returnFeedback(projectId, tasks)
+    this.pause(projectId, "Paused by you: you removed autopilot's next step from the queue. Resume to queue it again.")
+  }
+
+  /** An autopilot step was dropped from the queue (removed, or Stop all): its feedback goes back in line. */
+  returnFeedback(projectId: string, tasks: QueuedTask[]): void {
+    if (!tasks.some((t) => t.origin === 'autopilot')) return
+    const st = this.get(projectId)
+    const back = this.giveBack(st)
+    if (back !== st) this.put(back)
+  }
+
+  /** Feedback handed to a step that never finished, back in line for the next one. */
+  private giveBack(st: AutopilotState): AutopilotState {
+    if (!st.handedFeedback?.length) return st
+    return { ...st, feedback: [...st.handedFeedback, ...st.feedback].slice(-20), handedFeedback: [] }
+  }
+
   /** Feedback for the Lead's next task (also works mid-sprint). */
   addFeedback(projectId: string, text: string): AutopilotState {
     const st = this.get(projectId)
@@ -218,8 +244,9 @@ Finish with: what you set up and built, how you tested it, and what comes next.$
 3. Write or update its mechanic note with acceptance criteria, build it (delegate to the specialist agents as needed), playtest it, and check the criteria.
 4. Update Roadmap.md (mark what's done) and Decisions.md.
 Finish with: what you built, how you tested it, and what's next.${feedback}${recent}`
-    // Feedback is handed over once.
-    this.put({ ...this.get(st.projectId), feedback: [] })
+    // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
+    const cur = this.get(st.projectId)
+    this.put({ ...cur, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot' })
   }
 
@@ -254,6 +281,9 @@ Reply with only these sections, short and concrete:
   onTaskDone(o: TaskOutcome): void {
     if (o.task.origin !== 'autopilot' && o.task.origin !== 'autopilot-report') return
     let st = this.get(o.projectId)
+    // A step that finished has had its feedback. One that failed or was stopped may never have reached the
+    // Lead (a limit, a missing key), so its feedback goes back for the next step: said twice beats lost.
+    if (o.task.origin === 'autopilot' && st.handedFeedback?.length) st = this.put(o.ok ? { ...st, handedFeedback: [] } : this.giveBack(st))
     if (st.status === 'off') return
     const title = o.task.origin === 'autopilot-report' ? 'Check-in report' : (/^Autopilot[^\n]*/.exec(o.task.prompt) ? this.titleFrom(o) : o.task.prompt.slice(0, 80))
 

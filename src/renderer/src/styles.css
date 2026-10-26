@@ -964,6 +964,13 @@ select:focus-visible {
   margin-top: 3px;
   max-width: 72ch;
 }
+/* Two lines at most (the full text is in the tooltip), so a pinned approval keeps its room. */
+.panel-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .role-badge {
   font-size: var(--fs-xs);
   color: var(--info);
@@ -977,6 +984,7 @@ select:focus-visible {
 }
 .feed {
   flex: 1;
+  min-height: 60px;
   overflow-y: auto;
   padding: 20px 24px;
   display: flex;
@@ -1108,25 +1116,9 @@ select:focus-visible {
   overflow: auto;
 }
 
-/* queue + composer */
-.queue {
-  border-top: 1px solid var(--line);
-  padding: 8px 24px;
-  max-height: 140px;
-  overflow-y: auto;
-}
-.queue ol {
-  margin: 4px 0 0;
-  padding-left: 22px;
-  font-size: var(--fs-sm);
-  color: var(--muted);
-}
-.queue li {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* composer (queued tasks show as chips under it) */
 .composer {
+  flex-shrink: 0;
   padding: 12px 24px 16px;
   background: var(--canvas);
 }
@@ -1295,6 +1287,8 @@ button.file-item {
   margin-top: 3px;
 }
 .review-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 32px;
   display: flex;
@@ -3598,4 +3592,249 @@ button.file-item {
   margin: 2px 0 0;
   color: var(--text);
   white-space: pre-wrap;
+}
+
+/* Agents feed: tool calls grouped with their results */
+.tool-row,
+.tool-run {
+  max-width: 860px;
+}
+.tool-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font: 12px var(--mono);
+  cursor: pointer;
+}
+.tool-line:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.tool-line:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+.tool-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-row-err .tool-line {
+  border-color: color-mix(in srgb, var(--err) 35%, var(--line));
+}
+.tool-output {
+  font: 12px/1.55 var(--mono);
+  color: var(--muted);
+  border-left: 2px solid var(--line-strong);
+  padding-left: 12px;
+  max-height: 340px;
+  overflow: auto;
+}
+.tool-output.err {
+  color: var(--err);
+}
+.tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.tool-call-full {
+  font: 12px/1.55 var(--mono);
+  color: var(--text-2);
+  max-height: 200px;
+  overflow: auto;
+}
+.tool-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0 14px;
+}
+.tool-latest {
+  margin: 4px 0 0 14px;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-assistant {
+  max-width: none;
+}
+.entry-marker {
+  font-size: var(--fs-sm);
+  color: var(--amber-text);
+}
+
+/* Approvals pinned above the composer */
+.approval-strip {
+  border-top: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  padding: 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Takes what the card needs, up to most of the panel; the feed keeps a strip of its own above it. */
+  max-height: 60%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+/* Queue chips under the composer */
+.queue-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+/* One row of chips; more scroll sideways, so the queue never pushes the composer up. */
+.queue-chip-list {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+  overflow-x: auto;
+}
+.queue-chips .side-label,
+.queue-chips .link {
+  flex-shrink: 0;
+}
+.queue-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.queue-chip-n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.queue-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-chip .icon-btn {
+  padding: 0 6px;
+}
+
+/* Review summary strip and header actions */
+.review-head {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+.review-head > :first-child {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.review-head code {
+  display: inline-block;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.review-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.review-actions .row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Narrow detail pane: the actions go under the title as one wrapping row. */
+@media (max-width: 1180px) {
+  .review-head {
+    padding: 10px 20px;
+  }
+  .review-actions {
+    flex: 1 1 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .review-actions .row {
+    justify-content: flex-start;
+  }
+  .review-strip {
+    padding: 6px 20px;
+  }
+}
+.review-section:focus,
+.review-body:focus {
+  outline: none;
+}
+.review-section:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 4px;
+  border-radius: var(--r-sm);
+}
+.review-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.strip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.strip-chip:hover {
+  border-color: var(--line-strong);
+}
+.strip-chip-static {
+  cursor: default;
+}
+.strip-chip-static:hover {
+  border-color: var(--line);
+}
+.strip-chip.ok {
+  color: var(--live);
+}
+.strip-chip.err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 35%, var(--line));
+}
+.strip-chip.warn {
+  color: var(--amber-text);
+  border-color: color-mix(in srgb, var(--amber) 35%, var(--line));
+}
+.review-warnings {
+  margin: 0;
+  padding: 8px 24px 8px 42px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  color: var(--amber-text);
 }

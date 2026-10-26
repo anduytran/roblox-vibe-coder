@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
+import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, QueuedTask, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
@@ -507,9 +507,20 @@ app.whenReady().then(() => {
   handle(IPC.agentsStop, (id: unknown, agentId: unknown) => runner.stop(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsStopAll, () => {
     autopilot!.pauseAll('You stopped all agents.')
-    runner.stopAll()
+    // Feedback put into an autopilot step that was still queued goes back for the step after Resume.
+    for (const r of runner.stopAll()) autopilot!.returnFeedback(r.projectId, r.tasks)
   })
-  handle(IPC.agentsClearQueue, (id: unknown, agentId: unknown) => runner.clearQueue(str(id, 'project'), str(agentId, 'agent')))
+  // Taking autopilot's own step out of a queue pauses autopilot (keeping that step's feedback for the next one).
+  const removedFromQueue = (projectId: string, tasks: QueuedTask[]): void => autopilot?.removedFromQueue(projectId, tasks)
+  handle(IPC.agentsClearQueue, (id: unknown, agentId: unknown) => {
+    const projectId = str(id, 'project')
+    removedFromQueue(projectId, runner.clearQueue(projectId, str(agentId, 'agent')))
+  })
+  handle(IPC.agentsRemoveQueued, (id: unknown, agentId: unknown, taskId: unknown) => {
+    const projectId = str(id, 'project')
+    const task = runner.removeQueued(projectId, str(agentId, 'agent'), str(taskId, 'task'))
+    if (task) removedFromQueue(projectId, [task])
+  })
   handle(IPC.agentsResetSession, (id: unknown, agentId: unknown) => runner.resetSession(str(id, 'project'), str(agentId, 'agent')))
 
   // Approvals

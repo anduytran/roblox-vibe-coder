@@ -73,6 +73,7 @@ const api: HangarApi = {
     stop: (id, agentId) => invoke(IPC.agentsStop, id, agentId),
     stopAll: () => invoke(IPC.agentsStopAll),
     clearQueue: (id, agentId) => invoke(IPC.agentsClearQueue, id, agentId),
+    removeQueued: (id, agentId, taskId) => invoke(IPC.agentsRemoveQueued, id, agentId, taskId),
     resetSession: (id, agentId) => invoke(IPC.agentsResetSession, id, agentId)
   },
   approvals: {

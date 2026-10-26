@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AiReview, Project, Review, ReviewChecks } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
-import { attempt, confirmDialog, EMPTY_REVIEWS, getState, replaceReview, toast, useStore } from '../store'
+import { diffTotals, splitDiff } from '@shared/diff'
+import { attempt, confirmDialog, EMPTY_REVIEWS, getState, replaceReview, setProjectTab, toast, useStore } from '../store'
 import { Button, Skeleton, timeAgo } from './ui'
 import { DiffView } from './DiffView'
 import { EmptyState } from './EmptyState'
@@ -126,123 +127,259 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
     }).finally(() => setBusy(null))
   }
 
+  const warnings = mergeWarnings(review)
+  const totals = useMemo(() => (diff ? diffTotals(splitDiff(diff).files) : null), [diff])
+  const [showWarnings, setShowWarnings] = useState(false)
+  // The strip's chips jump to their section ("top" is the start of the body).
+  const at = useRef<Record<string, HTMLElement | null>>({})
+  const go = (k: string): void => {
+    if (k === 'warnings') return setShowWarnings((v) => !v)
+    const body = at.current.top
+    const target = k === 'top' ? body : at.current[k]
+    if (!body || !target) return
+    // Scroll only the body (scrollIntoView would also move the panes around it), then move keyboard focus there
+    // so the next Tab carries on from that section instead of jumping back up.
+    body.scrollTop = k === 'top' ? 0 : body.scrollTop + target.getBoundingClientRect().top - body.getBoundingClientRect().top
+    target.focus({ preventScroll: true })
+  }
+  const merge = (): void => {
+    const doMerge = (): void => run('merge', () => window.hangar.reviews.merge(review.id, { force: warnings.length > 0, acknowledged: warnings }), `Merged into ${review.base}.`)
+    if (!warnings.length) return doMerge()
+    void confirmDialog({ title: 'Merge anyway?', body: 'This change needs a second look before it goes into your game:', lines: warnings.map(revealHidden), confirmLabel: 'Merge anyway', tone: 'danger' }).then((ok) => ok && doMerge())
+  }
+
   return (
     <div className="review-detail">
+      {/* The header and strip stay put; only the body below them scrolls. */}
       <header className="review-head">
         <div>
           <h2>{revealHidden(review.title)}</h2>
           <p className="muted small">
-            {agent} · branch <code>{review.branch}</code> from <code>{review.base}</code>
+            {agent} · branch <code>{review.branch}</code> from <code>{review.base}</code> · {timeAgo(review.createdAt)}
           </p>
         </div>
         {isPending && (
-          <div className="row gap-xs">
-            <Button
-              tone={mergeWarnings(review).length ? 'default' : 'primary'}
-              disabled={!!busy}
-              onClick={() => {
-                const warnings = mergeWarnings(review)
-                const merge = (): void => run('merge', () => window.hangar.reviews.merge(review.id, { force: warnings.length > 0, acknowledged: warnings }), `Merged into ${review.base}.`)
-                if (!warnings.length) return merge()
-                void confirmDialog({ title: 'Merge anyway?', body: 'This change needs a second look before it goes into your game:', lines: warnings, confirmLabel: 'Merge anyway', tone: 'danger' }).then((ok) => ok && merge())
-              }}
-            >
-              {mergeWarnings(review).length ? 'Merge anyway…' : 'Merge'}
-            </Button>
-            <Button
-              tone="danger"
-              disabled={!!busy}
-              onClick={() =>
-                void confirmDialog({ title: 'Discard this work?', body: `The branch ${review.branch} and everything on it will be deleted.`, confirmLabel: 'Discard', tone: 'danger' }).then(
-                  (ok) => ok && run('discard', () => window.hangar.reviews.discard(review.id), 'Discarded.')
-                )
-              }
-            >
-              Discard
-            </Button>
+          <div className="review-actions">
+            <div className="row gap-xs">
+              <Button tone={warnings.length ? 'default' : 'primary'} disabled={!!busy} onClick={merge}>
+                {warnings.length ? 'Merge anyway…' : 'Merge'}
+              </Button>
+              <Button
+                tone="danger"
+                disabled={!!busy}
+                onClick={() =>
+                  void confirmDialog({ title: 'Discard this work?', body: `The branch ${review.branch} and everything on it will be deleted.`, confirmLabel: 'Discard', tone: 'danger' }).then(
+                    (ok) => ok && run('discard', () => window.hangar.reviews.discard(review.id), 'Discarded.')
+                  )
+                }
+              >
+                Discard
+              </Button>
+            </div>
+            <div className="row gap-xs">
+              <Button size="sm" disabled={!!busy} onClick={() => run('checkout', () => window.hangar.reviews.checkout(review.id), 'Switched your project folder to this branch. Try it in Studio, then switch back.')}>
+                Try it in Studio
+              </Button>
+              <Button size="sm" tone="ghost" disabled={!!busy} onClick={() => run('base', () => window.hangar.reviews.checkoutBase(project.id), `Back on ${review.base}.`)}>
+                Back to {review.base}
+              </Button>
+              {project.settings.testPlace ? (
+                <Button size="sm" disabled={!!busy} onClick={() => run('publish', () => window.hangar.reviews.publish(review.id), 'Published to your test place. Open it in the Roblox app.')}>
+                  {busy === 'publish' ? 'Building and publishing…' : 'Publish to test place'}
+                </Button>
+              ) : (
+                <Button size="sm" tone="ghost" title="Set a test place to play builds on your phone." onClick={() => setProjectTab('settings')}>
+                  Set up a test place…
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </header>
-      <div className="review-body">
+      <ReviewStrip review={review} warnings={warnings} warningsOpen={showWarnings} totals={totals} clip={isPending && clip.length > 0} onGo={go} />
+      {showWarnings && warnings.length > 0 && (
+        <ul className="review-warnings">
+          {warnings.map((w) => (
+            <li key={w}>{revealHidden(w)}</li>
+          ))}
+        </ul>
+      )}
+      <div
+        className="review-body"
+        tabIndex={-1}
+        ref={(el) => {
+          at.current.top = el
+        }}
+      >
         {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
         {review.note && <div className="error-bar">{review.note}</div>}
         {!isPending && <p className="muted">This task was {review.status}.</p>}
-        {isPending && review.clip && clip.length > 0 &&
-          (review.clip.kind === 'video' ? (
-            <video className="clip" src={clip[0]} controls preload="metadata" />
-          ) : (
-            <div className="frames">
-              {clip.map((src, i) => (
-                <img key={i} src={src} alt={`Playtest screenshot ${i + 1}`} />
-              ))}
-            </div>
-          ))}
-        {review.checks && (
-          <ChecksPanel
-            checks={review.checks}
-            busy={!!busy}
-            onRerun={isPending ? () => run('recheck', () => window.hangar.reviews.recheck(review.id), 'Running the checks again.') : undefined}
-          />
-        )}
-        {review.aiReview && (
-          <AiReviewPanel
-            ai={review.aiReview}
-            busy={!!busy}
-            onRerun={isPending ? () => run('recheck', () => window.hangar.reviews.recheck(review.id, { reviewer: true }), 'Asked the reviewer again.') : undefined}
-          />
-        )}
         {review.summary && (
           <>
             <span className="side-label">Agent's report</span>
             <SafeText className="summary" text={review.summary} />
           </>
         )}
-        {isPending && (
-          <div className="row gap-xs wrap">
-            <Button size="sm" disabled={!!busy} onClick={() => run('checkout', () => window.hangar.reviews.checkout(review.id), 'Switched your project folder to this branch. Try it in Studio, then switch back.')}>
-              Try it in Studio
-            </Button>
-            <Button size="sm" tone="ghost" disabled={!!busy} onClick={() => run('base', () => window.hangar.reviews.checkoutBase(project.id), `Back on ${review.base}.`)}>
-              Back to {review.base}
-            </Button>
-            {project.settings.testPlace ? (
-              <Button size="sm" disabled={!!busy} onClick={() => run('publish', () => window.hangar.reviews.publish(review.id), 'Published to your test place. Open it in the Roblox app.')}>
-                {busy === 'publish' ? 'Building and publishing…' : 'Publish to test place'}
-              </Button>
+        {isPending && review.clip && clip.length > 0 && (
+          <div
+            className="review-section"
+            tabIndex={-1}
+            ref={(el) => {
+              at.current.clip = el
+            }}
+          >
+            {review.clip.kind === 'video' ? (
+              <video className="clip" src={clip[0]} controls preload="metadata" />
             ) : (
-              <span className="muted small">Set a test place in the Project tab to play builds on your phone.</span>
+              <div className="frames">
+                {clip.map((src, i) => (
+                  <img key={i} src={src} alt={`Playtest screenshot ${i + 1}`} />
+                ))}
+              </div>
             )}
           </div>
         )}
-        {review.published && <p className="small">Published to the test place as version {review.published.versionNumber} ({timeAgo(review.published.at)}).</p>}
-        {isPending &&
-          (diffError ? (
-            <EmptyState
-              compact
-              icon="changes"
-              title="Couldn't load the changes"
-              action={
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setDiff(null)
-                    setDiffTry((n) => n + 1)
-                  }}
-                >
-                  Try again
-                </Button>
-              }
-            >
-              {review.files.length > 0 && `Files in this task: ${review.files.map(revealHidden).join(', ')}`}
-            </EmptyState>
-          ) : diff === null ? (
-            <Skeleton lines={6} label="Loading changes" />
-          ) : diff ? (
-            <DiffView key={review.id} diff={diff} className="review-diff" />
-          ) : (
-            <EmptyState compact title="No file changes" />
-          ))}
+        {review.checks && (
+          <div
+            className="review-section"
+            tabIndex={-1}
+            ref={(el) => {
+              at.current.checks = el
+            }}
+          >
+            <ChecksPanel
+              checks={review.checks}
+              busy={!!busy}
+              onRerun={isPending ? () => run('recheck', () => window.hangar.reviews.recheck(review.id), 'Running the checks again.') : undefined}
+            />
+          </div>
+        )}
+        {review.aiReview && (
+          <div
+            className="review-section"
+            tabIndex={-1}
+            ref={(el) => {
+              at.current.reviewer = el
+            }}
+          >
+            <AiReviewPanel
+              ai={review.aiReview}
+              busy={!!busy}
+              onRerun={isPending ? () => run('recheck', () => window.hangar.reviews.recheck(review.id, { reviewer: true }), 'Asked the reviewer again.') : undefined}
+            />
+          </div>
+        )}
+        {review.published && (
+          <p
+            className="small review-section"
+            tabIndex={-1}
+            ref={(el) => {
+              at.current.published = el
+            }}
+          >
+            Published to the test place as version {review.published.versionNumber} ({timeAgo(review.published.at)}).
+          </p>
+        )}
+        {isPending && (
+          <div
+            className="review-section"
+            tabIndex={-1}
+            ref={(el) => {
+              at.current.diff = el
+            }}
+          >
+            {diffError ? (
+              <EmptyState
+                compact
+                icon="changes"
+                title="Couldn't load the changes"
+                action={
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setDiff(null)
+                      setDiffTry((n) => n + 1)
+                    }}
+                  >
+                    Try again
+                  </Button>
+                }
+              >
+                {review.files.length > 0 && `Files in this task: ${review.files.map(revealHidden).join(', ')}`}
+              </EmptyState>
+            ) : diff === null ? (
+              <Skeleton lines={6} label="Loading changes" />
+            ) : diff ? (
+              <DiffView key={review.id} diff={diff} className="review-diff" />
+            ) : (
+              <EmptyState compact title="No file changes" />
+            )}
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+/** One line of what a review holds: checks, reviewer, warnings, files and size, clip. Each chip jumps to its part. */
+function ReviewStrip(props: {
+  review: Review
+  warnings: string[]
+  warningsOpen: boolean
+  totals: { added: number; removed: number } | null
+  clip: boolean
+  onGo: (k: string) => void
+}) {
+  const { review, warnings, totals, onGo } = props
+  const c = review.checks
+  const ai = review.aiReview
+  const failed = c?.results.filter((r) => r.status !== 'passed').length ?? 0
+  const chips: { k: string; tone: '' | 'ok' | 'err' | 'warn'; text: string; title?: string }[] = []
+  if (c)
+    chips.push(
+      c.status === 'running'
+        ? { k: 'checks', tone: '', text: 'Checks running…' }
+        : c.status === 'skipped'
+          ? { k: 'checks', tone: 'warn', text: 'Checks skipped' }
+          : failed || c.reason
+            ? { k: 'checks', tone: 'err', text: failed ? `✗ ${failed} check${failed === 1 ? '' : 's'} failed` : '✗ Checks' }
+            : { k: 'checks', tone: 'ok', text: `✓ ${c.results.length} check${c.results.length === 1 ? '' : 's'} passed` }
+    )
+  if (ai)
+    chips.push(
+      ai.status === 'running'
+        ? { k: 'reviewer', tone: '', text: 'Reviewer reading…' }
+        : ai.status === 'error'
+          ? { k: 'reviewer', tone: 'warn', text: 'Reviewer failed' }
+          : ai.verdict === 'approve'
+            ? { k: 'reviewer', tone: 'ok', text: '✓ Reviewer: looks good' }
+            : ai.verdict === 'block'
+              ? { k: 'reviewer', tone: 'err', text: "✗ Reviewer: don't merge" }
+              : { k: 'reviewer', tone: 'warn', text: '! Reviewer has concerns' }
+    )
+  if (warnings.length) chips.push({ k: 'warnings', tone: 'warn', text: `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`, title: warnings.map(revealHidden).join('\n') })
+  if (review.incomplete) chips.push({ k: 'top', tone: 'err', text: 'Stopped early' })
+  // Merged and discarded reviews have no diff to jump to: their file count is shown as plain text.
+  chips.push({
+    k: review.status === 'pending' ? 'diff' : '',
+    tone: '',
+    text: `${review.files.length} file${review.files.length === 1 ? '' : 's'}${totals ? ` · +${totals.added} −${totals.removed}` : ''}`
+  })
+  if (props.clip) chips.push({ k: 'clip', tone: '', text: `▶ Playtest ${review.clip?.kind === 'frames' ? 'screenshots' : 'clip'}` })
+  if (review.published) chips.push({ k: 'published', tone: 'ok', text: `Published v${review.published.versionNumber}` })
+  return (
+    <div className="review-strip" aria-label="Summary">
+      {chips.map((x, i) =>
+        x.k ? (
+          <button key={i} className={`strip-chip ${x.tone}`} title={x.title} aria-expanded={x.k === 'warnings' ? props.warningsOpen : undefined} onClick={() => onGo(x.k)}>
+            {x.text}
+          </button>
+        ) : (
+          <span key={i} className={`strip-chip strip-chip-static ${x.tone}`}>
+            {x.text}
+          </span>
+        )
+      )}
     </div>
   )
 }

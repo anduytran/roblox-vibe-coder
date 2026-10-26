@@ -65,8 +65,8 @@ function toolResultText(content: unknown): string {
 
 export function convertMessage(msg: StreamMessage): Converted {
   const out: Converted = { entries: [] }
-  const push = (kind: LogKind, text: string, tool?: string): void => {
-    out.entries.push(tool ? { kind, text, tool } : { kind, text })
+  const push = (kind: LogKind, text: string, tool?: string, toolUseId?: string, bytes?: number): void => {
+    out.entries.push({ kind, text, ...(tool ? { tool } : {}), ...(toolUseId ? { toolUseId: toolUseId.slice(0, 100) } : {}), ...(bytes !== undefined ? { bytes } : {}) })
   }
   if (msg.session_id) out.sessionId = msg.session_id
   const sub = msg.parent_tool_use_id ? '↳ ' : ''
@@ -98,7 +98,7 @@ export function convertMessage(msg: StreamMessage): Converted {
           if (!msg.parent_tool_use_id) out.text = block.text.trim()
         } else if (block.type === 'tool_use' && block.name) {
           const summary = summarizeToolUse(block.name, block.input ?? {})
-          push('tool_use', sub + summary, block.name)
+          push('tool_use', sub + summary, block.name, block.id)
           out.activity = summary
           ;(out.toolUses ??= []).push({ id: block.id ?? '', name: block.name, input: block.input ?? {} })
         }
@@ -119,7 +119,7 @@ export function convertMessage(msg: StreamMessage): Converted {
         }
         const text = toolResultText(block.content).trim()
         if (!text && !block.is_error) continue
-        push(block.is_error ? 'error' : 'tool_result', sub + clip(text || 'Tool error', MAX_RESULT))
+        push(block.is_error ? 'error' : 'tool_result', sub + clip(text || 'Tool error', MAX_RESULT), undefined, block.tool_use_id, Buffer.byteLength(text, 'utf8'))
       }
       break
     }

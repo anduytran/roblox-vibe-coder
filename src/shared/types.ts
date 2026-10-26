@@ -106,6 +106,10 @@ export interface LogEntry {
   kind: LogKind
   text: string
   tool?: string
+  /** Pairs a tool call with its result in the feed (absent on entries saved before it was recorded). */
+  toolUseId?: string
+  /** A tool result's full size in bytes; its text may be clipped. */
+  bytes?: number
 }
 
 export interface QueuedTask {
@@ -330,6 +334,8 @@ export interface AutopilotState {
   awaitingReviewId: string | null
   /** Product-owner feedback to give the Lead at the start of the next task. */
   feedback: string[]
+  /** Feedback already put into the Lead's queued task; given back if that task never finishes. */
+  handedFeedback?: string[]
   sprintTasks: SprintReport['tasks']
   reports: SprintReport[]
   consecutiveFailures: number

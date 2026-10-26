@@ -404,7 +404,7 @@ export class RemoteServer {
 
     if (method === 'POST' && a === 'stop-all') {
       this.deps.autopilot?.pauseAll('You stopped all agents.')
-      this.deps.runner.stopAll()
+      for (const r of this.deps.runner.stopAll()) this.deps.autopilot?.returnFeedback(r.projectId, r.tasks)
       return this.json(res, 200, { ok: true })
     }
 

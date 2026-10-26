@@ -67,7 +67,10 @@ async function setup() {
     pendingApprovals: () => approvals,
     respond: (id: string, d: string) => responses.push([id, d]),
     send: (...a: unknown[]) => tasks.push(a),
-    stopAll: () => (stopped = true),
+    stopAll: () => {
+      stopped = true
+      return []
+    },
     snapshot: () => [{ agentId: 'main', status: 'idle', activity: null, queue: [], lastError: null }]
   }
   const registry = { list: () => [{ id: 'p1', name: 'Game', path: tmp('hangar-remote-proj-'), settings: { autonomous: true, testPlace: null } }], get: () => ({ path: tmp('x-') }) }
@@ -215,7 +218,7 @@ test('remote: the phone can read check-ins and start the next sprint, pause and 
     pauseAll: () => calls.push(['pauseAll'])
   }
   const registry = { list: () => [{ id: 'p1', name: 'Game', path: tmp('x-'), settings: { autonomous: true, testPlace: null } }], get: (id: string) => { if (id !== 'p1') throw new Error('Project not found.'); return { path: tmp('x-') } } }
-  const runner = { pendingApprovals: () => [], respond: () => {}, send: () => {}, stopAll: () => {}, snapshot: () => [] }
+  const runner = { pendingApprovals: () => [], respond: () => {}, send: () => {}, stopAll: () => [], snapshot: () => [] }
   const reviews = { list: () => [], mergeWarnings: () => [] }
   const server = new RemoteServer(file, { registry, runner, reviews, costs: { summary: () => ({ todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {} }) }, autopilot } as any)
   await server.setEnabled(true)

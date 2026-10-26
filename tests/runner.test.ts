@@ -344,3 +344,27 @@ test('vault: the UI Builder gets its vault created and is told to keep it up to 
   calls[0]!.release()
   await until(() => status('ui-builder') === 'idle')
 })
+
+test('one queued task can be taken out; the rest keep their order', async () => {
+  const { runner, project, calls } = setup({ max: 1 })
+  const queue = () => runner.snapshot(project.id).find((a) => a.agentId === 'main')!.queue
+  runner.send(project.id, 'main', 'first task')
+  await until(() => calls.length === 1)
+  runner.send(project.id, 'main', 'second task')
+  runner.send(project.id, 'main', 'third task')
+  const second = queue()[0]!
+  assert.equal(runner.removeQueued(project.id, 'main', second.id)?.prompt, 'second task')
+  assert.equal(runner.removeQueued(project.id, 'main', second.id), null, 'already gone')
+  assert.deepEqual(
+    queue().map((t) => t.prompt),
+    ['third task']
+  )
+  assert.deepEqual(
+    runner.clearQueue(project.id, 'main').map((t) => t.prompt),
+    ['third task'],
+    'clearing says what it removed'
+  )
+  calls[0]!.release()
+  await tick(30)
+  assert.equal(calls.length, 1, 'nothing removed ever runs')
+})

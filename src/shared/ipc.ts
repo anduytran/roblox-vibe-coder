@@ -46,6 +46,7 @@ export const IPC = {
   agentsStop: 'agents:stop',
   agentsStopAll: 'agents:stopAll',
   agentsClearQueue: 'agents:clearQueue',
+  agentsRemoveQueued: 'agents:removeQueued',
   agentsResetSession: 'agents:resetSession',
   approvalsPending: 'approvals:pending',
   approvalsRespond: 'approvals:respond',
@@ -204,6 +205,8 @@ export interface HangarApi {
     stop(projectId: string, agentId: string): Promise<void>
     stopAll(): Promise<void>
     clearQueue(projectId: string, agentId: string): Promise<void>
+    /** Takes one task out of the queue (autopilot pauses if it was autopilot's step). */
+    removeQueued(projectId: string, agentId: string, taskId: string): Promise<void>
     resetSession(projectId: string, agentId: string): Promise<void>
   }
   approvals: {
