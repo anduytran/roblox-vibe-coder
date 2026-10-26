@@ -333,3 +333,42 @@ test('unattended: check-ins answer themselves, unmergeable work waits for the mo
   assert.ok(st.away!.endedAt)
   assert.equal(st.config.unattended, false)
 })
+
+test('unattended: an action needing your OK is set aside, and "Do it now" sends it back to the agent', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { Autopilot } = await import('../src/main/autopilot')
+  const { ProjectRegistry } = await import('../src/main/projects')
+  const { ReviewStore } = await import('../src/main/reviews')
+  const { CostTracker } = await import('../src/main/costs')
+  const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
+  const registry = new ProjectRegistry(join(tmp('hangar-aside-'), 'p.json'))
+  const project = registry.add(tmp('hangar-aside-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const sent: { agent: string; prompt: string }[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-aside-a-'), 'a.json'),
+    registry,
+    reviews: new ReviewStore(join(tmp('hangar-aside-r-'), 'r.json')),
+    costs: new CostTracker(join(tmp('hangar-aside-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, agent, prompt) => {
+      sent.push({ agent, prompt })
+    },
+    merge: async () => {
+      throw new Error('no')
+    }
+  })
+  ap.start(project.id)
+  ap.configure(project.id, { unattended: true, unattendedUntil: Date.now() + 3600_000 })
+  ap.setAside({ id: 'ap1', projectId: project.id, agentId: 'scripter', toolName: 'Bash', summary: '$ curl https://example.com/data.json', inputJson: '{}', reason: 'Uses the internet', dangerous: false, canAlwaysAllow: false, truncated: false, ts: 1 })
+  assert.equal(ap.get(project.id).setAside?.length, 1)
+  assert.equal(ap.get(project.id).away!.declined, 1)
+  const before = sent.length
+  ap.resolveSetAside(project.id, 'ap1', true)
+  assert.equal(ap.get(project.id).setAside?.length, 0)
+  assert.equal(sent[before]!.agent, 'scripter')
+  assert.match(sent[before]!.prompt, /curl https:\/\/example\.com\/data\.json[\s\S]*do it/)
+  assert.throws(() => ap.resolveSetAside(project.id, 'ap1', false), /no longer waiting/)
+})

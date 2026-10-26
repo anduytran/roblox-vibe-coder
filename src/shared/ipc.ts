@@ -112,6 +112,7 @@ export const IPC = {
   autopilotResume: 'autopilot:resume',
   autopilotStop: 'autopilot:stop',
   autopilotConfigure: 'autopilot:configure',
+  autopilotSetAside: 'autopilot:setAside',
   autopilotFeedback: 'autopilot:feedback',
   trendsGet: 'trends:get',
   trendsRefresh: 'trends:refresh',
@@ -190,6 +191,8 @@ export interface HangarApi {
     resume(projectId: string): Promise<AutopilotState>
     stop(projectId: string): Promise<AutopilotState>
     configure(projectId: string, config: Partial<AutopilotConfig>): Promise<AutopilotState>
+    /** An action set aside while you were away: do it now (sent back to its agent) or dismiss it. */
+    resolveSetAside(projectId: string, id: string, doIt: boolean): Promise<AutopilotState>
     feedback(projectId: string, text: string): Promise<AutopilotState>
   }
   trends: {

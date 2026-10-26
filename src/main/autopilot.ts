@@ -1,4 +1,4 @@
-import type { AgentEvent, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
+import type { AgentEvent, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
@@ -78,8 +78,6 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20)))
 })
 
-/** How long an approval waits for you during an unattended run before it's declined. */
-export const UNATTENDED_APPROVAL_WAIT_MS = 10 * 60_000
 /** How often a run paused by a plan or spending limit tries again while unattended. */
 const UNATTENDED_RETRY_MS = 30 * 60_000
 
@@ -199,9 +197,29 @@ export class Autopilot {
     this.put({ ...st, away: { ...st.away, [key]: st.away[key] + 1 } })
   }
 
-  /** An approval was declined because nobody answered during an unattended run. */
-  noteDeclined(projectId: string): void {
-    this.bumpAway(projectId, 'declined')
+  /** An action needing your OK during an unattended run: kept for the morning (the agent carries on without it). */
+  setAside(request: ApprovalRequest): void {
+    this.bumpAway(request.projectId, 'declined')
+    const st = this.get(request.projectId)
+    const item = { id: request.id, agentId: request.agentId, toolName: request.toolName, summary: request.summary.slice(0, 4000), reason: request.reason.slice(0, 300), dangerous: request.dangerous, at: Date.now() }
+    this.put({ ...st, setAside: [...(st.setAside ?? []), item].slice(-50) })
+  }
+
+  /** "Do it now" (sent back to the agent that wanted it) or "Dismiss" for a set-aside action. */
+  resolveSetAside(projectId: string, id: string, doIt: boolean): AutopilotState {
+    const st = this.get(projectId)
+    const item = (st.setAside ?? []).find((x) => x.id === id)
+    if (!item) throw new Error('That action is no longer waiting.')
+    const next = this.put({ ...st, setAside: (st.setAside ?? []).filter((x) => x.id !== id) })
+    if (doIt) {
+      this.deps.send(
+        projectId,
+        item.agentId,
+        `While I was away you wanted to do this, and it needed my OK, so it was set aside:\n\n${item.summary}\n\nI'm here now: do it (you'll get an approval card for me to allow), then finish whatever it was for.`,
+        { origin: undefined }
+      )
+    }
+    return next
   }
 
   private endAway(projectId: string, why: string): AutopilotState {

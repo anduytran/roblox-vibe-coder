@@ -5,6 +5,7 @@ import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
 import { AUTOPILOT_LABEL } from './Dashboard'
 import { Button, Toggle, timeAgo, usd } from './ui'
 import { SafeText } from './SafeText'
+import { revealHidden } from '@shared/text'
 
 const OUTCOME: Record<SprintReport['tasks'][number]['outcome'], string> = {
   merged: 'Merged',
@@ -254,6 +255,12 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
     })
   }
   const away = ap.away
+  const save2 = (id: string, doIt: boolean, ok: string): void => {
+    void attempt(async () => {
+      setAutopilot(await window.hangar.autopilot.resolveSetAside(project.id, id, doIt))
+      toast(ok)
+    })
+  }
   return (
     <section className={`card ${on ? 'card-accent' : ''}`}>
       <h3>While you're away</h3>
@@ -261,7 +268,7 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
         <p className="small">
           Running unattended until <strong>{ap.config.unattendedUntil ? clock(ap.config.unattendedUntil) : 'you turn it off'}</strong>, spending at most{' '}
           <strong>{usd(ap.config.unattendedBudgetUsd ?? 20)}</strong>. Check-ins answer themselves (decisions go in Decisions.md), changes that can't merge
-          themselves wait in Reviews, and approvals nobody answers are declined after 10 minutes. The Mac stays awake.
+          themselves wait in Reviews, and actions that need your OK are set aside for you while the agents carry on with everything else. The Mac stays awake.
         </p>
       ) : (
         <p className="small muted">
@@ -311,10 +318,31 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
           </span>
           <p className="small">
             {away.tasks} task{away.tasks === 1 ? '' : 's'} done · {away.merged} merged · {away.leftForYou} waiting for you in Reviews · {away.sprints} sprint
-            {away.sprints === 1 ? '' : 's'} started on the Lead's plan · {away.declined} approval{away.declined === 1 ? '' : 's'} declined
+            {away.sprints === 1 ? '' : 's'} started on the Lead's plan · {away.declined} action{away.declined === 1 ? '' : 's'} set aside for your OK
             {away.endReason ? ` · ended because ${away.endReason}` : ''}
           </p>
           {away.sprints > 0 && <p className="small muted">The Lead's decisions are in the Design tab, under Decisions.</p>}
+        </div>
+      )}
+      {(ap.setAside ?? []).length > 0 && (
+        <div className="checkin-block">
+          <span className="side-label">Waiting for your OK</span>
+          {(ap.setAside ?? []).map((a) => (
+            <div key={a.id} className={`approval ${a.dangerous ? 'approval-danger' : ''}`}>
+              <span className="muted small">
+                {a.agentId} · {timeAgo(a.at)} · {a.reason}
+              </span>
+              <pre className="approval-summary">{revealHidden(a.summary)}</pre>
+              <div className="row gap-xs">
+                <Button size="sm" tone="primary" onClick={() => save2(a.id, true, 'Sent back to the agent. Allow it on the approval card when it asks.')}>
+                  Do it now
+                </Button>
+                <Button size="sm" tone="ghost" onClick={() => save2(a.id, false, 'Dismissed.')}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>

@@ -421,6 +421,17 @@ export interface AutopilotConfig {
   unattendedBudgetUsd?: number
 }
 
+/** An action an agent wanted during an unattended run that needed your approval, kept for the morning. */
+export interface SetAsideAction {
+  id: string
+  agentId: string
+  toolName: string
+  summary: string
+  reason: string
+  dangerous: boolean
+  at: number
+}
+
 /** What happened while autopilot ran unattended (shown as the morning summary). */
 export interface AwaySummary {
   since: number
@@ -429,6 +440,7 @@ export interface AwaySummary {
   merged: number
   leftForYou: number
   sprints: number
+  /** Actions that needed your OK, set aside for you (the agent carried on without them). */
   declined: number
   endedAt?: number | null
   endReason?: string | null
@@ -468,6 +480,8 @@ export interface AutopilotState {
   sprintDoneSaid?: boolean
   /** The current (or last) unattended run. */
   away?: AwaySummary | null
+  /** Actions agents wanted while you were away that need your OK: do them now (sent back to that agent) or dismiss. */
+  setAside?: SetAsideAction[]
   reports: SprintReport[]
   consecutiveFailures: number
   updatedAt: number

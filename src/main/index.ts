@@ -21,7 +21,6 @@ import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
 import { ApprovalExplainer, checkerMayApprove } from './approvalExplainer'
-import { UNATTENDED_APPROVAL_WAIT_MS } from './autopilot'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
 import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
@@ -308,19 +307,16 @@ app.whenReady().then(() => {
         if (cleared) return
         notifier.onEvent(event)
         remote?.onEvent(event)
-        // Unattended: nobody is there to answer, so after a while it's declined and the agent finds another way.
-        if (autopilot?.isAway(r.projectId)) {
-          const t = setTimeout(() => {
-            if (!runner.pendingApprovals().some((x) => x.id === r.id) || !autopilot?.isAway(r.projectId)) return
-            runner.respond(
-              r.id,
-              'deny',
-              'unattended mode (nobody answered)',
-              "The product owner is away and couldn't approve this. Do the task another way that doesn't need it, or leave this part out and say in your final message what still needs their approval."
-            )
-            autopilot?.noteDeclined(r.projectId)
-          }, UNATTENDED_APPROVAL_WAIT_MS)
-          t.unref?.()
+        // Unattended: nobody is there to answer, so the action is set aside for the morning at once and the agent
+        // carries on with everything else instead of waiting.
+        if (autopilot?.isAway(r.projectId) && runner.pendingApprovals().some((x) => x.id === r.id)) {
+          autopilot.setAside(r)
+          runner.respond(
+            r.id,
+            'deny',
+            'unattended mode: set aside for the morning',
+            "The product owner is away, so this action was saved for them to approve in the morning; you'll be asked to do it then. Don't retry it or find a way around it now. Carry on with everything else in this task that doesn't depend on it, and say in your final message what's waiting for their OK."
+          )
         }
       })
       return
@@ -842,6 +838,7 @@ app.whenReady().then(() => {
   handle(IPC.autopilotResume, (id: unknown) => autopilot!.resume(pid(id)))
   handle(IPC.autopilotStop, (id: unknown) => autopilot!.stop(pid(id)))
   handle(IPC.autopilotConfigure, (id: unknown, config: unknown) => autopilot!.configure(pid(id), config && typeof config === 'object' ? (config as never) : {}))
+  handle(IPC.autopilotSetAside, (id: unknown, item: unknown, doIt: unknown) => autopilot!.resolveSetAside(pid(id), str(item, 'action'), doIt === true))
   handle(IPC.autopilotFeedback, (id: unknown, text: unknown) => autopilot!.addFeedback(pid(id), str(text, 'feedback').slice(0, 8000)))
 
   // Trends and ideas
