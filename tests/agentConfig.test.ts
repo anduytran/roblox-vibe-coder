@@ -205,3 +205,54 @@ test('coordinator: the runner refuses the Lead\'s own code edits but not its hel
   assert.equal((await can('Edit', { file_path: join(dir, 'src', 'Shop.luau') }, { signal: ac.signal })).behavior, 'deny')
   assert.equal((await can('Edit', { file_path: join(dir, 'src', 'Shop.luau') }, { signal: ac.signal, agentID: 'sub-1' })).behavior, 'allow', 'the Scripter it hands work to can edit')
 })
+
+test('helpers: a role the Lead hands work to shows as working for it, with its steps in its own feed', async () => {
+  const dir = tmp('hangar-help-')
+  const { installTemplates } = await import('../src/main/roles')
+  installTemplates(dir)
+  const registry = new ProjectRegistry(join(tmp('hangar-help-reg-'), 'projects.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { sandbox: false } })
+  const events: AgentEvent[] = []
+  let release: () => void = () => {}
+  const gate = new Promise<void>((r) => (release = r))
+  const query: QueryFn = () =>
+    (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 's', mcp_servers: [] }
+      yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call-1', name: 'Agent', input: { subagent_type: 'scripter', description: 'Build the shop server', prompt: 'Build it' } }] } }
+      yield { type: 'assistant', parent_tool_use_id: 'call-1', message: { content: [{ type: 'tool_use', id: 'sub-1', name: 'Read', input: { file_path: join(dir, 'Shop.luau') } }] } }
+      await gate
+      yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'Shop server done.' }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const runner: AgentRunner = new AgentRunner({
+    registry,
+    costs: new CostTracker(join(tmp('hangar-help-c-'), 'costs.json')),
+    getSettings: () => settings,
+    getApiKey: () => 'sk-ant-test',
+    engineAuth: async (k) => ({ env: { ANTHROPIC_API_KEY: k }, release: () => {} }),
+    loadQuery: async () => query,
+    emit: (e) => {
+      events.push(e)
+      if (e.type === 'approval' && e.request.toolName === 'Project setup') queueMicrotask(() => runner.respond(e.request.id, 'allow'))
+    },
+    persistFile: join(tmp('hangar-help-p-'), 'agents.json'),
+    trustFile: join(tmp('hangar-help-t-'), 'trust.json'),
+    appDataDir: tmp('hangar-help-app-'),
+    platform: 'linux',
+    reviews: new ReviewStore(join(tmp('hangar-help-rv-'), 'reviews.json'))
+  })
+  const scripter = () => runner.snapshot(project.id).find((a) => a.agentId === 'scripter')!
+  runner.send(project.id, 'lead', 'build the shop')
+  await until(() => !!scripter().helping?.activity)
+  assert.equal(scripter().helping!.forName, 'Lead')
+  assert.equal(scripter().helping!.brief, 'Build the shop server')
+  assert.match(scripter().helping!.activity!, /Shop\.luau/)
+  assert.equal(scripter().status, 'idle', 'its own queue and status are untouched')
+  const logs = () => events.filter((e) => e.type === 'log' && e.agentId === 'scripter').map((e) => (e as { entry: { text: string } }).entry.text)
+  assert.ok(logs().some((t) => /^Working for Lead: Build the shop server/.test(t)))
+  assert.ok(logs().some((t) => /Shop\.luau/.test(t) && !t.startsWith('↳')), 'its steps are in its own feed')
+  release()
+  await until(() => !scripter().helping)
+  assert.ok(logs().some((t) => /Handed the work back to Lead/.test(t)))
+})

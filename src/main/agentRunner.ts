@@ -499,6 +499,8 @@ export class AgentRunner {
     let started = false
     let releaseAuth: (() => void) | null = null
     let taskBranch: { name: string; from: TaskBase; reviewId?: string } | null = null
+    // Helpers this run handed work to (by the id of the Agent tool call), shown as working on their own cards.
+    const helpers = new Map<string, AgentState>()
     // Resolving a merge clash: the review, where its branch was, and the files in conflict.
     let clash: { review: Review; headSha: string; conflicts: string[] } | null = null
     let lastText = ''
@@ -701,6 +703,7 @@ export class AgentRunner {
       started = true
       for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
+        if (!research) this.trackHelpers(s, role?.name ?? 'Main', allRoles, helpers, raw as StreamMessage, c)
         if (c.sessionId && !research && !clash) s.sessionId = c.sessionId
         if (c.text) lastText = c.text
         if (clip) {
@@ -756,6 +759,7 @@ export class AgentRunner {
         this.deps.emit({ type: 'cost', summary: this.deps.costs.summary() })
       }
       releaseAuth?.()
+      for (const id of helpers.keys()) this.endHelping(helpers, id)
       if (researchDir) rmSync(researchDir, { recursive: true, force: true })
       proxyGrant?.release()
       this.controllers.delete(key)
@@ -1014,6 +1018,47 @@ export class AgentRunner {
       this.log(s, { kind: 'error', text: `Couldn't wrap up the task branch ${branch.name}: ${message}. Your work is still on that branch; check the Changes tab.` })
       return null
     }
+  }
+
+  /**
+   * When an agent hands work to another role (the Agent tool), that role shows as working for it, and the helper's
+   * steps are copied into the helper's own feed. The work itself still runs inside this agent's run.
+   */
+  private trackHelpers(s: AgentState, name: string, roles: Role[], helpers: Map<string, AgentState>, raw: StreamMessage, c: ReturnType<typeof convertMessage>): void {
+    const parent = raw.parent_tool_use_id ?? null
+    if (!parent) {
+      for (const t of c.toolUses ?? []) {
+        if ((t.name !== 'Agent' && t.name !== 'Task') || !t.id) continue
+        const id = typeof t.input.subagent_type === 'string' ? t.input.subagent_type : ''
+        if (id === s.agentId || !roles.some((r) => r.id === id)) continue
+        const helper = this.state(s.projectId, id)
+        const brief = stripHidden(typeof t.input.description === 'string' ? t.input.description : 'a task').replace(/\s+/g, ' ').slice(0, 120)
+        helpers.set(t.id, helper)
+        helper.helping = { for: s.agentId, forName: name, brief, activity: null }
+        this.log(helper, { kind: 'system', text: `Working for ${name}: ${brief}` })
+        this.publish(helper)
+      }
+      // The Agent call's result: the helper handed its work back.
+      for (const e of c.entries) if ((e.kind === 'tool_result' || e.kind === 'error') && e.toolUseId && helpers.has(e.toolUseId)) this.endHelping(helpers, e.toolUseId)
+      return
+    }
+    const helper = helpers.get(parent)
+    if (!helper) return
+    for (const e of c.entries) this.log(helper, { ...e, text: e.text.replace(/^↳ /, '') })
+    if (helper.helping && c.activity !== undefined) {
+      helper.helping = { ...helper.helping, activity: c.activity }
+      this.publish(helper)
+    }
+  }
+
+  private endHelping(helpers: Map<string, AgentState>, id: string): void {
+    const helper = helpers.get(id)
+    helpers.delete(id)
+    if (!helper?.helping) return
+    this.log(helper, { kind: 'system', text: `Handed the work back to ${helper.helping.forName}.` })
+    helper.helping = null
+    this.publish(helper)
+    this.save(helper)
   }
 
   /** Mark a clash fix as failed on its review (the change itself is unchanged). */

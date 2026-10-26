@@ -274,6 +274,8 @@ export interface AgentState {
   costUsd: number
   /** Short description of what the agent is doing right now. */
   activity: string | null
+  /** Doing a piece of another agent's task (the Lead handed it a brief), inside that agent's run. */
+  helping?: { for: string; forName: string; brief: string; activity: string | null } | null
 }
 
 export type ApprovalDecision = 'allow' | 'deny' | 'always'

@@ -80,9 +80,13 @@ export function AgentsView({ project }: { project: Project }) {
                     </span>
                   )}
                 </span>
-                <StatusPill status={a?.status ?? 'idle'} />
+                <StatusPill status={a?.status ?? 'idle'} helpingFor={a?.helping?.forName} />
               </div>
-              <div className="agent-activity">{waiting ? `${waiting} action${waiting > 1 ? 's need' : ' needs'} approval` : (a?.activity ?? r.description)}</div>
+              <div className="agent-activity">
+                {waiting
+                  ? `${waiting} action${waiting > 1 ? 's need' : ' needs'} approval`
+                  : (a?.activity ?? (a?.helping ? `${a.helping.brief}${a.helping.activity ? ` · ${a.helping.activity}` : ''}` : r.description))}
+              </div>
               <div className="agent-meta">
                 {a && a.queue.length > 0 && <span>{a.queue.length} queued</span>}
                 {a && a.costUsd > 0 && <span>{usd(a.costUsd)} this session</span>}
@@ -164,7 +168,7 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <div>
           <div className="row gap-sm">
             <h2>{role.name}</h2>
-            <StatusPill status={state?.status ?? 'idle'} />
+            <StatusPill status={state?.status ?? 'idle'} helpingFor={state?.helping?.forName} />
           </div>
           <p className="muted small panel-desc" title={role.description}>
             {role.description}
@@ -238,6 +242,12 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
           </div>
         )}
         {state?.activity && busy && approvals.length === 0 && <div className="activity">{state.activity}</div>}
+        {!busy && state?.helping && (
+          <div className="activity">
+            Working for {state.helping.forName}: {state.helping.brief}
+            {state.helping.activity ? ` · ${state.helping.activity}` : ''}
+          </div>
+        )}
       </div>
 
       {approvals.length > 0 && (

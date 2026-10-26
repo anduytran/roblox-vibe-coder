@@ -50,7 +50,16 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
   stopped: 'Stopped'
 }
 
-export function StatusPill({ status }: { status: AgentStatus }) {
+export function StatusPill({ status, helpingFor }: { status: AgentStatus; helpingFor?: string | null }) {
+  // Doing a piece of another agent's task (inside that agent's run) while it has nothing of its own going.
+  if (helpingFor && status !== 'working' && status !== 'awaiting_approval') {
+    return (
+      <span className="pill pill-working">
+        <span className="pill-dot" />
+        For {helpingFor}
+      </span>
+    )
+  }
   return (
     <span className={`pill pill-${status}`}>
       <span className="pill-dot" />
