@@ -59,6 +59,9 @@ export interface AutopilotDeps {
 /** Tries at resolving one change's clash on its own before it waits for you. */
 export const MAX_CLASH_FIXES = 2
 
+/** Sprints in a row that built nothing before an unattended run stops instead of starting another. */
+export const STUCK_SPRINTS = 2
+
 /** Why a finished task can't be merged without you (null = it can). */
 export function autoMergeBlocker(review: Review): string | null {
   if (review.kind === 'research') return 'Research always needs your approval.'
@@ -492,6 +495,14 @@ Reply with only these sections, short and concrete:
       }
       const report: SprintReport = { sprint: st.sprint, at: Date.now(), text: o.text.slice(0, 20_000), tasks: st.sprintTasks, spentUsd: Math.round((this.spent(o.projectId) - st.spentAtSprintStart) * 100) / 100 }
       this.put({ ...st, status: 'checkin', reason: null, reports: [...st.reports, report].slice(-30) })
+      // Unattended, but stuck: two sprints in a row built nothing (each waiting on something only you can do).
+      // Starting more would only repeat that, so the run stops here and says why.
+      const recent = [...st.reports, report].slice(-STUCK_SPRINTS)
+      const stuck = recent.length === STUCK_SPRINTS && recent.every((r) => r.tasks.every((t) => t.outcome === 'no-changes' || t.outcome === 'failed'))
+      if (this.isAway(o.projectId) && stuck) {
+        this.endAway(o.projectId, `the last ${STUCK_SPRINTS} sprints built nothing (the Lead is waiting on you: see the latest check-in)`)
+        return
+      }
       // Unattended: the check-in answers itself and the next sprint starts on the Lead's own plan.
       if (this.isAway(o.projectId)) {
         this.bumpAway(o.projectId, 'sprints')

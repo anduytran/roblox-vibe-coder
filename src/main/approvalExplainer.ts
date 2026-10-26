@@ -131,6 +131,30 @@ const CREDENTIAL_FILES = new Set(['.netrc', '.git-credentials', '.pypirc', '.npm
 const SAFE_DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/stdin', '/dev/tty', '/dev/zero', '/dev/random', '/dev/urandom'])
 
 /** A word that names a place by itself (not relative to the project): /x, ~/x, $HOME/x, C:\x, ../x. */
+/** Programs whose first plain argument is code or a pattern (unless given with -e or -f), and the options of theirs that take a value. */
+const CODE_FIRST: Record<string, { given: RegExp; valued: Set<string> }> = Object.fromEntries([
+  ...['awk', 'gawk', 'mawk', 'nawk'].map((p) => [p, { given: /^(-f|--file)/, valued: new Set(['-v', '-F', '--assign', '--field-separator']) }]),
+  ...['sed', 'gsed'].map((p) => [p, { given: /^(-e|-f|--expression|--file)/, valued: new Set(['-l', '--line-length']) }]),
+  ...['grep', 'egrep', 'fgrep', 'rg'].map((p) => [p, { given: /^(-e|-f|--regexp|--file)/, valued: new Set(['-m', '-A', '-B', '-C', '--max-count', '-g', '--glob', '-t', '--type']) }]),
+  ['jq', { given: /^(--from-file|-f)$/, valued: new Set(['--arg', '--argjson', '--slurpfile', '--rawfile', '--indent']) }]
+])
+
+/**
+ * Which argument is code rather than a file (awk's program, sed's script, grep's pattern), or -1. Only the first plain
+ * argument can be; every other argument is still checked as a path.
+ */
+function codeArgument(program: string, args: string[]): number {
+  const rule = CODE_FIRST[program]
+  if (!rule || args.some((x) => rule.given.test(x))) return -1
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i]!
+    if (w === '--') return i + 1 < args.length ? i + 1 : -1
+    if (!w.startsWith('-') || w === '-') return i
+    if (rule.valued.has(w)) i++
+  }
+  return -1
+}
+
 function looksLikePath(w: string): boolean {
   // "~" only as a home folder (~, ~/x, ~user/x), not Lua's "~=" (not equal) or other code.
   return /^(~(?=$|[\\/]|[A-Za-z0-9_.-]+(?:$|[\\/]))|\/|\\\\|[A-Za-z]:[\\/]|\$HOME\b|\$\{HOME\}|%[A-Za-z]+%)/.test(w) || /(^|[\\/])\.\.([\\/]|$)/.test(w)
@@ -264,7 +288,10 @@ function analyzeCommand(command: string, a: Analysis, depth = 0): void {
     if (s.writeTargets.some((w) => !SAFE_DEVICES.has(w.toLowerCase()) && w.toLowerCase() !== 'nul')) a.writes = true
     if (writesArgs) a.writes = true
     for (const w of s.writeTargets) a.uses.push({ path: w, write: true })
-    for (const w of args) {
+    const code = codeArgument(program, args)
+    for (const [k, w] of args.entries()) {
+      // awk's program, sed's script, grep's pattern ('/^<<<<<<</{print}'): code, not a file, even when it starts with /.
+      if (k === code) continue
       // `--output=/x`, `of=/dev/sda`: the value is the path.
       const value = /^[-\w]*=/.test(w) ? w.slice(w.indexOf('=') + 1) : w
       if (value) a.uses.push({ path: value, write: writesArgs && !value.startsWith('-') })

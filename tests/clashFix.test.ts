@@ -283,3 +283,41 @@ test('merge all: stopping it leaves the changes in Reviews', async () => {
   await new Promise((r) => setTimeout(r, 50))
   assert.equal(t.reviews.get(a.id).status, 'pending')
 })
+
+test('autopilot: an unattended run stops after two sprints in a row that built nothing', async () => {
+  const { Autopilot } = await import('../src/main/autopilot')
+  const registry = new ProjectRegistry(join(tmp('hangar-stuck-'), 'p.json'))
+  const project = registry.add(tmp('hangar-stuck-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-stuck-r-'), 'r.json'))
+  const sent: string[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-stuck-a-'), 'a.json'),
+    registry,
+    reviews,
+    costs: new CostTracker(join(tmp('hangar-stuck-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt) => {
+      sent.push(prompt)
+    },
+    merge: async () => undefined
+  })
+  ap.start(project.id, { config: { sprintTasks: 1 } as never })
+  ap.configure(project.id, { unattended: true, unattendedUntil: null, unattendedBudgetUsd: 20 })
+  const task = (prompt: string, origin: 'autopilot' | 'autopilot-report', text = 'Nothing to build.') =>
+    ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: `t${sent.length}`, prompt, createdAt: 1, origin }, ok: true, stopped: false, text, error: null, reviewId: null })
+  const report = '## Built\n- Nothing\n## Next sprint\n- Playtest\n## Questions\n- None'
+  // Sprint 1: nothing built → check-in → sprint 2 starts on its own.
+  task(sent.at(-1)!, 'autopilot')
+  task(sent.at(-1)!, 'autopilot-report', report)
+  assert.equal(ap.get(project.id).sprint, 2)
+  assert.equal(ap.isAway(project.id), true)
+  // Sprint 2: nothing again → the run stops instead of starting sprint 3.
+  task(sent.at(-1)!, 'autopilot')
+  task(sent.at(-1)!, 'autopilot-report', report)
+  const st = ap.get(project.id)
+  assert.equal(st.sprint, 2)
+  assert.equal(st.status, 'checkin')
+  assert.equal(st.config.unattended, false)
+  assert.match(st.away!.endReason ?? '', /last 2 sprints built nothing/)
+})

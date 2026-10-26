@@ -197,6 +197,11 @@ test('C3/H2: agents get no settings files, CLAUDE.md from Hangar, roles as subag
   assert.equal(o.model, 'claude-opus-5-5', 'the Scripter runs on its own model')
   // A role with its own model keeps it (the QA Tester runs on the cheaper Haiku).
   assert.equal((o.agents as Record<string, { model?: string }>)['qa-tester']!.model, 'claude-haiku-5-5')
+  // Its limits are tools it may not use, so connected tools (Roblox Studio, for playtests) stay available to it.
+  const qa = (o.agents as Record<string, { tools?: string[]; disallowedTools?: string[] }>)['qa-tester']!
+  assert.equal(qa.tools, undefined)
+  assert.ok(qa.disallowedTools!.includes('Edit') && qa.disallowedTools!.includes('Bash'))
+  assert.ok(!qa.disallowedTools!.some((t) => t.startsWith('mcp__')))
   const env = o.env as Record<string, string>
   assert.equal(env.HANGAR_TEST_SECRET, undefined)
   assert.equal(env.GIT_CONFIG_KEY_0, 'core.fsmonitor')

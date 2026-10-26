@@ -362,3 +362,18 @@ test('explain: an action set aside while you were away is explained, and the exp
   ;(st.setAside![0] as { inputJson?: string }).inputJson = undefined
   assert.match(ap.setAsideRequest(project.id, 'aside-1')!.inputJson, /"command"/)
 })
+
+test('explain: awk, sed and grep patterns that start with / are code, not paths outside the project', () => {
+  const root = tmp('hangar-ex-')
+  const kinds = (cmd: string): string[] => approvalFlags(bash(cmd), { projectRoot: root }).flags.map((f) => f.kind)
+  // The Lead looking for leftover conflict markers (it was flagged as reading outside the project).
+  assert.deepEqual(kinds(`cd "${root}" && for f in design-vault/Balance.md; do awk '/^<<<<<<<|^=======|^>>>>>>>/{print NR": "$0; inside=!inside || /^=======/; next} inside{print NR": "$0}' "$f"; done`), [])
+  assert.deepEqual(kinds(`sed -n '/^## Next/,/^## /p' notes.md`), [])
+  assert.deepEqual(kinds(`grep -n '/^local' src/a.luau`), [])
+  assert.deepEqual(kinds(`awk -F: '/root/{print}' notes.txt`), [])
+  // Real files outside the project are still flagged, before or after the pattern.
+  assert.ok(kinds(`awk '/x/' /etc/passwd`).includes('outside-read'))
+  assert.ok(kinds(`grep -e /etc/hosts /etc/passwd`).includes('outside-read'))
+  assert.ok(kinds(`awk -f /etc/evil.awk notes.txt`).includes('outside-read'), 'with -f, the program is a file')
+  assert.ok(kinds(`sed -n 'p' ~/.ssh/id_rsa`).includes('credentials'))
+})
