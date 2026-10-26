@@ -48,6 +48,8 @@ export class ReviewStore {
       reviews: s.reviews.map((r) => {
         if (r.id !== id) return r
         out = { ...r, ...patch, id: r.id }
+        // Record when a review was decided (Home's "this week" counts merges by it).
+        if (r.status === 'pending' && out.status !== 'pending' && !out.decidedAt) out = { ...out, decidedAt: Date.now() }
         return out
       })
     }))

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiReview, Project, Review, ReviewChecks } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
-import { attempt, confirmDialog, EMPTY_REVIEWS, replaceReview, toast, useStore } from '../store'
+import { attempt, confirmDialog, EMPTY_REVIEWS, getState, replaceReview, toast, useStore } from '../store'
 import { Button, Skeleton, timeAgo } from './ui'
 import { DiffView } from './DiffView'
 import { EmptyState } from './EmptyState'
@@ -11,7 +11,12 @@ import { revealHidden } from '@shared/text'
 export function ReviewsView({ project }: { project: Project }) {
   const reviews = useStore((s) => s.reviews[project.id] ?? EMPTY_REVIEWS)
   const roles = useStore((s) => s.roles[project.id])
-  const [selected, setSelected] = useState<string | null>(null)
+  // Opened from Home or the Inbox for a particular review: show it.
+  const focus = useStore((s) => s.focus)
+  const [selected, setSelected] = useState<string | null>(() => getState().focus?.reviewId ?? null)
+  useEffect(() => {
+    if (focus?.reviewId) setSelected(focus.reviewId)
+  }, [focus])
   const pending = useMemo(() => reviews.filter((r) => r.status === 'pending'), [reviews])
   const recent = useMemo(() => reviews.filter((r) => r.status !== 'pending').slice(0, 15), [reviews])
   const current = reviews.find((r) => r.id === selected) ?? pending[0] ?? null
@@ -37,7 +42,7 @@ export function ReviewsView({ project }: { project: Project }) {
         )}
         {pending.map((r) => (
           <button key={r.id} className={`review-item ${current?.id === r.id ? 'file-item-active' : ''}`} onClick={() => setSelected(r.id)}>
-            <span className="review-title">{r.title}</span>
+            <span className="review-title">{revealHidden(r.title)}</span>
             <span className="muted small">
               {agentName(r.agentId)} ·{' '}
               {r.kind === 'research' ? `web research · ${r.research?.fetched.length ?? 0} pages` : `${r.files.length} file${r.files.length === 1 ? '' : 's'}`} ·{' '}
@@ -51,7 +56,7 @@ export function ReviewsView({ project }: { project: Project }) {
         {recent.length > 0 && <span className="side-label" style={{ marginTop: 12 }}>Recent</span>}
         {recent.map((r) => (
           <button key={r.id} className={`review-item ${current?.id === r.id ? 'file-item-active' : ''}`} onClick={() => setSelected(r.id)}>
-            <span className="review-title muted">{r.title}</span>
+            <span className="review-title muted">{revealHidden(r.title)}</span>
             <span className="muted small">
               {r.status === 'merged' ? (r.kind === 'research' ? 'Approved' : 'Merged') : 'Discarded'} · {timeAgo(r.createdAt)}
             </span>
@@ -125,7 +130,7 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
     <div className="review-detail">
       <header className="review-head">
         <div>
-          <h2>{review.title}</h2>
+          <h2>{revealHidden(review.title)}</h2>
           <p className="muted small">
             {agent} · branch <code>{review.branch}</code> from <code>{review.base}</code>
           </p>
@@ -242,7 +247,7 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
   )
 }
 
-function ReviewBadges({ review }: { review: Review }) {
+export function ReviewBadges({ review }: { review: Review }) {
   const c = review.checks
   const ai = review.aiReview
   if (!c && !ai) return null
@@ -367,7 +372,7 @@ function ResearchDetail({ review, agent }: { review: Review; agent: string }) {
     <div className="review-detail">
       <header className="review-head">
         <div>
-          <h2>{review.title}</h2>
+          <h2>{revealHidden(review.title)}</h2>
           <p className="muted small">{agent} · web research · nothing here reaches other agents until you approve it</p>
         </div>
         {isPending && (

@@ -73,14 +73,17 @@ export class CostTracker {
 
   summary(now = Date.now()): CostSummary {
     const since = startOfLocalDay(now)
+    const weekSince = now - 7 * 24 * 60 * 60 * 1000
     const projectTodayUsd: Record<string, number> = {}
     let todayUsd = 0
+    let weekUsd = 0
     for (const e of this.store.get().entries) {
+      if (e.ts >= weekSince) weekUsd += e.usd
       if (e.ts < since) continue
       todayUsd += e.usd
       projectTodayUsd[e.projectId] = (projectTodayUsd[e.projectId] ?? 0) + e.usd
     }
-    return { todayUsd, projectTodayUsd, projectTotalUsd: { ...this.store.get().totals }, plan: this.planUsage(now) }
+    return { todayUsd, projectTodayUsd, projectTotalUsd: { ...this.store.get().totals }, plan: this.planUsage(now), weekUsd }
   }
 
   /**

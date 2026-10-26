@@ -196,6 +196,8 @@ export interface Review {
   checks?: ReviewChecks | null
   aiReview?: AiReview | null
   research?: ResearchFindings | null
+  /** When it was merged or discarded (absent while pending, and on reviews from before this was recorded). */
+  decidedAt?: number
 }
 
 export interface AgentState {
@@ -236,6 +238,8 @@ export interface CostSummary {
   projectTotalUsd: Record<string, number>
   /** Claude plan usage (Claude Max mode), from what the engine last reported; null until it reports any. */
   plan: PlanUsage | null
+  /** Estimated spend over the last 7 days, all projects. */
+  weekUsd: number
 }
 
 export interface PlanUsageWindow {

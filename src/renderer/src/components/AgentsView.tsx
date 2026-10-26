@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentState, LogEntry, Project, Role } from '@shared/types'
-import { attempt, EMPTY_AGENTS, EMPTY_ROLES, refreshProjects, setRoles, toast, useStore } from '../store'
+import { attempt, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
@@ -17,7 +17,12 @@ export function AgentsView({ project }: { project: Project }) {
   const roles = useStore((s) => s.roles[project.id] ?? EMPTY_ROLES)
   const agents = useStore((s) => s.agents[project.id] ?? EMPTY_AGENTS)
   const approvals = useStore((s) => s.approvals)
-  const [selected, setSelected] = useState('main')
+  // Opened from Home or the Inbox for a particular agent: start on it.
+  const focus = useStore((s) => s.focus)
+  const [selected, setSelected] = useState(() => getState().focus?.agentId ?? 'main')
+  useEffect(() => {
+    if (focus?.agentId) setSelected(focus.agentId)
+  }, [focus])
   const [editing, setEditing] = useState<Role | null>(null)
 
   const all = useMemo(() => [MAIN_AGENT, ...roles], [roles])

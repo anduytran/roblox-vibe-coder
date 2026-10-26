@@ -29,7 +29,7 @@ import { mcpServersFor } from './projects'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
 import { convertMessage, type StreamMessage } from './sdkMessages'
-import { revealHidden } from '@shared/text'
+import { firstLine, revealHidden, stripHidden } from '@shared/text'
 
 /** The always-present general agent for each project. Role agents come from .claude/agents/. */
 export const MAIN_AGENT_ID = 'main'
@@ -675,8 +675,9 @@ export class AgentRunner {
   ): Promise<string | null> {
     const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
     // Autopilot prompts are long instructions; the agent's own first line says what it actually built.
-    const reportLine = lastText.split('\n').map((l) => l.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean)
-    const title = (task.origin ? (reportLine ?? 'Autopilot task') : task.prompt.split('\n')[0]!).slice(0, 120)
+    // Titles show on Home, in the Inbox and on the phone: hidden characters never make it in.
+    const reportLine = firstLine(lastText) || undefined
+    const title = (task.origin ? (reportLine ?? 'Autopilot task') : stripHidden(task.prompt).split('\n')[0]!).slice(0, 120)
     try {
       const { files, headSha, note } = await finishTaskBranch(
         project.path,
@@ -722,7 +723,7 @@ export class AgentRunner {
   /** Turn a researcher's report into a review. It reaches no agent until you approve it. */
   private finishResearch(s: AgentState, project: Project, task: QueuedTask, text: string, fetched: string[], queries: string[], completed: boolean): void {
     const { markdown, hiddenChars, cited } = cleanResearch(text)
-    const title = task.prompt.split('\n')[0]!.slice(0, 120)
+    const title = stripHidden(task.prompt).split('\n')[0]!.slice(0, 120)
     const review = this.deps.reviews.add({
       projectId: project.id,
       agentId: s.agentId,

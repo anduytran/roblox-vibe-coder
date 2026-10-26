@@ -54,3 +54,16 @@ export function safeExternalUrl(raw: string): string | null {
   if (u.protocol !== 'https:' || u.username || u.password || !u.hostname) return null
   return u.href
 }
+
+/**
+ * First meaningful line of a report or summary, for one-line previews: Markdown heading, list and quote
+ * markers dropped, hidden characters removed, capped at 140 characters.
+ */
+export function firstLine(text: string): string {
+  const lines = stripHidden(text).split('\n')
+  const clean = (l: string): string => l.replace(/^[#>*\-+\s]+/, '').replace(/^\d+[.)]\s+/, '').replace(/\*\*/g, '').trim()
+  // Section headings ("## Built", "**Built:**") say nothing on their own: prefer the first real line under them.
+  const heading = (l: string): boolean => /^\s*#{1,6}\s/.test(l) || /^\s*\*\*[^*]+\*\*:?\s*$/.test(l)
+  const line = lines.filter((l) => !heading(l)).map(clean).find(Boolean) ?? lines.map(clean).find(Boolean) ?? ''
+  return line.length > 140 ? `${line.slice(0, 139)}…` : line
+}

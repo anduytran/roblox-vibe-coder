@@ -63,16 +63,21 @@ export function StatusPill({ status }: { status: AgentStatus }) {
 const openModals: number[] = []
 let modalSeq = 0
 
-export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
-  const onClose = useRef(props.onClose)
-  onClose.current = props.onClose
+/**
+ * Esc closes this dialog or panel, but only if it's the topmost one open (dialogs and side panels share
+ * the stack). Pass `active: false` while it isn't showing.
+ */
+export function useEscape(onClose: () => void, active = true): void {
+  const latest = useRef(onClose)
+  latest.current = onClose
   useEffect(() => {
+    if (!active) return
     const id = ++modalSeq
     openModals.push(id)
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && openModals[openModals.length - 1] === id) {
         e.stopPropagation()
-        onClose.current()
+        latest.current()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -81,7 +86,11 @@ export function Modal(props: { title: string; onClose: () => void; children: Rea
       const at = openModals.indexOf(id)
       if (at >= 0) openModals.splice(at, 1)
     }
-  }, [])
+  }, [active])
+}
+
+export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+  useEscape(props.onClose)
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
       <div className={`modal ${props.wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={props.title}>
@@ -126,7 +135,9 @@ const ICONS: Record<string, string> = {
   gauge: 'M2.5 11.5a5.5 5.5 0 1 1 11 0M8 11.5l2.5-3.5M8 11.5h0',
   cube: 'M8 2.5 13 5v6l-5 2.5L3 11V5l5-2.5Zm0 0M3 5l5 2.5L13 5M8 7.5v6',
   phone: 'M5 2h6v12H5zM7.3 12h1.4',
-  shield: 'M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4l5-2Zm-2 6 1.5 1.5L10.5 6.5'
+  shield: 'M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4l5-2Zm-2 6 1.5 1.5L10.5 6.5',
+  bulb: 'M6 12.5h4M6.5 14h3M8 2a4 4 0 0 0-2.3 7.3c.4.3.8.9.8 1.4v.3h3v-.3c0-.5.4-1.1.8-1.4A4 4 0 0 0 8 2Z',
+  bell: 'M4 11.5V7.5a4 4 0 0 1 8 0v4l1 1H3l1-1ZM6.5 14h3'
 }
 
 /** Small line icons drawn at 16px on a 16-unit grid; they inherit the text colour. */

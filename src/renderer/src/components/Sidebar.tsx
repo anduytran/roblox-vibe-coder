@@ -1,10 +1,14 @@
-import { addProject, attempt, openWizard, selectProject, toast, useStore } from '../store'
+import { addProject, attempt, openPage, openWizard, selectProject, setInboxOpen, toast, useStore } from '../store'
+import { useWaiting } from './waiting'
 import type { AppSettings, PlanUsage } from '@shared/types'
 import { Avatar, Icon, resetsText, usd } from './ui'
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const projects = useStore((s) => s.projects)
   const selected = useStore((s) => s.selectedProjectId)
+  const page = useStore((s) => s.page)
+  const inboxOpen = useStore((s) => s.inboxOpen)
+  const waiting = useWaiting()
   const agents = useStore((s) => s.agents)
   const approvals = useStore((s) => s.approvals)
   const costs = useStore((s) => s.costs)
@@ -24,9 +28,18 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </svg>
         Hangar
       </div>
-      <button className={`side-btn side-nav ${selected === null ? 'side-btn-active' : ''}`} onClick={() => selectProject(null)}>
+      <button className={`side-btn side-nav ${selected === null && page === 'home' ? 'side-btn-active' : ''}`} aria-current={selected === null && page === 'home' ? 'page' : undefined} onClick={() => selectProject(null)}>
         <Icon name="home" />
         Home
+      </button>
+      <button className={`side-btn side-nav ${selected === null && page === 'ideas' ? 'side-btn-active' : ''}`} aria-current={selected === null && page === 'ideas' ? 'page' : undefined} onClick={() => openPage('ideas')}>
+        <Icon name="bulb" />
+        Ideas
+      </button>
+      <button className={`side-btn side-nav ${inboxOpen ? 'side-btn-active' : ''}`} aria-pressed={inboxOpen} title="Everything waiting for you (Cmd/Ctrl+I)" onClick={() => setInboxOpen(!inboxOpen)}>
+        <Icon name="bell" />
+        Inbox
+        {waiting.count > 0 && <span className="badge badge-warn side-count">{waiting.count}</span>}
       </button>
       <button className="side-btn side-new" onClick={() => openWizard()}>
         <Icon name="plus" />

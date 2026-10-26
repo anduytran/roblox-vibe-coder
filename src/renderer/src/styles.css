@@ -3130,3 +3130,347 @@ button.file-item {
 .dv-none {
   padding: 16px;
 }
+
+/* ---------- Phase 2: Home cockpit, Ideas page, Inbox ---------- */
+
+/* Sidebar */
+.side-count {
+  margin-left: auto;
+}
+
+/* Needs you */
+.needs-err {
+  border-color: color-mix(in srgb, var(--err) 50%, var(--line));
+  background: linear-gradient(var(--err-soft), var(--err-soft)), var(--surface);
+}
+.needs-action {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.needs-item:hover .needs-action {
+  color: var(--text);
+}
+.needs-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Game cards: the top opens the game; the row of buttons acts on it */
+.game-card {
+  cursor: default;
+  padding: 0;
+  gap: 0;
+}
+.game-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.game-card-main:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.game-card-report {
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.game-card-actions {
+  padding: 0 14px 12px;
+  flex-wrap: wrap;
+}
+
+/* This week + Ideas teaser */
+.home-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.week-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.week-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.week-stats strong {
+  font-size: var(--fs-lg);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.ideas-teaser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, translate 0.15s var(--ease-out);
+}
+.ideas-teaser:hover {
+  border-color: var(--line-strong);
+  translate: 0 -2px;
+}
+@media (max-width: 900px) {
+  .home-pair {
+    grid-template-columns: 1fr;
+  }
+  .week-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Ideas page: the list, with Brainstorm beside it when open */
+.ideas-page {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+.ideas-with-chat {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+}
+.ideas-main {
+  overflow-y: auto;
+  padding: 28px 36px 56px;
+  min-width: 0;
+}
+.ideas-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.ideas-kinds .segmented {
+  flex-wrap: wrap;
+}
+.ideas-tabs {
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.idea-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.idea-card-picked {
+  border-color: var(--info);
+  box-shadow: inset 0 0 0 1px var(--info);
+}
+.idea-check {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 6px;
+  border: 1.5px solid var(--line-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+.idea-check.on {
+  background: var(--info);
+  border-color: var(--info);
+  color: var(--surface);
+}
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--r);
+  background: var(--info-soft);
+  font-size: var(--fs-sm);
+}
+.compare-wrap {
+  overflow-x: auto;
+}
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  table-layout: fixed;
+}
+.compare-table th,
+.compare-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.compare-table thead th {
+  font-size: var(--fs);
+  color: var(--text);
+}
+.compare-table tbody th {
+  width: 120px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.compare-table td {
+  color: var(--text-2);
+}
+
+/* Brainstorm as a side panel */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  padding: 12px 14px;
+  gap: 10px;
+  animation: slide-in 0.22s var(--ease-out);
+}
+.chat-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-panel-head h3 {
+  margin: 0;
+}
+.chat-panel .chat-log {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.chat-panel .chat-msg {
+  max-width: 100%;
+}
+.chat-panel-foot {
+  margin: 0;
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    translate: 24px 0;
+  }
+}
+@media (max-width: 1000px) {
+  .ideas-with-chat {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .chat-panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+/* Inbox */
+.inbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(8, 10, 14, 0.35);
+  animation: fade 0.14s ease-out;
+}
+.inbox {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-pop);
+  animation: slide-in 0.22s var(--ease-out);
+}
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-head h2 {
+  margin: 0;
+}
+.inbox-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.inbox-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  animation: rise 0.22s var(--ease-out);
+}
+.inbox-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.inbox-meta > span {
+  flex: 1;
+  min-width: 0;
+}
+.inbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.inbox-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+.inbox-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* Phase 2 review fixes */
+.inbox-meta > span {
+  flex: initial;
+}
+.inbox-meta > span:not(.avatar) {
+  flex: 1;
+  min-width: 0;
+}
+.inbox:focus {
+  outline: none;
+}
+.game-card-actions {
+  margin-top: auto;
+}

@@ -2,10 +2,23 @@ import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
+export type ProjectTab = 'overview' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
+export type Page = 'home' | 'ideas'
+
 export interface StoreState {
   ready: boolean
   projects: Project[]
   selectedProjectId: string | null
+  /** Which app page shows when no project is selected. */
+  page: Page
+  /** The open tab of the selected project. */
+  projectTab: ProjectTab
+  /** Something to bring into view on the project's tab (from Home or the Inbox). `seq` makes repeats count. */
+  focus: { agentId?: string; reviewId?: string; seq: number } | null
+  /** The Inbox side panel (everything waiting for you, across games). */
+  inboxOpen: boolean
+  /** The trending charts are being fetched. */
+  trendsLoading: boolean
   /** projectId -> agentId -> state */
   agents: Record<string, Record<string, AgentState>>
   roles: Record<string, Role[]>
@@ -44,11 +57,16 @@ let state: StoreState = {
   ready: false,
   projects: [],
   selectedProjectId: null,
+  page: 'home',
+  projectTab: 'overview',
+  focus: null,
+  inboxOpen: false,
+  trendsLoading: false,
   agents: {},
   roles: {},
   reviews: {},
   approvals: [],
-  costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {}, plan: null },
+  costs: { todayUsd: 0, projectTodayUsd: {}, projectTotalUsd: {}, plan: null, weekUsd: 0 },
   settings: null,
   key: { hasKey: false, encryptionAvailable: true, maxAvailable: false, hasMaxToken: false, ready: false },
   toast: null,
@@ -193,8 +211,11 @@ export async function loadProject(projectId: string): Promise<void> {
   set((s) => ({ agents: { ...s.agents, [projectId]: map }, roles: { ...s.roles, [projectId]: roles }, reviews: { ...s.reviews, [projectId]: reviews } }))
 }
 
-export function selectProject(id: string | null): void {
-  set({ selectedProjectId: id })
+let focusSeq = 0
+
+/** Open a project (on a tab, Overview by default), or Home with null. */
+export function selectProject(id: string | null, tab: ProjectTab = 'overview'): void {
+  set(id ? { selectedProjectId: id, projectTab: tab, focus: null } : { selectedProjectId: null, page: 'home', focus: null })
   try {
     if (id) localStorage.setItem('hangar.selectedProject', id)
   } catch {
@@ -202,12 +223,37 @@ export function selectProject(id: string | null): void {
   }
 }
 
+/** Open a project's tab with an agent or a review brought into view (links from Home and the Inbox). */
+export function openProjectAt(id: string, tab: ProjectTab, focus: { agentId?: string; reviewId?: string } = {}): void {
+  selectProject(id, tab)
+  set({ focus: { ...focus, seq: ++focusSeq }, inboxOpen: false })
+}
+
+export function setProjectTab(tab: ProjectTab): void {
+  set({ projectTab: tab, focus: null })
+}
+
+/** Show an app page (Home, Ideas). */
+export function openPage(page: Page): void {
+  set({ selectedProjectId: null, page, focus: null })
+}
+
+export function setInboxOpen(open: boolean): void {
+  set({ inboxOpen: open })
+}
+
 export function openWizard(prefill: StoreState['wizard'] = {}): void {
   set({ wizard: prefill ?? {}, ideaChat: null, refineIdeaId: null })
 }
 
+/** Brainstorm opens beside the ideas, on the Ideas page. */
 export function openIdeaChat(draft = '', category: IdeaCategory = 'trend'): void {
-  set({ ideaChat: { draft, category }, refineIdeaId: null })
+  set({ ideaChat: { draft, category }, refineIdeaId: null, selectedProjectId: null, page: 'ideas', inboxOpen: false })
+}
+
+/** The starting draft has been sent: forget it, so coming back to Ideas doesn't put it in the box again. */
+export function clearIdeaChatDraft(): void {
+  set((s) => (s.ideaChat?.draft ? { ideaChat: { ...s.ideaChat, draft: '' } } : {}))
 }
 
 export function openIdeaRefine(id: string): void {
@@ -260,10 +306,10 @@ export async function addProject(): Promise<void> {
 
 export async function removeProject(id: string): Promise<void> {
   await attempt(() => api().projects.remove(id))
-  set((s) => {
-    const projects = s.projects.filter((p) => p.id !== id)
-    return { projects, selectedProjectId: s.selectedProjectId === id ? (projects[0]?.id ?? null) : s.selectedProjectId }
-  })
+  const wasSelected = state.selectedProjectId === id
+  set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }))
+  // The next game opens on its Overview (not next to its own Remove button); none left → Home.
+  if (wasSelected) selectProject(state.projects[0]?.id ?? null)
 }
 
 export function replaceProject(p: Project): void {
@@ -322,4 +368,31 @@ export function answerConfirm(ok: boolean): void {
   // Back to where you were, if that control is still on screen.
   if (opener?.isConnected) requestAnimationFrame(() => opener.focus())
   resolve?.(ok)
+}
+
+// ---------- trending charts ----------
+
+const TRENDS_STALE_MS = 6 * 3600 * 1000
+let trendsInFlight: Promise<void> | null = null
+
+/** Fetch Roblox's charts again (one fetch at a time, shared by every page). */
+export function refreshTrends(announce = false): Promise<void> {
+  trendsInFlight ??= (async () => {
+    set({ trendsLoading: true })
+    const t = await attempt(() => api().trends.refresh())
+    if (t) {
+      setTrends(t)
+      if (announce && !t.error) toast('Trending games updated.')
+    }
+  })().finally(() => {
+    trendsInFlight = null
+    set({ trendsLoading: false })
+  })
+  return trendsInFlight
+}
+
+/** Refresh the charts if they're missing or older than six hours. */
+export function ensureTrendsFresh(): void {
+  const t = state.trends
+  if (!t?.fetchedAt || Date.now() - t.fetchedAt > TRENDS_STALE_MS) void refreshTrends()
 }

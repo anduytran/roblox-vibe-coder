@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { attempt, closeIdeaRefine, openIdeaChat, openWizard, setTrends, toast, useStore } from '../store'
-import { ideaBrief, SaveStar } from './Dashboard'
+import { ideaBrief, SaveStar } from './ideas'
 import { ideaCategory } from '@shared/ideas'
 import { Button, Modal } from './ui'
 

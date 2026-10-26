@@ -5,18 +5,18 @@ import { ProjectSettingsView } from './components/ProjectSettingsView'
 import { ReviewsView } from './components/ReviewsView'
 import { SettingsModal } from './components/SettingsModal'
 import { Dashboard } from './components/Dashboard'
-import { IdeaChat } from './components/IdeaChat'
+import { IdeasPage } from './components/IdeasPage'
+import { InboxPanel } from './components/InboxPanel'
 import { ModelsView } from './components/ModelsView'
 import { IdeaRefine } from './components/IdeaRefine'
 import { NewGameWizard } from './components/NewGameWizard'
 import { OverviewView } from './components/OverviewView'
 import { Sidebar } from './components/Sidebar'
 import { Avatar, Button, Icon } from './components/ui'
-import { closeIdeaChat, closeIdeaRefine, closeWizard, useStore } from './store'
+import { closeIdeaRefine, closeWizard, getState, setInboxOpen, setProjectTab, useStore, type ProjectTab } from './store'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ConfirmDialog } from './components/ConfirmDialog'
 
-type Tab = 'overview' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
 
 export function App() {
   const ready = useStore((s) => s.ready)
@@ -24,16 +24,26 @@ export function App() {
   const hasKey = useStore((s) => s.key.ready)
   const toast = useStore((s) => s.toast)
   const pendingReviews = useStore((s) => (s.selectedProjectId ? (s.reviews[s.selectedProjectId] ?? []).filter((r) => r.status === 'pending').length : 0))
-  const [tab, setTab] = useState<Tab>('overview')
+  const tab = useStore((s) => s.projectTab)
+  const page = useStore((s) => s.page)
+  const inboxOpen = useStore((s) => s.inboxOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const wizardOpen = useStore((s) => s.wizard !== null)
-  const ideaChatOpen = useStore((s) => s.ideaChat !== null)
   const refineOpen = useStore((s) => s.refineIdeaId !== null)
-  const projectId = project?.id
-  // Each project opens on its Overview.
+  // Cmd/Ctrl+I opens and closes the Inbox from anywhere.
   useEffect(() => {
-    setTab('overview')
-  }, [projectId])
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        const next = !getState().inboxOpen
+        // Never open it underneath a dialog (it would be hidden, yet catch the next Esc).
+        if (next && document.querySelector('.modal-backdrop')) return
+        setInboxOpen(next)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   if (!ready) return <div className="boot">Starting Hangar…</div>
 
@@ -62,8 +72,8 @@ export function App() {
                 </div>
               </div>
               <nav className="tabs" role="tablist">
-                {(['overview', 'agents', 'models', 'reviews', 'changes', 'settings'] as Tab[]).map((t) => (
-                  <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? 'tab-active' : ''}`} onClick={() => setTab(t)}>
+                {(['overview', 'agents', 'models', 'reviews', 'changes', 'settings'] as ProjectTab[]).map((t) => (
+                  <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? 'tab-active' : ''}`} onClick={() => setProjectTab(t)}>
                     <Icon name={t === 'overview' ? 'home' : t === 'agents' ? 'agents' : t === 'models' ? 'cube' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : 'sliders'} />
                     {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Project'}
                     {t === 'reviews' && pendingReviews > 0 && <span className="badge badge-warn tab-badge">{pendingReviews}</span>}
@@ -73,7 +83,7 @@ export function App() {
             </header>
             <section className="view" key={`${project.id}-${tab}`}>
               <ErrorBoundary label="this tab">
-                {tab === 'overview' && <OverviewView project={project} onOpenReviews={() => setTab('reviews')} />}
+                {tab === 'overview' && <OverviewView project={project} onOpenReviews={() => setProjectTab('reviews')} />}
                 {tab === 'agents' && <AgentsView project={project} />}
                 {tab === 'models' && <ModelsView project={project} />}
                 {tab === 'reviews' && <ReviewsView project={project} />}
@@ -82,8 +92,12 @@ export function App() {
               </ErrorBoundary>
             </section>
           </>
+        ) : page === 'ideas' ? (
+          <ErrorBoundary key="ideas" label="Ideas">
+            <IdeasPage />
+          </ErrorBoundary>
         ) : (
-          <ErrorBoundary label="Home">
+          <ErrorBoundary key="home" label="Home">
             <Dashboard />
           </ErrorBoundary>
         )}
@@ -98,9 +112,9 @@ export function App() {
           <NewGameWizard />
         </ErrorBoundary>
       )}
-      {ideaChatOpen && (
-        <ErrorBoundary label="Brainstorm" onClose={closeIdeaChat}>
-          <IdeaChat />
+      {inboxOpen && (
+        <ErrorBoundary label="the Inbox" onClose={() => setInboxOpen(false)}>
+          <InboxPanel />
         </ErrorBoundary>
       )}
       {refineOpen && (
