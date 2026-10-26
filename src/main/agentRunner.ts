@@ -16,7 +16,7 @@ import type {
 } from '@shared/types'
 import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
-import { deleteTaskBranch, tidyWorkingFolder, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
+import { deleteTaskBranch, resumeTaskBranch, tidyWorkingFolder, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
 import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
@@ -83,6 +83,8 @@ interface InFlightFile {
 interface InFlight {
   agentId: string
   taskId: string
+  /** A follow-up continuing this review's change (recovery updates it instead of making another). */
+  reviewId?: string
   branch: string
   from: TaskBase
   title: string
@@ -488,7 +490,7 @@ export class AgentRunner {
     let finished = false
     let started = false
     let releaseAuth: (() => void) | null = null
-    let taskBranch: { name: string; from: TaskBase } | null = null
+    let taskBranch: { name: string; from: TaskBase; reviewId?: string } | null = null
     let lastText = ''
     let clip: ClipSession | null = null
     const screenshotCalls = new Set<string>()
@@ -525,13 +527,25 @@ export class AgentRunner {
       if (project.settings.autonomous && !research) {
         // No branches to manage by hand: a folder left on a task branch, or edits made outside Hangar, are sorted first.
         for (const text of await tidyWorkingFolder(project.path)) this.log(s, { kind: 'system', text })
-        const from = await prepareTaskBase(project.path)
-        const name = taskBranchName(s.agentId, prompt, task.id)
-        await startTaskBranch(project.path, name, from)
-        taskBranch = { name, from }
+        // A follow-up in the same conversation adds to that conversation's change (one review), not a new one.
+        const open = task.origin ? undefined : this.openChatReview(project.id, s)
+        let resumed: { name: string; from: TaskBase; reviewId: string } | null = null
+        if (open) {
+          try {
+            resumed = { name: open.branch, from: await resumeTaskBranch(project.path, open.branch, open.headSha, open.base, open.baseSha), reviewId: open.id }
+            this.log(s, { kind: 'system', text: `Adding to “${open.title}” (in Reviews): this conversation stays one change until you merge or discard it.` })
+          } catch {
+            resumed = null
+          }
+        }
+        const from = resumed?.from ?? (await prepareTaskBase(project.path))
+        const name = resumed?.name ?? taskBranchName(s.agentId, prompt, task.id)
+        if (!resumed) await startTaskBranch(project.path, name, from)
+        taskBranch = resumed ?? { name, from }
         this.setInflight(project.id, {
           agentId: s.agentId,
           taskId: task.id,
+          ...(taskBranch.reviewId ? { reviewId: taskBranch.reviewId } : {}),
           branch: name,
           from,
           title: (task.origin ? 'Autopilot task' : stripHidden(task.prompt).split('\n')[0]!).slice(0, 120),
@@ -771,7 +785,7 @@ export class AgentRunner {
           // Still on the task branch: commit what's there and switch back, as a stopped task would (but nothing
           // is put back or moved: you may have changed things while Hangar was closed).
           this.log(s, { kind: 'system', text: `${INTERRUPTED} Wrapping it up: committing what it did to ${rec.branch} and switching back to ${rec.from.base}.` })
-          await this.finishTask(s, project, { id: rec.taskId, prompt: rec.title, createdAt: rec.startedAt }, { name: rec.branch, from: rec.from }, '', null, false, {
+          await this.finishTask(s, project, { id: rec.taskId, prompt: rec.title, createdAt: rec.startedAt }, { name: rec.branch, from: rec.from, ...(rec.reviewId ? { reviewId: rec.reviewId } : {}) }, '', null, false, {
             stoppedBecause: INTERRUPTED,
             recovering: true
           })
@@ -835,12 +849,18 @@ export class AgentRunner {
     }
   }
 
+  /** This agent's change still waiting for review from your current conversation with it, if any. */
+  private openChatReview(projectId: string, s: AgentState): Review | undefined {
+    if (!s.sessionId) return undefined
+    return this.deps.reviews.list(projectId).find((r) => r.status === 'pending' && r.kind !== 'research' && r.chat && r.agentId === s.agentId && r.sessionId === s.sessionId)
+  }
+
   /** Commit the task's work to its branch, switch back, and turn it into a review (or note there was nothing). */
   private async finishTask(
     s: AgentState,
     project: Project,
     task: QueuedTask,
-    branch: { name: string; from: TaskBase },
+    branch: { name: string; from: TaskBase; reviewId?: string },
     lastText: string,
     clip: ClipSession | null,
     completed: boolean,
@@ -864,12 +884,40 @@ export class AgentRunner {
       const clipResult = clip ? await clip.finish().catch(() => null) : null
       if (files.length === 0 || !headSha) {
         if (clipResult) StudioClipRecorder.remove(clipResult.files)
+        // A follow-up that undid the whole conversation's change: its review has nothing left to merge.
+        const undone = branch.reviewId ? this.deps.reviews.list(project.id).find((r) => r.id === branch.reviewId && r.status === 'pending') : undefined
+        if (undone) this.deps.emit({ type: 'review', review: this.deps.reviews.update(undone.id, { status: 'discarded', note: 'The conversation undid all of its changes.' }) })
         this.log(s, { kind: 'system', text: `No files changed, so there's nothing to review. Back on ${branch.from.base}.${note ? ` ${note}` : ''}` })
         return null
+      }
+      // A follow-up: the same review now holds everything from the conversation (checks and the reviewer run again).
+      const earlier = branch.reviewId ? this.deps.reviews.list(project.id).find((r) => r.id === branch.reviewId && r.status === 'pending') : undefined
+      if (earlier) {
+        const said = stripHidden(task.prompt).split('\n')[0]!.slice(0, 120)
+        const summary = [`${lastText}`.trim(), earlier.summary ? `Earlier in this conversation:\n${earlier.summary}` : ''].filter(Boolean).join('\n\n').slice(0, 8000)
+        const updated = this.deps.reviews.update(earlier.id, {
+          headSha,
+          files,
+          summary,
+          incomplete: completed ? null : (opts.stoppedBecause ?? s.lastError ?? 'The run was stopped before it finished.'),
+          note,
+          checks: null,
+          aiReview: null,
+          messages: (earlier.messages ?? 1) + 1,
+          clip: clipResult ?? earlier.clip
+        })
+        this.deps.emit({ type: 'review', review: updated })
+        this.deps.onReview?.(updated)
+        this.log(s, { kind: 'system', text: `Added to “${earlier.title}”: ${files.length} file${files.length === 1 ? '' : 's'} changed in total (“${said}”). Back on ${branch.from.base}.` })
+        if (note) this.log(s, { kind: 'error', text: note })
+        return updated.id
       }
       const review = this.deps.reviews.add({
         projectId: project.id,
         agentId: s.agentId,
+        chat: !task.origin,
+        sessionId: s.sessionId,
+        messages: 1,
         title,
         branch: branch.name,
         base: branch.from.base,

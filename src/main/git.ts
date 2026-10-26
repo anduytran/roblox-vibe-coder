@@ -418,6 +418,20 @@ export async function prepareTaskBase(root: string): Promise<TaskBase> {
   return { base, baseSha, refs: await snapshotRefs(root), ignored: await ignoredFiles(root) }
 }
 
+/**
+ * Continue an earlier task's branch (a follow-up message in the same conversation): the same checks as a new task,
+ * then back onto that branch at the commit its review holds. The review keeps its original starting point.
+ */
+export async function resumeTaskBranch(root: string, branch: string, headSha: string, base: string, baseSha: string): Promise<TaskBase> {
+  assertTaskBranch(branch)
+  if (!SHA.test(headSha) || !SHA.test(baseSha)) throw new Error('Invalid review.')
+  const from = await prepareTaskBase(root)
+  const tip = (await git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
+  if (tip !== headSha) throw new Error('That change\'s branch moved since it was reviewed.')
+  await git(root, ['checkout', branch])
+  return { ...from, base, baseSha }
+}
+
 export function taskBranchName(agentId: string, prompt: string, id: string): string {
   const slug = prompt
     .toLowerCase()

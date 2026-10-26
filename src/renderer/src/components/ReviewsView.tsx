@@ -48,6 +48,7 @@ export function ReviewsView({ project }: { project: Project }) {
               {agentName(r.agentId)} ·{' '}
               {r.kind === 'research' ? `web research · ${r.research?.fetched.length ?? 0} pages` : `${r.files.length} file${r.files.length === 1 ? '' : 's'}`} ·{' '}
               {timeAgo(r.createdAt)}
+              {(r.messages ?? 1) > 1 ? ` · ${r.messages} messages` : ''}
               {r.incomplete ? ' · stopped early' : ''}
               {r.clip ? ' · ▶ clip' : ''}
             </span>

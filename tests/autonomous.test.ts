@@ -128,8 +128,9 @@ test('autonomous: each task runs on its own branch and ends as a review; the bas
 
 test('autonomous: tasks in one project run one at a time; discard deletes the branch', async () => {
   const t = setup()
-  t.runner.send(t.project.id, 'main', 'change one')
-  t.runner.send(t.project.id, 'main', 'change two')
+  // Separate tasks (as autopilot sends them): each is its own change.
+  t.runner.send(t.project.id, 'main', 'change one', { origin: 'autopilot' })
+  t.runner.send(t.project.id, 'main', 'change two', { origin: 'autopilot' })
   await until(() => t.gates.length === 1)
   await tick(50)
   assert.equal(t.gates.length, 1, 'second task waits for the first')
@@ -138,7 +139,7 @@ test('autonomous: tasks in one project run one at a time; discard deletes the br
   t.gates[1]!()
   await until(() => t.reviews.list().length === 2)
   assert.equal(t.maxActive(), 1)
-  const second = t.reviews.list().find((r) => r.title === 'change two')!
+  const second = t.reviews.list().find((r) => r.files.includes('change_two.luau'))!
   assert.deepEqual(second.files, ['change_two.luau'], 'each branch starts from the base, not from unreviewed work')
   await t.actions.discard(second.id)
   assert.equal(t.reviews.get(second.id).status, 'discarded')
@@ -160,7 +161,8 @@ test('autonomous: your unsaved edits are saved as a commit before a task starts,
   await until(() => t.gates.length === 2)
   await assert.rejects(t.actions.merge(r.id), /agent is working/)
   t.gates[1]!()
-  await until(() => t.reviews.list().length === 2)
+  // A follow-up in the same conversation: added to the same review.
+  await until(() => t.reviews.get(r.id).messages === 2)
 })
 
 test('autonomous: a task that changes nothing leaves no branch or review; a stopped task is marked incomplete', async () => {
@@ -281,4 +283,36 @@ test('audit: autonomous runs always hide the real API key from agents', async ()
   await until(() => t.gates.length === 1)
   assert.deepEqual(t.authCalls[0], { forceHideKey: true })
   t.gates[0]!()
+})
+
+test('one conversation is one review: follow-ups add to it; after a merge, or for autopilot, a new one starts', async () => {
+  const t = setup()
+  t.runner.send(t.project.id, 'main', 'change one')
+  await until(() => t.gates.length === 1)
+  t.gates[0]!()
+  await until(() => t.reviews.list().length === 1)
+  await until(() => !t.runner.projectBusy(t.project.id))
+  t.runner.send(t.project.id, 'main', 'change two')
+  await until(() => t.gates.length === 2)
+  t.gates[1]!()
+  await until(() => (t.reviews.list()[0]!.messages ?? 1) === 2)
+  const [r] = t.reviews.list()
+  assert.equal(t.reviews.list().length, 1, 'still one review')
+  assert.deepEqual(r!.files.sort(), ['change_one.luau', 'change_two.luau'])
+  assert.equal(r!.title, 'change one')
+  assert.match(r!.summary, /Did: change two[\s\S]*Earlier in this conversation:[\s\S]*Did: change one/)
+  assert.equal(await currentBranch(t.dir), 'main')
+  await until(() => !t.runner.projectBusy(t.project.id))
+  // Autopilot's own tasks are always their own review.
+  t.runner.send(t.project.id, 'main', 'change three', { origin: 'autopilot' })
+  await until(() => t.gates.length === 3)
+  t.gates[2]!()
+  await until(() => t.reviews.list().length === 2)
+  await until(() => !t.runner.projectBusy(t.project.id))
+  // Once merged, the next message starts a new change.
+  await t.actions.merge(r!.id)
+  t.runner.send(t.project.id, 'main', 'change four')
+  await until(() => t.gates.length === 4)
+  t.gates[3]!()
+  await until(() => t.reviews.list().length === 3)
 })

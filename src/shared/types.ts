@@ -204,6 +204,14 @@ export interface Review {
   research?: ResearchFindings | null
   /** When it was merged or discarded (absent while pending, and on reviews from before this was recorded). */
   decidedAt?: number
+  /**
+   * Made from your messages to an agent (not autopilot): follow-ups in the same conversation (session) add to this
+   * review instead of making new ones, until it's merged or discarded or you start a new session.
+   */
+  chat?: boolean
+  sessionId?: string | null
+  /** How many of your messages it holds. */
+  messages?: number
 }
 
 export interface AgentState {
