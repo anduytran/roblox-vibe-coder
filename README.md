@@ -41,6 +41,7 @@ Saturation is measured among charting games, so it reflects competition among su
 - **Roles as files** — roles are `.claude/agents/<id>.md` in the project, the same format Claude Code uses, so they're versioned with your game. "Add starter roles" creates four templates.
 - **Approvals** — anything that changes things asks first (see *Safety model*). "Always allow" is saved per project and can be removed in the Project tab.
 - **Changes tab** — git diff of everything agents changed, commit all, or revert a single file (new files go to the OS trash, never hard-deleted).
+- **Files tab** — browse the game's folder read-only: CLAUDE.md, role files, the Rojo project and source, with uncommitted changes marked. Markdown can be shown formatted. Links and `.git` are never shown, nothing is ever opened or run from here, and *Show in Finder* only reveals.
 - **Spending controls** — per-task limit, daily limit across projects, optional daily limit per project, and a **Stop all agents** button.
 - **Light and dark themes** — follows your OS, or pick one in Settings → Appearance.
 - **Sessions resume** — each agent continues its conversation across tasks and app restarts until you click *New session*.

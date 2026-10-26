@@ -87,6 +87,11 @@ const api: HangarApi = {
     revertFile: (id, file) => invoke(IPC.gitRevertFile, id, file),
     init: (id) => invoke(IPC.gitInit, id)
   },
+  files: {
+    list: (id, dir) => invoke(IPC.filesList, id, dir),
+    read: (id, path) => invoke(IPC.filesRead, id, path),
+    reveal: (id, path) => invoke(IPC.filesReveal, id, path)
+  },
   costs: {
     summary: () => invoke(IPC.costsSummary),
     history: (days, projectId) => invoke(IPC.costsHistory, days, projectId),

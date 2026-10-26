@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { AgentsView } from './components/AgentsView'
 import { DesignView } from './components/DesignView'
+import { FilesView } from './components/FilesView'
 import { ChangesView } from './components/ChangesView'
 import { ProjectSettingsView } from './components/ProjectSettingsView'
 import { ReviewsView } from './components/ReviewsView'
@@ -35,7 +36,7 @@ export function App() {
   const closeSwitcher = useCallback(() => setSwitcherOpen(false), [])
   const wizardOpen = useStore((s) => s.wizard !== null)
   const refineOpen = useStore((s) => s.refineIdeaId !== null)
-  // Cmd/Ctrl+1…7, K, I and comma, and "?" (never underneath an open dialog).
+  // Cmd/Ctrl+1…8, K, I and comma, and "?" (never underneath an open dialog).
   useShortcuts({ switcherOpen, setSwitcher: setSwitcherOpen, setHelp: setHelpOpen })
 
   if (!ready) return <div className="boot">Starting Hangar…</div>
@@ -75,8 +76,8 @@ export function App() {
                     className={`tab ${tab === t ? 'tab-active' : ''}`}
                     onClick={() => setProjectTab(t)}
                   >
-                    <Icon name={t === 'overview' ? 'home' : t === 'design' ? 'book' : t === 'agents' ? 'agents' : t === 'models' ? 'cube' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : 'sliders'} />
-                    {t === 'overview' ? 'Overview' : t === 'design' ? 'Design' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Project'}
+                    <Icon name={t === 'overview' ? 'home' : t === 'design' ? 'book' : t === 'agents' ? 'agents' : t === 'models' ? 'cube' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : t === 'files' ? 'folder' : 'sliders'} />
+                    {t === 'overview' ? 'Overview' : t === 'design' ? 'Design' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : t === 'files' ? 'Files' : 'Project'}
                     {t === 'reviews' && pendingReviews > 0 && <span className="badge badge-warn tab-badge">{pendingReviews}</span>}
                   </button>
                 ))}
@@ -90,6 +91,7 @@ export function App() {
                 {tab === 'models' && <ModelsView project={project} />}
                 {tab === 'reviews' && <ReviewsView project={project} />}
                 {tab === 'changes' && <ChangesView project={project} />}
+                {tab === 'files' && <FilesView project={project} />}
                 {tab === 'settings' && <ProjectSettingsView project={project} />}
               </ErrorBoundary>
             </section>

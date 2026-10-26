@@ -6,6 +6,8 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   CostDay,
+  FileListing,
+  FileView,
   CostSummary,
   GitStatus,
   Project,
@@ -58,6 +60,9 @@ export const IPC = {
   gitInit: 'git:init',
   costsSummary: 'costs:summary',
   costsHistory: 'costs:history',
+  filesList: 'files:list',
+  filesRead: 'files:read',
+  filesReveal: 'files:reveal',
   planUsageRefresh: 'planUsage:refresh',
   reviewsList: 'reviews:list',
   reviewsDiff: 'reviews:diff',
@@ -221,6 +226,13 @@ export interface HangarApi {
     commit(projectId: string, message: string): Promise<void>
     revertFile(projectId: string, file: string): Promise<void>
     init(projectId: string): Promise<void>
+  }
+  /** The project's files, read-only: folders one at a time, files up to 512 KB. Links and .git are never shown. */
+  files: {
+    list(projectId: string, dir: string): Promise<FileListing>
+    read(projectId: string, path: string): Promise<FileView>
+    /** Show a listed file or folder in Finder / Explorer (never opens it). */
+    reveal(projectId: string, path: string): Promise<void>
   }
   costs: {
     summary(): Promise<CostSummary>

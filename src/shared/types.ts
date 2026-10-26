@@ -248,6 +248,26 @@ export interface CostSummary {
   weekUsd: number
 }
 
+/** One folder of the project, for the Files tab (read-only). */
+export interface FileListing {
+  path: string
+  entries: { name: string; path: string; kind: 'dir' | 'file'; size: number; mtime: number }[]
+  /** Entries past the limit that aren't listed. */
+  more: number
+  /** Links, `.git` and other non-files left out. */
+  skipped: number
+}
+
+/** One project file as the Files tab shows it: text up to 512 KB, or why it isn't shown. */
+export interface FileView {
+  path: string
+  size: number
+  mtime: number
+  kind: 'text' | 'binary'
+  text: string | null
+  truncated: boolean
+}
+
 /** One day of spend, for the bars on Home and the Project tab. */
 export interface CostDay {
   /** Local midnight the day starts at. */

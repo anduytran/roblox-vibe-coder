@@ -2,9 +2,9 @@ import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
-export type ProjectTab = 'overview' | 'design' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
-/** The project tabs in order (Cmd/Ctrl+1…7). */
-export const PROJECT_TABS: ProjectTab[] = ['overview', 'design', 'agents', 'models', 'reviews', 'changes', 'settings']
+export type ProjectTab = 'overview' | 'design' | 'agents' | 'models' | 'reviews' | 'changes' | 'files' | 'settings'
+/** The project tabs in order (Cmd/Ctrl+1…8). */
+export const PROJECT_TABS: ProjectTab[] = ['overview', 'design', 'agents', 'models', 'reviews', 'changes', 'files', 'settings']
 export type SettingsTab = 'general' | 'account' | 'agents' | 'limits' | 'roblox' | 'phone' | 'privacy'
 export type Page = 'home' | 'ideas'
 

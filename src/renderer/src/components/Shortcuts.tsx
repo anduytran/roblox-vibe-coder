@@ -13,6 +13,7 @@ const TAB_LABEL: Record<ProjectTab, string> = {
   models: '3D',
   reviews: 'Reviews',
   changes: 'Changes',
+  files: 'Files',
   settings: 'Project'
 }
 
@@ -35,7 +36,7 @@ function digitOf(e: KeyboardEvent): number | null {
 }
 
 /**
- * App-wide shortcuts: Cmd/Ctrl+1…7 project tabs, Cmd/Ctrl+K switcher, Cmd/Ctrl+I Inbox, Cmd/Ctrl+, Settings, ? this list.
+ * App-wide shortcuts: Cmd/Ctrl+1…8 project tabs, Cmd/Ctrl+K switcher, Cmd/Ctrl+I Inbox, Cmd/Ctrl+, Settings, ? this list.
  * Cmd on macOS, Ctrl elsewhere. Nothing fires underneath an open dialog, except Cmd/Ctrl+K closing the switcher.
  */
 export function useShortcuts(opts: { switcherOpen: boolean; setSwitcher: (open: boolean) => void; setHelp: (open: boolean) => void }): void {
@@ -90,7 +91,7 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
   const m = modKey()
   const rows: [string, string][] = [
     [`${m}K`, 'Go to a game or page'],
-    [`${m}1 … ${m}7`, `Project tabs: ${PROJECT_TABS.map((t) => TAB_LABEL[t]).join(', ')}`],
+    [`${m}1 … ${m}${PROJECT_TABS.length}`, `Project tabs: ${PROJECT_TABS.map((t) => TAB_LABEL[t]).join(', ')}`],
     [`${m}I`, 'Open or close the Inbox'],
     [`${m},`, 'Settings'],
     ['Esc', 'Close the open panel or dialog'],

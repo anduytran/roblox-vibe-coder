@@ -31,6 +31,7 @@ import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
 import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault'
+import { listProjectDir, projectEntryPath, readProjectFile } from './projectFiles'
 import { defaultStudioMcp, ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
@@ -571,6 +572,16 @@ app.whenReady().then(() => {
   handle(IPC.testPlaceKeyStatus, (id: unknown) => testPlaceKeys.status(str(id, 'project')))
   handle(IPC.testPlaceKeySet, (id: unknown, key: unknown) => testPlaceKeys.set(str(id, 'project'), str(key, 'key')))
   handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))
+
+  // Files tab (read-only): only what the main process listed itself; links and .git never.
+  handle(IPC.filesList, (id: unknown, dir: unknown) => listProjectDir(root(id), typeof dir === 'string' ? dir : ''))
+  handle(IPC.filesRead, (id: unknown, path: unknown) => readProjectFile(root(id), str(path, 'file')))
+  handle(IPC.filesReveal, (id: unknown, path: unknown) => {
+    const full = projectEntryPath(root(id), typeof path === 'string' ? path : '')
+    if (!full) throw new Error('That is not in the project (or is a link).')
+    // Revealing never launches anything, unlike opening.
+    shell.showItemInFolder(full)
+  })
 
   // Obsidian vaults
   handle(IPC.vaultStatus, (id: unknown, folder: unknown) => vaultStatus(root(id), str(folder, 'folder')))
