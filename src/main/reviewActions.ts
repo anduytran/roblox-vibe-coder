@@ -158,7 +158,9 @@ export class ReviewActions {
     // The agent that made the change knows it best; if that role is gone, the Main agent does it.
     const agentId = this.deps.runner.agentIds(project).includes(review.agentId) ? review.agentId : 'main'
     this.deps.runner.send(review.projectId, agentId, `Resolve the merge clash in “${review.title}”`, { fixClash: id })
-    return this.changed(this.deps.reviews.update(id, { clash: { ...review.clash, fixing: true, failed: null } }))
+    // You asked for it to go in: once fixed and checked again (checks pass, the reviewer doesn't say no), it merges itself.
+    this.mergeWhenFixed.set(id, { tries: 0 })
+    return this.changed(this.deps.reviews.update(id, { clash: { ...review.clash, fixing: true, failed: null }, mergeQueued: true }))
   }
 
   /**

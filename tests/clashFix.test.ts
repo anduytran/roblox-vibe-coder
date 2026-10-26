@@ -364,3 +364,14 @@ test('set-aside actions go away when their task ends, and are listed on its revi
   ap.clearSetAside()
   assert.deepEqual(ap.get(project.id).setAside, [], 'startup clears leftovers')
 })
+
+test('fix with AI: the fixed change merges itself once checked again', async () => {
+  const t = setup(() => 'return { gun = "A", alt = "B" }\n')
+  const b = await clashing(t)
+  t.actions.fixClash(b.id)
+  assert.equal(t.reviews.get(b.id).mergeQueued, true)
+  await until(() => !t.reviews.get(b.id).clash && t.idle())
+  t.actions.onReview(t.reviews.update(b.id, { checks: { status: 'done', reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed', output: '', ms: 1 }] } }))
+  await until(() => t.reviews.get(b.id).status === 'merged')
+  assert.equal(readFileSync(join(t.dir, 'Gun.luau'), 'utf8'), 'return { gun = "A", alt = "B" }\n')
+})
