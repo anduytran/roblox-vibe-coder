@@ -239,3 +239,43 @@ test('autopilot: when the Lead decides, the sprint runs until it says "Sprint co
   finish('One more thing.')
   assert.match(sent[sent.length - 1]!, /sprint 1 is over/)
 })
+
+test("autopilot: the Lead hands building to the Scripter/UI Builder and ends each task with the QA Tester's playtest", async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { Autopilot } = await import('../src/main/autopilot')
+  const { ProjectRegistry } = await import('../src/main/projects')
+  const { ReviewStore } = await import('../src/main/reviews')
+  const { CostTracker } = await import('../src/main/costs')
+  const { installTemplates } = await import('../src/main/roles')
+  const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
+  const make = (withRoles: boolean) => {
+    const registry = new ProjectRegistry(join(tmp('hangar-team-'), 'p.json'))
+    const dir = tmp('hangar-team-proj-')
+    if (withRoles) installTemplates(dir)
+    const project = registry.add(dir)
+    registry.update(project.id, { settings: { autonomous: true } })
+    const sent: string[] = []
+    const ap = new Autopilot({
+      file: join(tmp('hangar-team-a-'), 'a.json'),
+      registry,
+      reviews: new ReviewStore(join(tmp('hangar-team-r-'), 'r.json')),
+      costs: new CostTracker(join(tmp('hangar-team-c-'), 'c.json')),
+      emit: () => {},
+      send: (_p, _a, prompt) => {
+        sent.push(prompt)
+      },
+      merge: async () => {
+        throw new Error('no')
+      }
+    })
+    ap.start(project.id)
+    return sent[0]!
+  }
+  const team = make(true)
+  assert.match(team, /hand the building to "scripter"[\s\S]*"ui-builder"/)
+  assert.match(team, /hand "qa-tester" a playtest/)
+  const alone = make(false)
+  assert.doesNotMatch(alone, /qa-tester|scripter/)
+})

@@ -140,6 +140,32 @@ export class Autopilot {
     return listRoles(project.path).some((r) => r.id === 'lead') ? 'lead' : 'main'
   }
 
+  /**
+   * How the Lead splits a task among the project's specialists (subagents it calls with the Task tool): building to
+   * the Scripter and UI Builder, then a playtest by the QA Tester against the acceptance criteria, with fixes and a
+   * re-test. Only the roles the project has are named; with none, the Lead works alone.
+   */
+  private teamwork(projectId: string): { build: string; test: string } | null {
+    let ids: Set<string>
+    try {
+      ids = new Set(listRoles(this.deps.registry.get(projectId).path).filter((r) => r.mode !== 'research').map((r) => r.id))
+    } catch {
+      return null
+    }
+    if (this.leadOf(projectId) !== 'lead') return null
+    const builders = [ids.has('scripter') ? '"scripter" (gameplay, server and client code)' : null, ids.has('ui-builder') ? '"ui-builder" (screens, HUD and menus)' : null].filter(Boolean)
+    const qa = ids.has('qa-tester')
+    if (!builders.length && !qa) return null
+    return {
+      build: builders.length
+        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Task tool, one clear brief each (what to build, which files, the acceptance criteria). Do only glue too small to hand off.`
+        : 'Build it yourself.',
+      test: qa
+        ? 'Then hand "qa-tester" a playtest with the Task tool: play it in Studio against the acceptance criteria and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
+        : 'Then playtest it yourself against the acceptance criteria.'
+    }
+  }
+
   // ---------- controls ----------
 
   configure(projectId: string, config: Partial<AutopilotConfig>): AutopilotState {
@@ -238,6 +264,7 @@ export class Autopilot {
     const first = st.sprint === 1 && st.tasksDone === 0 && st.reports.length === 0
     const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (record it in design-vault/Inbox.md or Decisions.md as you handle it):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const recent = st.sprintTasks.length ? `\n\nEarlier in this sprint:\n${st.sprintTasks.map((t) => `- ${t.title} (${t.outcome})`).join('\n')}` : ''
+    const team = this.teamwork(st.projectId)
     const leadDecides = st.config.sprintTasks === 0
     const which = leadDecides ? `task ${st.tasksDone + 1}` : `task ${st.tasksDone + 1} of ${st.config.sprintTasks}`
     // When the Lead decides the sprint's length, it says when the sprint's plan is done.
@@ -250,12 +277,12 @@ export class Autopilot {
 2. Fill in design-vault/Game Overview.md (pitch, core loop, pillars, players and platforms).
 3. Write design-vault/Roadmap.md as milestones. Milestone 1 is a small playable vertical slice of the core loop.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
-5. Then build the first, most foundational piece of milestone 1 and playtest it.
+5. Then build the first, most foundational piece of milestone 1 and playtest it.${team ? `\n   ${team.build}\n   ${team.test}` : ''}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
 2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own.
-3. Write or update its mechanic note with acceptance criteria, build it (delegate to the specialist agents as needed), playtest it, and check the criteria.
+3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'}
 4. Update Roadmap.md (mark what's done) and Decisions.md.
 Finish with: what you built, how you tested it, and what's next.${ending}${feedback}${recent}`
     // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
