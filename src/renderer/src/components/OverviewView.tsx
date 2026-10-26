@@ -47,7 +47,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
             </h3>
             {ap && ap.sprint > 0 && (
               <p className="muted small">
-                Sprint {ap.sprint} · {ap.tasksDone} of {ap.config.sprintTasks} tasks · {usd(sprintSpent)} of {usd(ap.config.sprintBudgetUsd)} this sprint · {usd(spentTotal)} total
+                Sprint {ap.sprint} · {ap.config.sprintTasks ? `${ap.tasksDone} of ${ap.config.sprintTasks} tasks` : `${ap.tasksDone} task${ap.tasksDone === 1 ? '' : 's'} done, Lead decides when it's finished`} · {usd(sprintSpent)} of {usd(ap.config.sprintBudgetUsd)} this sprint · {usd(spentTotal)} total
               </p>
             )}
           </div>
@@ -93,7 +93,8 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
         {ap && ap.status !== 'off' && ap.status !== 'checkin' && (
           <>
             <div className="sprint-meter sprint-meter-lg">
-              {Array.from({ length: ap.config.sprintTasks }, (_, i) => (
+              {/* When the Lead decides the sprint's length, the meter shows the tasks so far (and the one under way). */}
+              {Array.from({ length: ap.config.sprintTasks || ap.tasksDone + (status === 'running' ? 1 : 0) }, (_, i) => (
                 <span key={i} className={i < ap.tasksDone ? 'done' : i === ap.tasksDone && status === 'running' ? 'now' : ''} />
               ))}
             </div>
@@ -158,7 +159,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
 }
 
 function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: AutopilotState | undefined; hasLead: boolean; busy: boolean; run: (fn: () => Promise<AutopilotState>, ok?: string) => void }) {
-  const [tasks, setTasks] = useState(ap?.config.sprintTasks ?? 5)
+  const [tasks, setTasks] = useState(ap?.config.sprintTasks ?? 0)
   const [budget, setBudget] = useState(String(ap?.config.sprintBudgetUsd ?? 10))
   const [autoMerge, setAutoMerge] = useState(ap?.config.autoMerge ?? true)
   const [direction, setDirection] = useState('')
@@ -180,14 +181,15 @@ function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: 
       {!hasLead && <div className="callout">Add the starter roles (Agents tab) so there's a Lead to run the sprints. Otherwise the Main agent leads.</div>}
       <div className="grid-2">
         <div className="field">
-          <span className="field-label">Tasks per sprint</span>
-          <div className="segmented" role="radiogroup" aria-label="Tasks per sprint">
-            {[3, 5, 8, 12].map((n) => (
+          <span className="field-label">Sprint length</span>
+          <div className="segmented" role="radiogroup" aria-label="Sprint length">
+            {[0, 3, 5, 8, 12].map((n) => (
               <button key={n} role="radio" aria-checked={tasks === n} className={`segment ${tasks === n ? 'segment-on' : ''}`} onClick={() => setTasks(n)}>
-                {n}
+                {n === 0 ? 'Lead decides' : `${n} tasks`}
               </button>
             ))}
           </div>
+          <span className="field-hint">{tasks === 0 ? 'The Lead works through the plan and checks in when it\'s done (or the budget runs out).' : 'Checks in after this many tasks.'}</span>
         </div>
         <label className="field">
           <span className="field-label">Budget per sprint (USD)</span>
@@ -240,10 +242,17 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
     <section className="card">
       <h3>Sprint settings</h3>
       <div className="grid-2">
-        <label className="field">
-          <span className="field-label">Tasks per sprint</span>
-          <input type="number" min={1} max={20} value={tasks} onChange={(e) => setTasks(Number(e.target.value))} onBlur={() => tasks !== ap.config.sprintTasks && save({ sprintTasks: tasks })} />
-        </label>
+        <div className="field">
+          <span className="field-label">Sprint length</span>
+          <div className="segmented" role="radiogroup" aria-label="Sprint length">
+            {[...new Set([0, 3, 5, 8, 12, ap.config.sprintTasks])].sort((a, b) => a - b).map((n) => (
+              <button key={n} role="radio" aria-checked={tasks === n} className={`segment ${tasks === n ? 'segment-on' : ''}`} onClick={() => { setTasks(n); save({ sprintTasks: n }) }}>
+                {n === 0 ? 'Lead decides' : `${n}`}
+              </button>
+            ))}
+          </div>
+          <span className="field-hint">{tasks === 0 ? 'The Lead checks in when the sprint\'s plan is done.' : 'Tasks before each check-in.'}</span>
+        </div>
         <label className="field">
           <span className="field-label">Budget per sprint (USD)</span>
           <input value={budget} inputMode="decimal" onChange={(e) => setBudget(e.target.value)} onBlur={() => parseFloat(budget) !== ap.config.sprintBudgetUsd && save({ sprintBudgetUsd: parseFloat(budget) })} />

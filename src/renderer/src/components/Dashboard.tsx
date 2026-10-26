@@ -214,14 +214,14 @@ function GameCard({ project, ap, spent }: { project: Project; ap: AutopilotState
           <span className={`ap-pill ap-${status}`}>{AUTOPILOT_LABEL[status]}</span>
         </div>
         {ap && ap.status !== 'off' && (
-          <div className="sprint-meter" aria-label={`Sprint ${ap.sprint}: ${ap.tasksDone} of ${ap.config.sprintTasks} tasks`}>
-            {Array.from({ length: ap.config.sprintTasks }, (_, i) => (
+          <div className="sprint-meter" aria-label={`Sprint ${ap.sprint}: ${ap.tasksDone}${ap.config.sprintTasks ? ` of ${ap.config.sprintTasks}` : ''} tasks`}>
+            {Array.from({ length: ap.config.sprintTasks || ap.tasksDone + (status === 'running' ? 1 : 0) }, (_, i) => (
               <span key={i} className={i < ap.tasksDone ? 'done' : i === ap.tasksDone && status === 'running' ? 'now' : ''} />
             ))}
           </div>
         )}
         <span className="muted small">
-          {ap && ap.status !== 'off' ? `Sprint ${ap.sprint} · ${ap.tasksDone}/${ap.config.sprintTasks} tasks · ` : ''}
+          {ap && ap.status !== 'off' ? `Sprint ${ap.sprint} · ${ap.config.sprintTasks ? `${ap.tasksDone}/${ap.config.sprintTasks}` : ap.tasksDone} tasks · ` : ''}
           {usd(spent)} total{lastActive ? ` · active ${timeAgo(lastActive)}` : ''}
         </span>
         {report && <span className="small game-card-report">Last check-in: {firstLine(report.text)}</span>}

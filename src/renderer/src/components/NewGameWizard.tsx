@@ -41,7 +41,7 @@ export function NewGameWizard() {
   const [model, setModel] = useState(settings?.defaultModel ?? DEFAULT_MODEL)
   const [daily, setDaily] = useState('15')
   const [studio, setStudio] = useState(true)
-  const [sprintTasks, setSprintTasks] = useState(5)
+  const [sprintTasks, setSprintTasks] = useState(0)
   const [sprintBudget, setSprintBudget] = useState('10')
   const [autoMerge, setAutoMerge] = useState(true)
   const [startNow, setStartNow] = useState(true)
@@ -107,7 +107,7 @@ export function NewGameWizard() {
     platformText || 'No platforms picked',
     model,
     daily.trim() ? `$${daily.trim()} a day` : 'no daily limit for this game',
-    `${sprintTasks} tasks per sprint`,
+    sprintTasks ? `${sprintTasks} tasks per sprint` : 'the Lead decides when a sprint is done',
     autoMerge ? 'approved work merges itself' : 'you merge everything'
   ].join(' · ')
 
@@ -240,15 +240,15 @@ export function NewGameWizard() {
           <p className="small muted">The Lead builds in sprints and checks in with you at the end of each one. You can change these before any sprint on the game's Overview.</p>
           <div className="grid-2">
             <div className="field">
-              <span className="field-label">Tasks per sprint</span>
-              <div className="segmented" role="radiogroup" aria-label="Tasks per sprint">
-                {[3, 5, 8, 12].map((n) => (
+              <span className="field-label">Sprint length</span>
+              <div className="segmented" role="radiogroup" aria-label="Sprint length">
+                {[0, 3, 5, 8, 12].map((n) => (
                   <button key={n} role="radio" aria-checked={sprintTasks === n} className={`segment ${sprintTasks === n ? 'segment-on' : ''}`} onClick={() => setSprintTasks(n)}>
-                    {n}
+                    {n === 0 ? 'Lead decides' : n}
                   </button>
                 ))}
               </div>
-              <span className="field-hint">Each task is one feature or fix on its own branch.</span>
+              <span className="field-hint">{sprintTasks === 0 ? 'The Lead checks in when the sprint\'s plan is done (or the budget runs out).' : 'Each task is one feature or fix on its own branch.'}</span>
             </div>
             <Field label="Budget per sprint (USD)" hint="The sprint ends early when it's reached.">
               <input value={sprintBudget} onChange={(e) => setSprintBudget(e.target.value)} inputMode="decimal" />

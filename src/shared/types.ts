@@ -402,7 +402,10 @@ export interface NewGameInput {
 }
 
 export interface AutopilotConfig {
-  /** Build tasks per sprint before the check-in. */
+  /**
+   * Build tasks per sprint before the check-in, or 0: the Lead decides (it works through the sprint's plan and says
+   * when it's done; the budget and a ceiling of LEAD_SPRINT_MAX tasks still apply).
+   */
   sprintTasks: number
   /** Spending limit per sprint (USD); the sprint ends early when it's reached. */
   sprintBudgetUsd: number
@@ -440,6 +443,8 @@ export interface AutopilotState {
   /** Feedback already put into the Lead's queued task; given back if that task never finishes. */
   handedFeedback?: string[]
   sprintTasks: SprintReport['tasks']
+  /** The Lead said this sprint's plan is done (when it decides the sprint's length). */
+  sprintDoneSaid?: boolean
   reports: SprintReport[]
   consecutiveFailures: number
   updatedAt: number

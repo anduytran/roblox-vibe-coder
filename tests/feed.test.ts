@@ -195,3 +195,47 @@ test('autopilot: feedback survives Stop all, a step that failed before running, 
   const again = new Autopilot(deps)
   assert.deepEqual(again.get(project.id).feedback, ['Fewer coins.'])
 })
+
+test('autopilot: when the Lead decides, the sprint runs until it says "Sprint complete." (or a ceiling), not a fixed count', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { Autopilot, LEAD_SPRINT_MAX } = await import('../src/main/autopilot')
+  const { ProjectRegistry } = await import('../src/main/projects')
+  const { ReviewStore } = await import('../src/main/reviews')
+  const { CostTracker } = await import('../src/main/costs')
+  const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
+  const registry = new ProjectRegistry(join(tmp('hangar-lead-'), 'p.json'))
+  const project = registry.add(tmp('hangar-lead-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const sent: string[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-lead-a-'), 'a.json'),
+    registry,
+    reviews: new ReviewStore(join(tmp('hangar-lead-r-'), 'r.json')),
+    costs: new CostTracker(join(tmp('hangar-lead-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt) => {
+      sent.push(prompt)
+    },
+    merge: async () => {
+      throw new Error('no')
+    }
+  })
+  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  assert.equal(ap.get(project.id).config.sprintTasks, 0)
+  assert.match(sent[0]!, /task 1\. /, 'no "of N"')
+  assert.match(sent[0]!, /Sprint complete\./)
+  const finish = (text: string): void =>
+    ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: `t${sent.length}`, prompt: sent[sent.length - 1]!, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text, error: null, reviewId: null })
+  finish('Built the island.')
+  finish('Built the void kill.')
+  assert.match(sent[sent.length - 1]!, /task 3\b/, 'keeps going while the plan is unfinished')
+  finish('Built respawn.\n\n**Sprint complete.**')
+  assert.match(sent[sent.length - 1]!, /sprint 1 is over/, 'the Lead said so: check-in')
+  // The ceiling stops a sprint that never ends.
+  const st = ap.get(project.id)
+  ;(ap as unknown as { put: (s: typeof st) => void }).put({ ...st, status: 'running', tasksDone: LEAD_SPRINT_MAX - 1, sprintDoneSaid: false })
+  finish('One more thing.')
+  assert.match(sent[sent.length - 1]!, /sprint 1 is over/)
+})

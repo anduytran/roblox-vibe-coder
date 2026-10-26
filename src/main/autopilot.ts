@@ -20,7 +20,13 @@ import { runsAsCode } from './checks'
  * how to try it, the plan for the next sprint, questions for you). You read it, add feedback, and start
  * the next sprint. Repeat until it's the game you want.
  */
-export const DEFAULT_AUTOPILOT: AutopilotConfig = { sprintTasks: 5, sprintBudgetUsd: 10, autoMerge: true }
+export const DEFAULT_AUTOPILOT: AutopilotConfig = { sprintTasks: 0, sprintBudgetUsd: 10, autoMerge: true }
+
+/** When the Lead decides a sprint's length, it still checks in after this many tasks at most. */
+export const LEAD_SPRINT_MAX = 12
+
+/** The line the Lead ends a task's report with when the sprint's plan is done. */
+const SPRINT_DONE = /^[\s*_>#-]*sprint complete[.!]?[\s*_]*$/im
 
 export interface TaskOutcome {
   projectId: string
@@ -62,7 +68,8 @@ export function autoMergeBlocker(review: Review): string | null {
 }
 
 const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): AutopilotConfig => ({
-  sprintTasks: Math.round(Math.min(20, Math.max(1, Number.isFinite(c.sprintTasks) ? Number(c.sprintTasks) : base.sprintTasks))),
+  // 0 = the Lead decides; otherwise 1–20 tasks.
+  sprintTasks: Number(c.sprintTasks) === 0 ? 0 : Math.round(Math.min(20, Math.max(1, Number.isFinite(c.sprintTasks) ? Number(c.sprintTasks) : base.sprintTasks))),
   sprintBudgetUsd: Math.min(500, Math.max(0.5, Number.isFinite(c.sprintBudgetUsd) ? Number(c.sprintBudgetUsd) : base.sprintBudgetUsd)),
   autoMerge: typeof c.autoMerge === 'boolean' ? c.autoMerge : base.autoMerge
 })
@@ -159,6 +166,7 @@ export class Autopilot {
       sprint: st.sprint + 1,
       tasksDone: 0,
       sprintTasks: [],
+      sprintDoneSaid: false,
       spentAtSprintStart: this.spent(projectId),
       reason: null,
       feedback,
@@ -230,20 +238,26 @@ export class Autopilot {
     const first = st.sprint === 1 && st.tasksDone === 0 && st.reports.length === 0
     const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (record it in design-vault/Inbox.md or Decisions.md as you handle it):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const recent = st.sprintTasks.length ? `\n\nEarlier in this sprint:\n${st.sprintTasks.map((t) => `- ${t.title} (${t.outcome})`).join('\n')}` : ''
+    const leadDecides = st.config.sprintTasks === 0
+    const which = leadDecides ? `task ${st.tasksDone + 1}` : `task ${st.tasksDone + 1} of ${st.config.sprintTasks}`
+    // When the Lead decides the sprint's length, it says when the sprint's plan is done.
+    const ending = leadDecides
+      ? `\nThis sprint ends when its plan is done${first ? ' (the first playable piece of milestone 1)' : ' (the "Next sprint" items agreed at the last check-in, in order)'}, not after a set number of tasks. When this task finishes that plan, or nothing else is worth building before you check in with the product owner, put the line "Sprint complete." as the last line of your final message. Otherwise leave it out and the next task follows.`
+      : ''
     const prompt = first
-      ? `Autopilot, sprint 1, task 1 of ${st.config.sprintTasks}. This is a new game and the user is the product owner.
+      ? `Autopilot, sprint 1, ${which}. This is a new game and the user is the product owner.
 1. Read design-vault/Brief.md (the product owner's idea) and CLAUDE.md.
 2. Fill in design-vault/Game Overview.md (pitch, core loop, pillars, players and platforms).
 3. Write design-vault/Roadmap.md as milestones. Milestone 1 is a small playable vertical slice of the core loop.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
 5. Then build the first, most foundational piece of milestone 1 and playtest it.
-Finish with: what you set up and built, how you tested it, and what comes next.${feedback}`
-      : `Autopilot, sprint ${st.sprint}, task ${st.tasksDone + 1} of ${st.config.sprintTasks}. The user is the product owner; you lead the build.
+Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
+      : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
 2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own.
 3. Write or update its mechanic note with acceptance criteria, build it (delegate to the specialist agents as needed), playtest it, and check the criteria.
 4. Update Roadmap.md (mark what's done) and Decisions.md.
-Finish with: what you built, how you tested it, and what's next.${feedback}${recent}`
+Finish with: what you built, how you tested it, and what's next.${ending}${feedback}${recent}`
     // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
     const cur = this.get(st.projectId)
     this.put({ ...cur, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
@@ -268,7 +282,8 @@ Reply with only these sections, short and concrete:
   private nextStep(st: AutopilotState): void {
     if (st.status !== 'running') return
     const spent = this.spent(st.projectId) - st.spentAtSprintStart
-    if (st.tasksDone >= st.config.sprintTasks || spent >= st.config.sprintBudgetUsd) this.queueReport(st)
+    const enough = st.config.sprintTasks === 0 ? st.sprintDoneSaid === true || st.tasksDone >= LEAD_SPRINT_MAX : st.tasksDone >= st.config.sprintTasks
+    if (enough || spent >= st.config.sprintBudgetUsd) this.queueReport(st)
     else this.queueBuild(st)
   }
 
@@ -284,6 +299,8 @@ Reply with only these sections, short and concrete:
     // A step that finished has had its feedback. One that failed or was stopped may never have reached the
     // Lead (a limit, a missing key), so its feedback goes back for the next step: said twice beats lost.
     if (o.task.origin === 'autopilot' && st.handedFeedback?.length) st = this.put(o.ok ? { ...st, handedFeedback: [] } : this.giveBack(st))
+    // The Lead says the sprint's plan is done (only counts when it decides the sprint's length).
+    if (o.task.origin === 'autopilot' && o.ok && SPRINT_DONE.test(o.text)) st = this.put({ ...st, sprintDoneSaid: true })
     if (st.status === 'off') return
     const title = o.task.origin === 'autopilot-report' ? 'Check-in report' : (/^Autopilot[^\n]*/.exec(o.task.prompt) ? this.titleFrom(o) : o.task.prompt.slice(0, 80))
 

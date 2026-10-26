@@ -512,7 +512,7 @@ function autopilotBox(p) {
   const post = (action, ok) => act(async () => { await api('/api/autopilot/' + p.id + '/' + action, { method: 'POST', body: { feedback: feedback.value } }); feedback.value = ''; delete drafts['note:' + p.id] }, ok)
   return h('div', { class: 'sect' },
     h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Autopilot · sprint ' + ap.sprint), h('span', { class: 'pill ' + (ap.status === 'running' ? 'working' : ap.status === 'waiting' ? 'awaiting_approval' : '') }, AP_LABEL[ap.status] || ap.status)),
-    h('div', { class: 'small muted' }, ap.tasksDone + ' of ' + ap.sprintTasks + ' tasks done'),
+    h('div', { class: 'small muted' }, ap.sprintTasks ? ap.tasksDone + ' of ' + ap.sprintTasks + ' tasks done' : ap.tasksDone + ' tasks done · the Lead decides when the sprint is finished'),
     ap.reason ? h('div', { class: 'small' }, ap.reason) : null,
     feedback,
     h('div', { class: 'row wrap' },
