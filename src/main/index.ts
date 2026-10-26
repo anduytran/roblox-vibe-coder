@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 let mainWindow: BrowserWindow | null = null
 /** Set once the Studio sync exists (created after the event plumbing that needs it). */
 let studioSyncRef: import('./studioSync').StudioSync | null = null
+let reviewActionsRef: ReviewActions | null = null
 let explainerRef: import('./approvalExplainer').ApprovalExplainer | null = null
 
 /**
@@ -327,6 +328,7 @@ app.whenReady().then(() => {
     if (event.type === 'autopilot') keepAwake()
     if (event.type === 'review') {
       autopilot?.onReview(event.review)
+      reviewActionsRef?.onReview(event.review)
       // Studio was showing this change and it's merged or discarded: back to the game as it is now.
       const shown = studioSyncRef?.status()
       if (shown?.reviewId === event.review.id && event.review.status !== 'pending') {
@@ -440,6 +442,7 @@ app.whenReady().then(() => {
     publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => findRojo(settings.get().rojoCommand) ?? settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
     pipeline
   })
+  reviewActionsRef = reviewActions
   autopilot = new Autopilot({
     file: join(dataDir(), 'autopilot.json'),
     registry,
@@ -677,6 +680,15 @@ app.whenReady().then(() => {
       acknowledged: Array.isArray(opts?.acknowledged) ? opts.acknowledged.filter((w): w is string => typeof w === 'string').slice(0, 20) : []
     })
   )
+  handle(IPC.reviewsMergeAll, (id: unknown, acknowledged?: unknown) => {
+    const ack: Record<string, string[]> = {}
+    if (acknowledged && typeof acknowledged === 'object') {
+      for (const [k, v] of Object.entries(acknowledged as Record<string, unknown>).slice(0, 200)) {
+        if (Array.isArray(v)) ack[k] = v.filter((w): w is string => typeof w === 'string').slice(0, 20)
+      }
+    }
+    return reviewActions.mergeAll(str(id, 'project'), ack)
+  })
   handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))

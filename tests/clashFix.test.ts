@@ -176,3 +176,41 @@ test('autopilot: while you are away a clash is handed to the agent, at most twic
   assert.equal(ap.get(project.id).awaitingReviewId, null)
   assert.equal(ap.get(project.id).away!.leftForYou, 1)
 })
+
+test('merge all: merges in order; a clash is fixed by AI and merges itself once checked again', async () => {
+  const t = setup(() => 'return { gun = "A", alt = "B" }\n')
+  t.runner.send(t.project.id, 'main', 'gun A')
+  await until(() => t.reviews.list().length === 1 && t.idle())
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'gun B')
+  await until(() => t.reviews.list().length === 2 && t.idle())
+  const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
+  for (const r of t.reviews.list()) t.reviews.update(r.id, { checks: passed })
+  const res = await t.actions.mergeAll(t.project.id, {})
+  assert.equal(res.merged.length, 1)
+  assert.equal(res.fixing.length, 1)
+  assert.deepEqual(res.skipped, [])
+  const b = res.fixing[0]!
+  await until(() => !t.reviews.get(b).clash && t.idle())
+  // The pipeline checks the fixed change again; once that's done, it merges itself.
+  t.actions.onReview(t.reviews.update(b, { checks: passed }))
+  await until(() => t.reviews.get(b).status === 'merged')
+  assert.equal(readFileSync(join(t.dir, 'Gun.luau'), 'utf8'), 'return { gun = "A", alt = "B" }\n')
+  assert.equal(t.g('status', '--porcelain'), '')
+})
+
+test('merge all: a fixed change whose checks fail is left for you', async () => {
+  const t = setup(() => 'return { broken = true }\n')
+  t.runner.send(t.project.id, 'main', 'gun A')
+  await until(() => t.reviews.list().length === 1 && t.idle())
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'gun B')
+  await until(() => t.reviews.list().length === 2 && t.idle())
+  const res = await t.actions.mergeAll(t.project.id, {})
+  const b = res.fixing[0]!
+  await until(() => !t.reviews.get(b).clash && t.idle())
+  const failed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'failed' as const, output: 'bad', ms: 1 }] }
+  t.actions.onReview(t.reviews.update(b, { checks: failed }))
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(t.reviews.get(b).status, 'pending')
+})

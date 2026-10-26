@@ -22,6 +22,33 @@ export function ReviewsView({ project }: { project: Project }) {
   const recent = useMemo(() => reviews.filter((r) => r.status !== 'pending').slice(0, 15), [reviews])
   const current = reviews.find((r) => r.id === selected) ?? pending[0] ?? null
   const agentName = (id: string): string => (id === 'main' ? 'Main' : (roles?.find((r) => r.id === id)?.name ?? id))
+  const [mergingAll, setMergingAll] = useState(false)
+  /** Merge every waiting change, oldest first; clashes go to Fix with AI and merge once fixed. */
+  const mergeAll = (): void => {
+    const changes = pending.filter((r) => r.kind !== 'research')
+    const acknowledged = Object.fromEntries(changes.map((r) => [r.id, mergeWarnings(r)]))
+    const warned = changes.filter((r) => acknowledged[r.id]!.length > 0)
+    void confirmDialog({
+      title: `Merge all ${changes.length} changes?`,
+      body: `Oldest first, into ${changes[0]?.base ?? 'main'}. A change that clashes with one merged before it goes to Fix with AI, and merges itself once the fixed version passes its checks again.${warned.length ? ' These need a second look:' : ''}`,
+      lines: warned.flatMap((r) => acknowledged[r.id]!.map((w) => `${revealHidden(r.title).slice(0, 60)}: ${revealHidden(w)}`)),
+      confirmLabel: 'Merge all',
+      tone: warned.length ? 'danger' : 'primary'
+    }).then((ok) => {
+      if (!ok) return
+      setMergingAll(true)
+      void attempt(async () => {
+        const r = await window.hangar.reviews.mergeAll(project.id, acknowledged)
+        for (const fresh of await window.hangar.reviews.list(project.id)) replaceReview(fresh)
+        const parts = [
+          r.merged.length ? `${r.merged.length} merged` : null,
+          r.fixing.length ? `${r.fixing.length} being fixed by AI (they merge themselves once checked)` : null,
+          r.skipped.length ? `${r.skipped.length} left for you: ${r.skipped.map((x) => `${x.title.slice(0, 40)} (${x.reason})`).join('; ')}` : null
+        ].filter(Boolean)
+        toast(parts.join(' · ') || 'Nothing to merge.', r.skipped.length ? 'error' : 'info')
+      }).finally(() => setMergingAll(false))
+    })
+  }
 
   if (!project.settings.autonomous && reviews.length === 0) {
     return (
@@ -35,7 +62,14 @@ export function ReviewsView({ project }: { project: Project }) {
   return (
     <div className="changes">
       <div className="changes-list">
-        <span className="side-label">Waiting for review ({pending.length})</span>
+        <div className="row between">
+          <span className="side-label">Waiting for review ({pending.length})</span>
+          {pending.filter((r) => r.kind !== 'research').length > 1 && (
+            <Button size="sm" disabled={mergingAll} onClick={mergeAll}>
+              {mergingAll ? 'Merging…' : 'Merge all'}
+            </Button>
+          )}
+        </div>
         {pending.length === 0 && (
           <EmptyState compact title="Nothing waiting">
             Finished autonomous tasks appear here.

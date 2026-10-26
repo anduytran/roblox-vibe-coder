@@ -4,7 +4,7 @@ import { extname, join } from 'node:path'
 import type { AgentEvent, Review } from '@shared/types'
 import type { AgentRunner } from './agentRunner'
 import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, MergeClashError, mergeTaskBranch, reviewDiff, tidyWorkingFolder } from './git'
-import { mergeWarnings } from '@shared/reviewRules'
+import { checksFailed, mergeWarnings } from '@shared/reviewRules'
 import type { ReviewPipeline } from './reviewPipeline'
 import type { ProjectRegistry } from './projects'
 import type { ReviewStore } from './reviews'
@@ -122,6 +122,82 @@ export class ReviewActions {
     const agentId = this.deps.runner.agentIds(project).includes(review.agentId) ? review.agentId : 'main'
     this.deps.runner.send(review.projectId, agentId, `Resolve the merge clash in “${review.title}”`, { fixClash: id })
     return this.changed(this.deps.reviews.update(id, { clash: { ...review.clash, fixing: true, failed: null } }))
+  }
+
+  /** Changes Merge all handed to Fix with AI, to merge once the fixed version has been checked again. */
+  private readonly mergeWhenFixed = new Map<string, { tries: number }>()
+
+  /**
+   * Merge every waiting change in a project, oldest first. A change that clashes with what was merged before it goes
+   * to Fix with AI and merges itself once the fixed version has passed its checks again. You confirm the warnings
+   * first (`acknowledged`, per change); one with a warning you weren't shown, or still being checked, is skipped.
+   */
+  async mergeAll(projectId: string, acknowledged: Record<string, string[]> = {}): Promise<{ merged: string[]; fixing: string[]; skipped: { id: string; title: string; reason: string }[] }> {
+    const result = { merged: [] as string[], fixing: [] as string[], skipped: [] as { id: string; title: string; reason: string }[] }
+    const waiting = this.deps.reviews
+      .list(projectId)
+      .filter((r) => r.status === 'pending' && r.kind !== 'research')
+      .sort((a, b) => a.createdAt - b.createdAt)
+    for (const r of waiting) {
+      const skip = (reason: string): void => void result.skipped.push({ id: r.id, title: r.title, reason })
+      const now = this.deps.reviews.get(r.id)
+      if (now.clash?.fixing) {
+        this.mergeWhenFixed.set(r.id, { tries: 0 })
+        result.fixing.push(r.id)
+        continue
+      }
+      if (now.checks?.status === 'running' || now.aiReview?.status === 'running') {
+        skip('It is still being checked.')
+        continue
+      }
+      try {
+        await this.merge(r.id, { force: true, acknowledged: acknowledged[r.id] ?? [] })
+        result.merged.push(r.id)
+      } catch (err) {
+        const after = this.deps.reviews.get(r.id)
+        if (after.status === 'pending' && after.clash && (after.clashFixes ?? 0) < 2) {
+          try {
+            this.fixClash(r.id)
+            this.mergeWhenFixed.set(r.id, { tries: 0 })
+            result.fixing.push(r.id)
+            continue
+          } catch (e) {
+            skip(e instanceof Error ? e.message : String(e))
+            continue
+          }
+        }
+        skip(err instanceof Error ? err.message : String(err))
+      }
+    }
+    return result
+  }
+
+  /**
+   * Every review update: a change Merge all sent to Fix with AI merges once it's fixed and checked again, unless the
+   * checks failed or the reviewer says not to merge (then it waits for you, with the reason on it).
+   */
+  onReview(review: Review): void {
+    const follow = this.mergeWhenFixed.get(review.id)
+    if (!follow) return
+    if (review.status !== 'pending') return void this.mergeWhenFixed.delete(review.id)
+    if (review.clash?.fixing || review.checks?.status === 'running' || review.aiReview?.status === 'running') return
+    // The fix didn't work (it's on the review), or it wasn't checked yet (the pipeline starts it): wait or stop.
+    if (review.clash) return void this.mergeWhenFixed.delete(review.id)
+    if (!review.checks && !review.aiReview) return
+    if (checksFailed(review.checks) || (review.aiReview?.status === 'done' && review.aiReview.verdict === 'block')) {
+      this.mergeWhenFixed.delete(review.id)
+      return
+    }
+    void this.merge(review.id, { force: true, acknowledged: mergeWarnings(review) })
+      .then(() => this.mergeWhenFixed.delete(review.id))
+      .catch(() => {
+        const after = this.deps.reviews.get(review.id)
+        // Another agent is working: try again a little later (a few times).
+        if (after.status === 'pending' && !after.clash && follow.tries < 20) {
+          follow.tries++
+          setTimeout(() => this.onReview(this.deps.reviews.get(review.id)), 30_000).unref?.()
+        } else this.mergeWhenFixed.delete(review.id)
+      })
   }
 
   /** Run a task's checks (and, if asked, the reviewer agent) again. */

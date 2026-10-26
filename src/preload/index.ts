@@ -125,7 +125,8 @@ const api: HangarApi = {
     clipFile: (id, index) => invoke(IPC.reviewsClipFile, id, index),
     publish: (id) => invoke(IPC.reviewsPublish, id),
     recheck: (id, opts) => invoke(IPC.reviewsRecheck, id, opts),
-    fixClash: (id) => invoke(IPC.reviewsFixClash, id)
+    fixClash: (id) => invoke(IPC.reviewsFixClash, id),
+    mergeAll: (id, acknowledged) => invoke(IPC.reviewsMergeAll, id, acknowledged)
   },
   vault: {
     status: (id, folder) => invoke(IPC.vaultStatus, id, folder),
