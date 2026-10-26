@@ -22,7 +22,8 @@ import type {
   IdeaChatMessage,
   IdeaCategory,
   ModelFile,
-  ModelRequest
+  ModelRequest,
+  ApprovalExplanation
 } from './types'
 
 export const IPC = {
@@ -54,6 +55,7 @@ export const IPC = {
   agentsResetSession: 'agents:resetSession',
   approvalsPending: 'approvals:pending',
   approvalsRespond: 'approvals:respond',
+  approvalsExplain: 'approvals:explain',
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
   gitCommit: 'git:commit',
@@ -226,6 +228,8 @@ export interface HangarApi {
   approvals: {
     pending(): Promise<ApprovalRequest[]>
     respond(id: string, decision: ApprovalDecision): Promise<void>
+    /** Plain-language AI advice on a waiting approval, plus Hangar's own checks. Cached per approval; never decides anything. */
+    explain(id: string): Promise<ApprovalExplanation>
   }
   git: {
     status(projectId: string): Promise<GitStatus>

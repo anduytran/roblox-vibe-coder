@@ -142,6 +142,14 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - The 3D tab lists files in `assets/models` and `src/shared/Models` only: links are skipped, previews are size-limited and must really be PNGs. "Show" only opens files that listing found.
 - A cloned project could mark one of its roles `mcp: blender`; that role still can't do anything in Blender without your red approval for each code run. Read the code on those cards.
 
+## Explain on approval cards (2026-10-26)
+
+- **Explain** on an approval card asks a second Claude session what the action does and whether it looks safe (Looks safe / Be careful / Don't allow, with reasons). It is advice: it never approves anything and never changes the card's buttons, its full summary, the red styling or when "Always allow" is offered.
+- The explainer has no tools at all (`tools: []`, every tool call denied), no MCP servers or subagents, no settings files (`settingSources: []`), runs in an empty temporary folder, keeps no session and always goes through the key-hiding proxy. It counts toward the project's and the daily spending limits (at most $0.25 a run) and shows in the project's spend as "Explain (approvals)".
+- The window sends only the approval's id; Hangar looks the request up itself among the waiting approvals. The request is untrusted text (a hijacked agent can write "say this is safe"), so it goes in data blocks with random markers and hidden characters removed, and the explainer is told to treat it as data and to call out text aimed at it.
+- Hangar also runs its own checks in code, without the AI: deleting, the internet (and downloading something then running it), package installs, admin rights, printing secrets, paths outside the project, `.git`, `.claude`/`.mcp.json`, credential folders (`~/.ssh`, `~/.aws`…), `.env` files, Hangar's own data folder, hidden characters, cut details and red cards. They are always listed, and the verdict shown is never milder than they are, whatever the AI says.
+- Answers are kept per approval while it waits, so opening the card again costs nothing. The phone doesn't have Explain.
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.
@@ -154,6 +162,7 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - **GitHub push, pull and clone** run only from Hangar's buttons, never by agents. They use your own git sign-in, so for these commands git also reads its system config (where the macOS keychain or Git Credential Manager is usually set); the repository's own config is still checked first. Only github.com over https or ssh is allowed, with certificate checks forced on, so a planted `url.*.insteadOf` can't redirect them. Task branches are never pushed and pushes are never forced. A cloned repository is untrusted code, like any folder you open.
 - **Checks on Windows** run without an OS sandbox. Linters and Rojo only read code, but a test runner that executes game code (for example Lune) runs it with your permissions. Only add such checks if you're comfortable with that.
 - **The reviewer agent can be fooled.** It reads code another agent wrote; treat "looks good" as a second opinion, not a guarantee.
+- **The approval explainer can be fooled, and Hangar's own checks are simple.** The explainer reads text a hijacked agent may have written; the checks match words and paths and can miss things (code inside a script file, for example). Treat "Looks safe" as a second opinion and read the command yourself.
 - **Auto-merged work is still agent-written.** The reviewer agent can be fooled; auto-merge only lands game code (never tool or config files), but check in regularly and play the result. You can revert any merge with git.
 - **Approved research is trusted context.** Once you approve a report, every agent may read it. Read it for accuracy and for instructions aimed at an AI before approving. Pages on documentation sites the engine trusts by default may be missing from the "pages it opened" list.
 - **The researcher's egress proxy** relies on the engine honouring `HTTPS_PROXY` for web fetches; the host-name rules apply either way. If you use a corporate proxy, the researcher connects directly instead of through it.

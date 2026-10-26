@@ -238,6 +238,41 @@ export interface ApprovalRequest {
   ts: number
 }
 
+/** "Looks safe" / "Be careful" / "Don't allow". */
+export type ExplainVerdict = 'safe' | 'careful' | 'deny'
+
+/** One of Hangar's own checks on an approval, made in code without the AI. */
+export interface ApprovalFlag {
+  kind: string
+  severity: 'careful' | 'deny'
+  text: string
+  /** The path or program it's about (from the agent's request: untrusted). */
+  detail?: string
+}
+
+/**
+ * The "Explain" button's answer for a waiting approval. Advice only: it never approves anything,
+ * and Hangar's own flags are always shown with it.
+ */
+export interface ApprovalExplanation {
+  approvalId: string
+  status: 'done' | 'error'
+  /** The AI's verdict, raised to match Hangar's flags (never lowered). Null if neither gave one. */
+  verdict: ExplainVerdict | null
+  /** What the AI said before Hangar's flags were applied. */
+  aiVerdict: ExplainVerdict | null
+  what: string
+  touches: string[]
+  /** Null when unknown (the AI didn't answer and no flag says so). */
+  writes: boolean | null
+  deletes: boolean | null
+  network: boolean | null
+  reasons: string[]
+  flags: ApprovalFlag[]
+  costUsd: number
+  error: string | null
+}
+
 export interface CostSummary {
   todayUsd: number
   projectTodayUsd: Record<string, number>

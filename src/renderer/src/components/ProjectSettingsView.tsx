@@ -25,7 +25,8 @@ const CATEGORIES: [Category, string, string][] = [
 export function ProjectSettingsView({ project }: { project: Project }) {
   const totals = useStore((s) => s.costs)
   const roles = useStore((s) => s.roles[project.id] ?? EMPTY_ROLES)
-  const agentName = (id: string): string => (id === 'main' ? 'Main' : revealHidden(roles.find((r) => r.id === id)?.name ?? id))
+  const agentName = (id: string): string =>
+    id === 'main' ? 'Main' : id === 'hangar:explain' ? 'Explain (approvals)' : revealHidden(roles.find((r) => r.id === id)?.name ?? id)
   const [cat, setCat] = useState<Category>('general')
   const pane = useRef<HTMLDivElement>(null)
   useEffect(() => {

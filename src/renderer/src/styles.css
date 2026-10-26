@@ -1116,6 +1116,63 @@ select:focus-visible {
   overflow: auto;
 }
 
+/* "Explain" on approval cards: AI advice, set apart from the decision buttons */
+.explain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+}
+.explain-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.explain-verdict {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.explain-safe {
+  color: var(--live);
+  background: var(--live-soft);
+}
+.explain-careful {
+  color: var(--amber-text);
+  background: var(--amber-soft);
+}
+.explain-deny {
+  color: var(--err);
+  background: var(--err-soft);
+}
+.explain-what {
+  margin: 0;
+}
+.explain-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.explain-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.explain-flags {
+  list-style: none;
+  padding-left: 0;
+}
+.explain-checks code {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
+
 /* composer (queued tasks show as chips under it) */
 .composer {
   flex-shrink: 0;

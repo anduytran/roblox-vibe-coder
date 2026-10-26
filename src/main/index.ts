@@ -19,6 +19,7 @@ import { ReviewActions } from './reviewActions'
 import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
+import { ApprovalExplainer } from './approvalExplainer'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
 import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
@@ -383,6 +384,16 @@ app.whenReady().then(() => {
     merge: (id) => reviewActions.merge(id)
   })
   const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
+  const explainer = new ApprovalExplainer({
+    loadQuery,
+    engineAuth,
+    getApiKey: getCredential,
+    getSettings: () => settings.get(),
+    costs,
+    pendingApprovals: () => runner.pendingApprovals(),
+    getProject: (id) => registry.get(id),
+    appDataDir: dataDir()
+  })
   // What's already waiting at startup doesn't notify again.
   notifier.seed({
     reviews: reviews.list().filter((r) => r.status === 'pending').map((r) => r.id),
@@ -529,6 +540,12 @@ app.whenReady().then(() => {
   handle(IPC.approvalsRespond, (id: unknown, decision: unknown) => {
     if (decision !== 'allow' && decision !== 'deny' && decision !== 'always') throw new Error('Invalid decision.')
     runner.respond(str(id, 'approval'), decision as ApprovalDecision)
+  })
+  // Advice only. The window sends just the id: the request is looked up here, from the runner.
+  handle(IPC.approvalsExplain, async (id: unknown) => {
+    const explanation = await explainer.explain(str(id, 'approval'))
+    if (explanation.costUsd > 0) emit({ type: 'cost', summary: costs.summary() })
+    return explanation
   })
 
   // Git

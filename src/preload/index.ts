@@ -78,7 +78,8 @@ const api: HangarApi = {
   },
   approvals: {
     pending: () => invoke(IPC.approvalsPending),
-    respond: (id, decision) => invoke(IPC.approvalsRespond, id, decision)
+    respond: (id, decision) => invoke(IPC.approvalsRespond, id, decision),
+    explain: (id) => invoke(IPC.approvalsExplain, id)
   },
   git: {
     status: (id) => invoke(IPC.gitStatus, id),
