@@ -4,14 +4,14 @@ import { normalizeModel } from '@shared/models'
 import { cleanAgentSettings } from '@shared/agentConfig'
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
-import type { AgentEvent, ApprovalExplanation, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
+import type { AgentEvent, ApprovalExplanation, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role, ShipStatus } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
 import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
 import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
-import { cloneGitHub, gitCommit, gitDiff, gitInit, githubLink, gitRevertFile, gitStatus, linkGitHub, parseGitHubRepo, pullFromGitHub, pushToGitHub, setNoHooksBase, unlinkGitHub } from './git'
+import { cloneGitHub, commitFiles, gitCommit, gitDiff, gitInit, githubLink, gitRevertFile, gitStatus, linkGitHub, parseGitHubRepo, pullFromGitHub, pushToGitHub, setNoHooksBase, unlinkGitHub } from './git'
 import { scrubProcessEnv } from './env'
 import { JsonStore } from './jsonStore'
 import { KeyProxy } from './keyProxy'
@@ -22,6 +22,7 @@ import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
 import { Briefer } from './briefs'
+import { shipStatus, writeShipKit } from './ship'
 import { ApprovalExplainer, checkerMayApprove } from './approvalExplainer'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
@@ -474,12 +475,15 @@ app.whenReady().then(() => {
     reviewer: new TaskReviewer({ loadQuery, engineAuth, getApiKey: getCredential, getSettings: () => settings.get(), costs, workDir: join(dataDir(), 'builds') })
   })
 
+  const publisher = new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => findRojo(settings.get().rojoCommand) ?? settings.get().rojoCommand, workDir: join(dataDir(), 'builds') })
+  // The last publish to each game's live place (shown on its Overview).
+  const liveStore = new JsonStore<{ live: Record<string, { versionNumber: number; at: number; sha: string }> }>(join(dataDir(), 'live.json'), { live: {} })
   const reviewActions = new ReviewActions({
     registry,
     reviews,
     runner,
     emit,
-    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => findRojo(settings.get().rojoCommand) ?? settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
+    publisher,
     pipeline
   })
   reviewActionsRef = reviewActions
@@ -755,6 +759,28 @@ app.whenReady().then(() => {
   handle(IPC.reviewsCheckoutBase, (id: unknown) => reviewActions.checkoutBase(str(id, 'project')))
   handle(IPC.reviewsClipFile, (id: unknown, index: unknown) => reviewActions.clipFile(str(id, 'review'), Number(index)))
   handle(IPC.reviewsPublish, (id: unknown) => reviewActions.publish(str(id, 'review')))
+  const shipStatusFor = (id: string): ShipStatus => {
+    const project = registry.get(id)
+    return { ...shipStatus(project.path), live: project.settings.livePlace ?? null, lastLive: liveStore.get().live[id] ?? null }
+  }
+  handle(IPC.shipStatus, (id: unknown) => shipStatusFor(str(id, 'project')))
+  // Your click: adds the ship checklist and purchase templates to an existing game, as one commit.
+  handle(IPC.shipAddKit, async (id: unknown) => {
+    const pid = str(id, 'project')
+    const root = registry.get(pid).path
+    await runner.withProjectLock(pid, async () => {
+      const written = writeShipKit(root)
+      await commitFiles(root, written, 'Add the ship checklist and purchase templates')
+    })
+    return shipStatusFor(pid)
+  })
+  // Your click (desktop only; the phone and agents can't): the merged game goes to the public place.
+  handle(IPC.shipPublishLive, async (id: unknown) => {
+    const pid = str(id, 'project')
+    const r = await runner.withProjectLock(pid, () => publisher.publishLive(pid))
+    liveStore.update((s) => ({ live: { ...s.live, [pid]: { versionNumber: r.versionNumber, at: Date.now(), sha: r.sha } } }))
+    return { ...r, status: shipStatusFor(pid) }
+  })
   handle(IPC.testPlaceKeyStatus, (id: unknown) => testPlaceKeys.status(str(id, 'project')))
   handle(IPC.testPlaceKeySet, (id: unknown, key: unknown) => testPlaceKeys.set(str(id, 'project'), str(key, 'key')))
   handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))

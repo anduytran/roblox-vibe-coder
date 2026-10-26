@@ -6,6 +6,7 @@ import { gitInitialCommit } from './git'
 import { DECEPTIVE_CHARS } from './permissions'
 import { installTemplates } from './roles'
 import { createVault } from './vault'
+import { shipKitFiles } from './ship'
 
 /**
  * "New game": creates a ready-to-build Rojo project from the wizard — folder layout, Rojo project file,
@@ -77,6 +78,12 @@ A Roblox game built with Rojo. Code in \`src/\` syncs into Roblox Studio with \`
 - The game design lives in \`design-vault/\`: start with \`Brief.md\` (the product owner's idea), then \`Game Overview.md\`, \`Roadmap.md\` and the mechanic notes.
 - The UI spec lives in \`ui-vault/\`.
 - Approved web research lives in \`research/\`.
+- Milestone 1 is shipping: \`design-vault/Ship Checklist.md\` lists what the first public version needs.
+
+## Purchases
+- Everything sold for Robux is listed in \`src/shared/Products.luau\` (IDs come from the Creator Hub; 0 = not created yet).
+- Grant purchases only on the server, through \`src/server/Monetization.luau\` (\`Monetization.onPass\`, \`Monetization.onProduct\`).
+- Open purchase prompts from the client with \`src/client/Shop.luau\`. Never sell power in a fair fight.
 
 ## Checks
 These must pass before work is merged: \`stylua --check src\`, \`selene src\`, \`rojo build -o hangar-check.rbxl\`.
@@ -98,7 +105,7 @@ function files(name: string, slug: string): Record<string, string> {
       null,
       2
     )}\n`,
-    'src/server/main.server.luau': `--!strict\nlocal Config = require(game:GetService("ReplicatedStorage").Shared.Config)\n\nprint(\`[server] {Config.GAME_NAME} started\`)\n`,
+    'src/server/main.server.luau': `--!strict\nlocal Config = require(game:GetService("ReplicatedStorage").Shared.Config)\n-- Robux purchases: say what each one gives with Monetization.onPass / Monetization.onProduct.\nlocal _Monetization = require(script.Parent.Monetization)\n\nprint(\`[server] {Config.GAME_NAME} started\`)\n`,
     'src/client/main.client.luau': `--!strict\nlocal Config = require(game:GetService("ReplicatedStorage").Shared.Config)\n\nprint(\`[client] Welcome to {Config.GAME_NAME}\`)\n`,
     'src/shared/Config.luau': `--!strict\nreturn {\n\tGAME_NAME = ${luauString(name)},\n}\n`,
     'selene.toml': 'std = "roblox"\n',
@@ -142,6 +149,11 @@ export async function createGameProject(input: NewGameInput): Promise<string> {
   createVault(root, 'design-vault', 'design')
   writeFileSync(join(root, 'design-vault', 'Brief.md'), briefMarkdown({ ...input, name }), { encoding: 'utf8', flag: 'wx' })
   createVault(root, 'ui-vault', 'ui')
+  // The ship checklist (milestone 1) and purchase templates.
+  for (const [rel, body] of Object.entries(shipKitFiles())) {
+    mkdirSync(join(root, rel, '..'), { recursive: true })
+    writeFileSync(join(root, rel), body, { encoding: 'utf8', flag: 'wx' })
+  }
   await gitInitialCommit(root, `New game: ${name}`)
   return root
 }

@@ -64,6 +64,9 @@ export interface AutopilotDeps {
  */
 export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with Luau tests (*.spec.luau files, which Hangar runs without Studio) and the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
 
+/** While the game hasn't shipped, its ship checklist comes first. */
+export const SHIP_FIRST = `If design-vault/Ship Checklist.md has unticked items, the next step comes from it first (skip the ones marked "(you)": they need the product owner, so list them under "Needs you" in Roadmap.md). Tick items in it as they're done.`
+
 /** Tries at resolving one change's clash on its own before it waits for you. */
 export const MAX_CLASH_FIXES = 2
 
@@ -522,14 +525,14 @@ export class Autopilot {
       ? `Autopilot, sprint 1, ${which}. This is a new game and the user is the product owner.
 1. Read design-vault/Brief.md (the product owner's idea) and CLAUDE.md.
 2. Fill in design-vault/Game Overview.md (pitch, core loop, pillars, players and platforms).
-3. Write design-vault/Roadmap.md as milestones. Milestone 1 is a small playable vertical slice of the core loop.
+3. Write design-vault/Roadmap.md as milestones. Milestone 1 is "Ship v1": the smallest version worth publishing (fun for ten minutes, a goal players can see, two or three things to buy), following design-vault/Ship Checklist.md. Later milestones add depth after launch.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
 5. Then build the first, most foundational piece of milestone 1 and playtest it.${team ? `\n   ${team.build}\n   ${team.test}` : ''}
 ${KEEP_BUILDING}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
-2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own.
+2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST}
 3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'}
 4. Update Roadmap.md (mark what's done) and Decisions.md.
 ${KEEP_BUILDING}
@@ -801,7 +804,7 @@ Reply with only these sections, short and concrete:
     const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
-2. Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
+2. ${SHIP_FIRST} Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, or work that isn't merged): say so in your plan instead.
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}

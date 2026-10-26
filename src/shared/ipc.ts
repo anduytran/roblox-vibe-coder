@@ -1,5 +1,5 @@
 // IPC channel names and the API surface exposed to the renderer as window.hangar.
-import type { Brief,
+import type { ShipStatus, Brief,
   AgentEvent,
   AgentState,
   AppSettings,
@@ -92,6 +92,9 @@ export const IPC = {
   reviewsFixClash: 'reviews:fixClash',
   reviewsMergeAll: 'reviews:mergeAll',
   briefsAgent: 'briefs:agent',
+  shipStatus: 'ship:status',
+  shipAddKit: 'ship:addKit',
+  shipPublishLive: 'ship:publishLive',
   briefsProject: 'briefs:project',
   reviewsCancelMergeAll: 'reviews:cancelMergeAll',
   testPlaceKeyStatus: 'testPlaceKey:status',
@@ -318,6 +321,14 @@ export interface HangarApi {
     mergeAll(projectId: string, acknowledged: Record<string, string[]>): Promise<{ merged: string[]; fixing: string[]; queued: string[]; skipped: { id: string; title: string; reason: string }[] }>
     /** Stop a Merge all that's still waiting to merge changes. */
     cancelMergeAll(projectId: string): Promise<void>
+  }
+  ship: {
+    /** How close the game is to shipping: its checklist, purchases and live game. */
+    status(projectId: string): Promise<ShipStatus>
+    /** Add the ship checklist and purchase templates to an existing game (one commit; existing files are kept). */
+    addKit(projectId: string): Promise<ShipStatus>
+    /** Publish the merged game to its live (public) place. Only from the desktop app, on your click. */
+    publishLive(projectId: string): Promise<{ versionNumber: number; sha: string; branch: string; status: ShipStatus }>
   }
   briefs: {
     /** What an agent did since you last looked, what it's doing, and what needs you (rewritten only when there's news). */

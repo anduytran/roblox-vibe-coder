@@ -130,6 +130,11 @@ const api: HangarApi = {
     mergeAll: (id, acknowledged) => invoke(IPC.reviewsMergeAll, id, acknowledged),
     cancelMergeAll: (id) => invoke(IPC.reviewsCancelMergeAll, id)
   },
+  ship: {
+    status: (id) => invoke(IPC.shipStatus, id),
+    addKit: (id) => invoke(IPC.shipAddKit, id),
+    publishLive: (id) => invoke(IPC.shipPublishLive, id)
+  },
   briefs: {
     agent: (id, agentId, refresh) => invoke(IPC.briefsAgent, id, agentId, refresh),
     project: (id, refresh) => invoke(IPC.briefsProject, id, refresh)

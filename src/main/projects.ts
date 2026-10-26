@@ -111,6 +111,10 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     luauTests: cleanLuauTests(s.luauTests),
     reviewer: s.reviewer !== false,
     safetyChecker: s.safetyChecker === true,
+    livePlace:
+      s.livePlace && /^\d{1,20}$/.test(String(s.livePlace.universeId)) && /^\d{1,20}$/.test(String(s.livePlace.placeId))
+        ? { universeId: String(s.livePlace.universeId), placeId: String(s.livePlace.placeId) }
+        : null,
     autoPush: s.autoPush !== false,
     ...(cleanMainAgent(s.mainAgent) ? { mainAgent: cleanMainAgent(s.mainAgent) } : {})
   }

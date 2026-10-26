@@ -338,6 +338,31 @@ export async function gitInitialCommit(root: string, message: string): Promise<v
  * Commit one file Hangar wrote (approved research) on the current branch, leaving anything else
  * uncommitted alone. Refuses on a task branch, so it can't end up inside an agent's change.
  */
+/** Commit just these files on the current (non-task) branch, leaving anything else uncommitted alone. */
+export async function commitFiles(root: string, files: string[], message: string): Promise<void> {
+  for (const f of files) assertInside(root, f)
+  await assertSafeRepo(root)
+  const branch = await currentBranch(root)
+  if (branch === null) return
+  if (branch.startsWith('hangar/')) throw new Error(`You're on a task branch (${branch}). Switch back to your main branch first.`)
+  if (!files.length) return
+  await git(root, ['add', '--', ...files])
+  const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
+  await git(root, [...identity, 'commit', '--no-verify', '--only', '-m', message.slice(0, 200), '--', ...files])
+  await noteHangarCommit(root)
+}
+
+/** The current branch and its latest commit, for publishing what's merged (never a task branch). */
+export async function publishTarget(root: string): Promise<{ branch: string; sha: string; uncommitted: number }> {
+  const status = await gitStatus(root) // refuses dangerous config
+  if (!status.isRepo) throw new Error('This game isn\'t a git repository.')
+  const branch = await currentBranch(root)
+  if (!branch) throw new Error('Make a first commit before publishing.')
+  if (branch.startsWith(BRANCH_PREFIX)) throw new Error(`The game folder is on a task branch (${branch}); only merged work is published.`)
+  const sha = (await git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
+  return { branch, sha, uncommitted: status.files.length }
+}
+
 export async function commitFile(root: string, file: string, message: string): Promise<void> {
   assertInside(root, file)
   await assertSafeRepo(root)

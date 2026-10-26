@@ -4347,3 +4347,20 @@ kbd {
 .brief-text p {
   margin: 4px 0;
 }
+
+/* Ship it (Overview) */
+.ship-card {
+  display: grid;
+  gap: 10px;
+}
+.ship-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.ship-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--live);
+}

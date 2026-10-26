@@ -111,6 +111,8 @@ export interface ProjectSettings {
    */
   /** Push the main branch to the linked GitHub repository after each merge (on unless turned off). */
   autoPush?: boolean
+  /** The public game (universe and place IDs) that "Publish to live game" sends to. Only ever on your click. */
+  livePlace?: { universeId: string; placeId: string } | null
   safetyChecker: boolean
 }
 
@@ -714,4 +716,18 @@ export interface Result<T> {
   ok: boolean
   value?: T
   error?: string
+}
+
+/** How close a game is to shipping (its Overview's Ship card). */
+export interface ShipStatus {
+  /** design-vault/Ship Checklist.md exists. */
+  hasChecklist: boolean
+  /** The purchase templates (Products.luau, Monetization.luau) are in the game. */
+  hasPurchaseCode: boolean
+  items: { section: string; text: string; done: boolean; you: boolean }[]
+  /** Things to buy listed in Products.luau, and how many have a real ID (created in the Creator Hub). */
+  purchases: { listed: number; created: number }
+  /** The live game, if set, and the last time Hangar published to it. */
+  live?: { universeId: string; placeId: string } | null
+  lastLive?: { versionNumber: number; at: number; sha: string } | null
 }

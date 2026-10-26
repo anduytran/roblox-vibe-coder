@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel } from '@shared/lanes'
 import { Explanation } from './ApprovalCard'
 import { BriefCard } from './BriefCard'
+import { ShipCard } from './ShipCard'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
 import { attempt, confirmDialog, openUncommitted, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
 import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
@@ -63,6 +64,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
           load={(refresh) => window.hangar.briefs.project(project.id, refresh)}
         />
       ) : null}
+      <ShipCard project={project} watch={`${ap?.sprint ?? 0}:${ap?.tasksDone ?? 0}:${reviewCount}`} />
       <section className="card overview-status">
         <div className="row between">
           <div>

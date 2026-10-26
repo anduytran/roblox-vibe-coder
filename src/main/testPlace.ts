@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { request } from 'node:https'
 import { delimiter, isAbsolute, join, sep } from 'node:path'
-import type { Review } from '@shared/types'
-import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
+import type { Project, Review } from '@shared/types'
+import { addTempWorktree, linksInCommit, publishTarget, removeTempWorktree } from './git'
 import type { ProjectRegistry } from './projects'
 import type { Publisher } from './reviewActions'
 
@@ -139,6 +139,8 @@ export class TestPlacePublisher implements Publisher {
       rojoCommand: () => string
       /** A folder Hangar owns (inside its data folder), for build checkouts. */
       workDir: string
+      /** For tests: stands in for the upload to Roblox. */
+      upload?: typeof uploadPlace
     }
   ) {}
 
@@ -146,13 +148,30 @@ export class TestPlacePublisher implements Publisher {
     const project = this.deps.registry.get(review.projectId)
     const place = project.settings.testPlace
     if (!place) throw new Error('Set this project\'s test place (universe and place IDs) in the Project tab first.')
+    return this.buildAndUpload(project, review.headSha, place)
+  }
+
+  /**
+   * Publish the game's merged work to its public game. Only ever on your click in the desktop app; agents, autopilot
+   * and the phone have no way to call it. Builds the branch's latest commit (uncommitted changes aren't included).
+   */
+  async publishLive(projectId: string): Promise<{ versionNumber: number; sha: string; branch: string }> {
+    const project = this.deps.registry.get(projectId)
+    const place = project.settings.livePlace
+    if (!place) throw new Error('Set the live game\'s universe and place IDs on the Overview first.')
+    const target = await publishTarget(project.path)
+    const { versionNumber } = await this.buildAndUpload(project, target.sha, place)
+    return { versionNumber, sha: target.sha, branch: target.branch }
+  }
+
+  private async buildAndUpload(project: Project, sha: string, place: { universeId: string; placeId: string }): Promise<{ versionNumber: number }> {
     const apiKey = this.deps.keys.get(project.id)
     if (!apiKey) throw new Error('Add a Roblox Open Cloud API key for this project in the Project tab first.')
     const rojo = resolveCommand(this.deps.rojoCommand())
     if (!rojo) throw new Error(`Couldn't find Rojo ("${this.deps.rojoCommand()}"). Install it or set its full path in Settings → Roblox.`)
 
     // Symlinks and submodules could pull in files from outside the project; refuse them.
-    const links = await linksInCommit(project.path, review.headSha)
+    const links = await linksInCommit(project.path, sha)
     if (links.length) throw new Error(`This branch contains symlinks or submodules, which can't be published: ${links.slice(0, 5).join(', ')}`)
 
     mkdirSync(this.deps.workDir, { recursive: true })
@@ -160,7 +179,7 @@ export class TestPlacePublisher implements Publisher {
     const tree = join(work, 'tree')
     const out = join(work, 'place.rbxl')
     try {
-      await addTempWorktree(project.path, review.headSha, tree)
+      await addTempWorktree(project.path, sha, tree)
       const bad = unsafeRojoPaths(tree)
       if (bad.length) throw new Error(`Rojo project files point outside the project, so this branch can't be published: ${bad.slice(0, 5).join('; ')}`)
       // Run Rojo from Hangar's own folder (not the branch checkout), using the resolved binary.
@@ -169,7 +188,7 @@ export class TestPlacePublisher implements Publisher {
       })
       const size = statSync(out).size
       if (size > MAX_PLACE_BYTES) throw new Error('The built place is too large to upload.')
-      return await uploadPlace({ universeId: place.universeId, placeId: place.placeId, apiKey, body: readFileSync(out) })
+      return await (this.deps.upload ?? uploadPlace)({ universeId: place.universeId, placeId: place.placeId, apiKey, body: readFileSync(out) })
     } finally {
       await removeTempWorktree(project.path, tree)
       rmSync(work, { recursive: true, force: true })
