@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { AgentsView } from './components/AgentsView'
 import { DesignView } from './components/DesignView'
 import { FilesView } from './components/FilesView'
+import { StudioSyncControl } from './components/StudioSyncControl'
 import { ChangesView } from './components/ChangesView'
 import { ProjectSettingsView } from './components/ProjectSettingsView'
 import { ReviewsView } from './components/ReviewsView'
@@ -59,10 +60,8 @@ export function App() {
               <div className="project-title">
                 <Avatar name={project.name} />
                 <div className="project-title-text">
-                <h1>{project.name}</h1>
-                <span className="project-path" title={project.path}>
-                  {project.path}
-                </span>
+                <h1 title={project.path}>{project.name}</h1>
+                <StudioSyncControl project={project} />
                 </div>
               </div>
               <nav className="tabs" role="tablist">

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
+import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, StudioSyncState, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
 export type ProjectTab = 'overview' | 'design' | 'agents' | 'models' | 'reviews' | 'changes' | 'files' | 'settings'
 /** The project tabs in order (Cmd/Ctrl+1…8). */
@@ -24,6 +24,8 @@ export interface StoreState {
   settingsTab: SettingsTab | null
   /** The trending charts are being fetched. */
   trendsLoading: boolean
+  /** Live sync into Roblox Studio (one game at a time). */
+  studioSync: StudioSyncState
   /** projectId -> agentId -> state */
   agents: Record<string, Record<string, AgentState>>
   roles: Record<string, Role[]>
@@ -68,6 +70,7 @@ let state: StoreState = {
   inboxOpen: false,
   settingsTab: null,
   trendsLoading: false,
+  studioSync: { projectId: null, status: 'off', port: 34872, message: null },
   agents: {},
   roles: {},
   reviews: {},
@@ -173,6 +176,9 @@ function applyEvent(e: AgentEvent): void {
     case 'autopilot':
       set((s) => ({ autopilot: { ...s.autopilot, [e.state.projectId]: e.state } }))
       break
+    case 'studioSync':
+      set({ studioSync: e.state })
+      break
     case 'trends':
       set({ trends: normalizeTrends(e.snapshot) })
       break
@@ -202,6 +208,7 @@ export function initStore(): void {
       api().autopilot.list(),
       api().trends.get()
     ])
+    void api().studio.syncStatus().then((studioSync) => set({ studioSync }), () => undefined)
     // Hangar opens on Home: what needs you, your games, and what's trending.
     set({
       ready: true,

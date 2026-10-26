@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import type { NewGameInput } from '@shared/types'
 import { gitInitialCommit } from './git'
@@ -134,12 +135,52 @@ export async function createGameProject(input: NewGameInput): Promise<string> {
     mkdirSync(join(file, '..'), { recursive: true })
     writeFileSync(file, body, { encoding: 'utf8', flag: 'wx' })
   }
+  // Rokit's launchers only run a tool inside a project that lists it: list the versions already installed here.
+  const rokit = rokitManifest()
+  if (rokit) writeFileSync(join(root, 'rokit.toml'), rokit, { encoding: 'utf8', flag: 'wx' })
   installTemplates(root)
   createVault(root, 'design-vault', 'design')
   writeFileSync(join(root, 'design-vault', 'Brief.md'), briefMarkdown({ ...input, name }), { encoding: 'utf8', flag: 'wx' })
   createVault(root, 'ui-vault', 'ui')
   await gitInitialCommit(root, `New game: ${name}`)
   return root
+}
+
+/** Official tools a new game uses, as Rokit names them. */
+const ROKIT_TOOLS: [alias: string, owner: string, repo: string][] = [
+  ['rojo', 'rojo-rbx', 'rojo'],
+  ['selene', 'kampfkarren', 'selene'],
+  ['stylua', 'johnnymorganz', 'stylua']
+]
+
+/**
+ * A rokit.toml listing the newest installed version of each tool above, or null when Rokit isn't used here (or has
+ * none of them). Only versions already on this computer, so the file never asks for a download you didn't make.
+ */
+export function rokitManifest(home = homedir()): string | null {
+  const store = join(home, '.rokit', 'tool-storage')
+  let owners: string[]
+  try {
+    owners = readdirSync(store)
+  } catch {
+    return null
+  }
+  const lines: string[] = []
+  for (const [alias, owner, repo] of ROKIT_TOOLS) {
+    // Rokit keeps the owner's spelling; match it without case.
+    const o = owners.find((x) => x.toLowerCase() === owner)
+    if (!o) continue
+    let versions: string[] = []
+    try {
+      const r = readdirSync(join(store, o)).find((x) => x.toLowerCase() === repo)
+      if (r) versions = readdirSync(join(store, o, r)).filter((v) => /^\d+\.\d+\.\d+$/.test(v))
+    } catch {
+      continue
+    }
+    const newest = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0]
+    if (newest) lines.push(`${alias} = "${o}/${repo}@${newest}"`)
+  }
+  return lines.length ? `# Tools for this game, managed by Rokit (https://github.com/rojo-rbx/rokit).\n\n[tools]\n${lines.join('\n')}\n` : null
 }
 
 const PLATFORMS = new Set(['phone', 'pc', 'console', 'vr'])

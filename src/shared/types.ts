@@ -283,6 +283,14 @@ export interface CostSummary {
   weekUsd: number
 }
 
+/** Live sync of a game into Roblox Studio (`rojo serve`), one game at a time. */
+export interface StudioSyncState {
+  projectId: string | null
+  status: 'off' | 'starting' | 'running' | 'error'
+  port: number
+  message: string | null
+}
+
 /** One folder of the project, for the Files tab (read-only). */
 export interface FileListing {
   path: string
@@ -523,6 +531,7 @@ export type AgentEvent =
   | { type: 'autopilot'; state: AutopilotState }
   /** Sent to the window only (from a clicked desktop notification): open the Inbox. */
   | { type: 'openInbox' }
+  | { type: 'studioSync'; state: StudioSyncState }
   /** Ideas changed somewhere other than the window (an idea saved on the phone). */
   | { type: 'trends'; snapshot: TrendsSnapshot }
 

@@ -34,6 +34,7 @@ import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
 import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault'
 import { listProjectDir, projectEntryPath, readProjectFile } from './projectFiles'
+import { findRojo, installRojo, StudioSync } from './studioSync'
 import { defaultStudioMcp, ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
@@ -372,7 +373,7 @@ app.whenReady().then(() => {
     reviews,
     runner,
     emit,
-    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
+    publisher: new TestPlacePublisher({ registry, keys: testPlaceKeys, rojoCommand: () => findRojo(settings.get().rojoCommand) ?? settings.get().rojoCommand, workDir: join(dataDir(), 'builds') }),
     pipeline
   })
   autopilot = new Autopilot({
@@ -617,6 +618,15 @@ app.whenReady().then(() => {
   handle(IPC.testPlaceKeySet, (id: unknown, key: unknown) => testPlaceKeys.set(str(id, 'project'), str(key, 'key')))
   handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))
 
+  // Live sync into Studio (rojo serve), one game at a time.
+  const studioSync = new StudioSync({ rojo: () => findRojo(settings.get().rojoCommand), emit: (state) => emit({ type: 'studioSync', state }) })
+  handle(IPC.studioSyncStatus, () => studioSync.status())
+  handle(IPC.studioSyncStart, (id: unknown) => studioSync.start(registry.get(str(id, 'project'))))
+  handle(IPC.studioSyncStop, () => studioSync.stop())
+  handle(IPC.studioInstallPlugin, () => studioSync.installPlugin())
+  handle(IPC.studioInstallRojo, () => installRojo())
+  app.on('before-quit', () => studioSync.stop())
+
   // Files tab (read-only): only what the main process listed itself; links and .git never.
   handle(IPC.filesList, (id: unknown, dir: unknown) => listProjectDir(root(id), typeof dir === 'string' ? dir : ''))
   handle(IPC.filesRead, (id: unknown, path: unknown) => readProjectFile(root(id), str(path, 'file')))
@@ -682,7 +692,7 @@ app.whenReady().then(() => {
     return !!program && existsSync(program)
   }
   const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; git: boolean; studio: boolean } => ({
-    rojo: resolveCommand(settings.get().rojoCommand) !== null,
+    rojo: findRojo(settings.get().rojoCommand) !== null,
     selene: resolveCommand('selene') !== null,
     stylua: resolveCommand('stylua') !== null,
     git: resolveCommand('git') !== null,

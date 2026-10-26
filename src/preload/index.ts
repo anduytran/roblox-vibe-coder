@@ -96,6 +96,13 @@ const api: HangarApi = {
     pull: (id) => invoke(IPC.githubPull, id),
     clone: (url, parentDir) => invoke(IPC.githubClone, url, parentDir)
   },
+  studio: {
+    syncStatus: () => invoke(IPC.studioSyncStatus),
+    syncStart: (id) => invoke(IPC.studioSyncStart, id),
+    syncStop: () => invoke(IPC.studioSyncStop),
+    installPlugin: () => invoke(IPC.studioInstallPlugin),
+    installRojo: () => invoke(IPC.studioInstallRojo)
+  },
   files: {
     list: (id, dir) => invoke(IPC.filesList, id, dir),
     read: (id, path) => invoke(IPC.filesRead, id, path),

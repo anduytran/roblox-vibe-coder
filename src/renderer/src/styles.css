@@ -4263,3 +4263,30 @@ kbd {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 }
+
+/* Studio sync, under the game's name */
+.studio-sync {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.studio-sync-on {
+  color: var(--live);
+}
+.studio-sync .muted,
+.studio-sync-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.studio-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--live);
+  flex-shrink: 0;
+  animation: pulse 1.6s ease-in-out infinite;
+}

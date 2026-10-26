@@ -8,6 +8,7 @@ import type {
   CostDay,
   FileListing,
   FileView,
+  StudioSyncState,
   CostSummary,
   GitHubLink,
   GitStatus,
@@ -70,6 +71,11 @@ export const IPC = {
   costsSummary: 'costs:summary',
   costsHistory: 'costs:history',
   filesList: 'files:list',
+  studioSyncStatus: 'studio:syncStatus',
+  studioSyncStart: 'studio:syncStart',
+  studioSyncStop: 'studio:syncStop',
+  studioInstallPlugin: 'studio:installPlugin',
+  studioInstallRojo: 'studio:installRojo',
   filesRead: 'files:read',
   filesReveal: 'files:reveal',
   planUsageRefresh: 'planUsage:refresh',
@@ -250,6 +256,16 @@ export interface HangarApi {
     pull(projectId: string): Promise<{ repo: string; branch: string; commits: number }>
     /** Download a GitHub repository into a new folder under `parentDir` (default: Hangar Games) and open it. */
     clone(url: string, parentDir?: string): Promise<Project>
+  }
+  /** Live sync into Roblox Studio with Rojo (one game at a time). */
+  studio: {
+    syncStatus(): Promise<StudioSyncState>
+    syncStart(projectId: string): Promise<StudioSyncState>
+    syncStop(): Promise<StudioSyncState>
+    /** Put the Rojo plugin into Studio (restart Studio after). */
+    installPlugin(): Promise<void>
+    /** Install Rojo for every folder with Rokit. */
+    installRojo(): Promise<void>
   }
   /** The project's files, read-only: folders one at a time, files up to 512 KB. Links and .git are never shown. */
   files: {
