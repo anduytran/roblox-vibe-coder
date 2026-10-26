@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { attempt, setCosts, setKey, setSettings, toast, useStore } from '../store'
+import { attempt, setCosts, setKey, setSettings, toast, useStore, type SettingsTab } from '../store'
 import { PhoneRemoteSection } from './PhoneRemoteSection'
 import { Button, Field, Icon, Modal, resetsText, Toggle } from './ui'
 import { getMotion, getTheme, setMotion, setTheme, type MotionChoice, type ThemeChoice } from '../theme'
 
-type SettingsTab = 'general' | 'account' | 'agents' | 'limits' | 'roblox' | 'phone' | 'privacy'
 
 const SETTINGS_TABS: [SettingsTab, string, string][] = [
   ['general', 'General', 'gear'],
@@ -18,7 +17,7 @@ const SETTINGS_TABS: [SettingsTab, string, string][] = [
 
 const MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 
-export function SettingsModal({ onClose }: { onClose: () => void }) {
+export function SettingsModal({ onClose, initialTab = 'general' }: { onClose: () => void; initialTab?: SettingsTab }) {
   const settings = useStore((s) => s.settings)
   const key = useStore((s) => s.key)
   const [keyDraft, setKeyDraft] = useState('')
@@ -48,7 +47,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   }
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme())
   const [motion, setMotionState] = useState<MotionChoice>(getMotion())
-  const [tab, setTab] = useState<SettingsTab>('general')
+  const [tab, setTab] = useState<SettingsTab>(initialTab)
 
   const saveKey = (): void => {
     void attempt(async () => {

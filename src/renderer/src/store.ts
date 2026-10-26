@@ -3,6 +3,9 @@ import type { KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
 export type ProjectTab = 'overview' | 'design' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
+/** The project tabs in order (Cmd/Ctrl+1…7). */
+export const PROJECT_TABS: ProjectTab[] = ['overview', 'design', 'agents', 'models', 'reviews', 'changes', 'settings']
+export type SettingsTab = 'general' | 'account' | 'agents' | 'limits' | 'roblox' | 'phone' | 'privacy'
 export type Page = 'home' | 'ideas'
 
 export interface StoreState {
@@ -17,6 +20,8 @@ export interface StoreState {
   focus: { agentId?: string; reviewId?: string; seq: number } | null
   /** The Inbox side panel (everything waiting for you, across games). */
   inboxOpen: boolean
+  /** The App Settings dialog, open at this category (null: closed). */
+  settingsTab: SettingsTab | null
   /** The trending charts are being fetched. */
   trendsLoading: boolean
   /** projectId -> agentId -> state */
@@ -61,6 +66,7 @@ let state: StoreState = {
   projectTab: 'overview',
   focus: null,
   inboxOpen: false,
+  settingsTab: null,
   trendsLoading: false,
   agents: {},
   roles: {},
@@ -245,6 +251,16 @@ export function openPage(page: Page): void {
 
 export function setInboxOpen(open: boolean): void {
   set({ inboxOpen: open })
+}
+
+const SETTINGS_TABS: SettingsTab[] = ['general', 'account', 'agents', 'limits', 'roblox', 'phone', 'privacy']
+
+export function openSettings(tab: SettingsTab = 'general'): void {
+  set({ settingsTab: SETTINGS_TABS.includes(tab) ? tab : 'general', inboxOpen: false })
+}
+
+export function closeSettings(): void {
+  set({ settingsTab: null })
 }
 
 export function openWizard(prefill: StoreState['wizard'] = {}): void {

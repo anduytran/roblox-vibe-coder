@@ -248,6 +248,15 @@ export interface CostSummary {
   weekUsd: number
 }
 
+/** One day of spend, for the bars on Home and the Project tab. */
+export interface CostDay {
+  /** Local midnight the day starts at. */
+  start: number
+  usd: number
+  /** Split by agent id (one project's history) or by project id (all games). */
+  by: Record<string, number>
+}
+
 export interface PlanUsageWindow {
   /** Percent of the window used, 0–100. */
   usedPct: number

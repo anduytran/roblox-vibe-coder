@@ -89,6 +89,7 @@ const api: HangarApi = {
   },
   costs: {
     summary: () => invoke(IPC.costsSummary),
+    history: (days, projectId) => invoke(IPC.costsHistory, days, projectId),
     refreshPlan: () => invoke(IPC.planUsageRefresh)
   },
   reviews: {

@@ -75,7 +75,8 @@ export function useEscape(onClose: () => void, active = true): void {
     const id = ++modalSeq
     openModals.push(id)
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && openModals[openModals.length - 1] === id) {
+      // Esc that cancels an IME conversion belongs to the IME.
+      if (e.key === 'Escape' && !e.isComposing && openModals[openModals.length - 1] === id) {
         e.stopPropagation()
         latest.current()
       }

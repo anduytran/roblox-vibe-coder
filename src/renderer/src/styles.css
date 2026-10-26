@@ -3595,8 +3595,8 @@ button.file-item {
 }
 
 /* Agents feed: tool calls grouped with their results */
-.tool-row,
-.tool-run {
+.feed-tool,
+.feed-run {
   max-width: 860px;
 }
 .tool-line {
@@ -3628,7 +3628,7 @@ button.file-item {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tool-row-err .tool-line {
+.feed-tool-err .tool-line {
   border-color: color-mix(in srgb, var(--err) 35%, var(--line));
 }
 .tool-output {
@@ -3837,4 +3837,236 @@ button.file-item {
   border-bottom: 1px solid var(--line);
   font-size: var(--fs-sm);
   color: var(--amber-text);
+}
+
+/* Spend over the last 14 days: plain bars in one colour */
+.spend-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.spend-chart-loading {
+  height: 64px;
+}
+.spend-bars {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  align-items: end;
+  gap: 4px;
+  height: 64px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--line);
+}
+.spend-bar {
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.spend-bar > span {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--info) 55%, transparent);
+  transition: height 0.3s var(--ease-out);
+}
+.spend-today > span {
+  background: var(--info);
+}
+.spend-axis {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+}
+.spend-axis > :last-child {
+  text-align: right;
+}
+.spend-split {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* First run: what Hangar needs before the first game */
+.firstrun {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 760px;
+}
+.firstrun-step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.firstrun-mark {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+}
+.firstrun-done .firstrun-mark {
+  background: var(--live-soft);
+  border-color: color-mix(in srgb, var(--live) 50%, var(--line));
+  color: var(--live);
+}
+.firstrun-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.firstrun-tools {
+  display: block;
+}
+.firstrun-action {
+  flex-shrink: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Keyboard shortcuts and the switcher */
+.side-btn-row {
+  display: flex;
+  gap: 4px;
+}
+.side-btn-row .side-btn:first-child {
+  flex: 1;
+}
+.side-btn-icon {
+  justify-content: center;
+  width: 34px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.shortcut-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+.shortcut-row dd {
+  margin: 0;
+  color: var(--text-2);
+}
+kbd {
+  font: 12px var(--mono);
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  white-space: nowrap;
+}
+.switcher-backdrop {
+  place-items: start center;
+  padding-top: 14vh;
+}
+.switcher {
+  width: min(520px, calc(100vw - 32px));
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  animation: pop 0.16s var(--ease-out);
+}
+.switcher-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px 16px;
+  font-size: var(--fs-md);
+  background: transparent;
+  box-shadow: none;
+}
+.switcher-input:focus,
+.switcher-input:focus-visible,
+.switcher-input:hover {
+  outline: none;
+  border-color: var(--line);
+  box-shadow: none;
+}
+.switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.switcher-item-on {
+  background: var(--press);
+}
+.switcher-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.switcher-none {
+  padding: 10px;
+}
+
+/* Project settings: categories on the left, one fixed size like App Settings */
+.settings-page.project-settings {
+  padding: 16px 32px 0;
+  overflow: hidden;
+}
+.project-settings > .settings-layout {
+  max-width: 980px;
+  height: 100%;
+  min-height: 0;
+}
+.project-settings .settings-pane {
+  padding-bottom: 32px;
+}
+/* Room for focus rings at the scrolling pane's left edge. */
+.settings-pane {
+  padding-left: 4px;
+  margin-left: -4px;
+}
+.pane-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: rise 0.24s var(--ease-out);
+}
+.pane-group[hidden] {
+  display: none;
 }

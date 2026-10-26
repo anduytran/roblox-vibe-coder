@@ -31,7 +31,7 @@ import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
 import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault'
-import { ProjectRegistry } from './projects'
+import { defaultStudioMcp, ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
 import { isInsideRoot, linkInPath } from './pathScope'
@@ -545,6 +545,9 @@ app.whenReady().then(() => {
 
   // Costs
   handle(IPC.costsSummary, () => costs.summary())
+  handle(IPC.costsHistory, (days: unknown, projectId: unknown) =>
+    costs.history(typeof days === 'number' && Number.isFinite(days) ? days : 14, projectId === undefined || projectId === null ? undefined : registry.get(str(projectId, 'project')).id)
+  )
   handle(IPC.planUsageRefresh, async () => {
     await refreshPlanUsage()
     return costs.summary()
@@ -606,11 +609,29 @@ app.whenReady().then(() => {
   })
 
   // New game flow
-  const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; git: boolean } => ({
+  // Whether the program Hangar starts for Studio's MCP server is installed (Studio itself needn't be open).
+  const studioFound = (): boolean => {
+    const custom = settings.get().studioMcpCommand.trim()
+    if (custom) {
+      // Studio's Windows command is `cmd.exe /c %LOCALAPPDATA%\Roblox\mcp.bat`: what matters is the script.
+      const args = settings.get().studioMcpArgs ?? []
+      const c = args.findIndex((a) => /^\/c$/i.test(a))
+      if (/^cmd(\.exe)?$/i.test(basename(custom)) && c >= 0 && args[c + 1]) {
+        return existsSync(args[c + 1]!.replace(/%([A-Za-z0-9_]{1,64})%/g, (m, v: string) => process.env[v] ?? m))
+      }
+      return resolveCommand(custom) !== null || resolveCommand(custom.replace(/\.(exe|cmd|bat|com)$/i, '')) !== null
+    }
+    const d = defaultStudioMcp(process.platform, process.env)
+    if (!d) return false
+    const program = process.platform === 'win32' ? (d.args?.[1] ?? '') : d.command
+    return !!program && existsSync(program)
+  }
+  const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; git: boolean; studio: boolean } => ({
     rojo: resolveCommand(settings.get().rojoCommand) !== null,
     selene: resolveCommand('selene') !== null,
     stylua: resolveCommand('stylua') !== null,
-    git: resolveCommand('git') !== null
+    git: resolveCommand('git') !== null,
+    studio: studioFound()
   })
   const defaultParent = (): string => join(app.getPath('documents'), 'Hangar Games')
   handle(IPC.systemTools, () => ({ ...tools(), defaultParent: defaultParent() }))

@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react'
 import type { AutopilotState, Project } from '@shared/types'
 import { attempt, ensureTrendsFresh, openPage, openProjectAt, openWizard, selectProject, setAutopilot, useStore, type ProjectTab } from '../store'
-import { EmptyState } from './EmptyState'
+import { FirstRun } from './FirstRun'
+import { SpendBars } from './SpendBars'
 import { Avatar, Button, Icon, planLine, timeAgo, usd } from './ui'
 import { firstLine, useWaiting } from './waiting'
 import { revealHidden } from '@shared/text'
@@ -131,28 +132,18 @@ export function Dashboard() {
         </section>
       )}
 
-      <section className="home-section">
-        <h2>Your games</h2>
-        {projects.length === 0 ? (
-          <EmptyState
-            icon="plus"
-            title="No games yet"
-            action={
-              <Button tone="primary" onClick={() => openWizard()}>
-                New game
-              </Button>
-            }
-          >
-            Describe an idea and agents build it in sprints, checking in with you as they go. Or find one on the Ideas page.
-          </EmptyState>
-        ) : (
+      {projects.length === 0 ? (
+        <FirstRun />
+      ) : (
+        <section className="home-section">
+          <h2>Your games</h2>
           <div className="game-grid">
             {projects.map((p) => (
               <GameCard key={p.id} project={p} ap={autopilot[p.id]} spent={costs.projectTotalUsd[p.id] ?? 0} />
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       <section className="home-section home-pair">
         <div className="card week-card">
@@ -182,6 +173,7 @@ export function Dashboard() {
               <span className="muted small">waiting for review</span>
             </div>
           </div>
+          {projects.length > 0 && <SpendBars name={(id) => (id === 'hangar:ideas' ? 'Ideas' : (projects.find((p) => p.id === id)?.name ?? 'A removed game'))} />}
         </div>
         <button className="card ideas-teaser" onClick={() => openPage('ideas')}>
           <span className="row gap-sm">

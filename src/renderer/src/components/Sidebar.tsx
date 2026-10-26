@@ -1,9 +1,10 @@
-import { addProject, attempt, openPage, openWizard, selectProject, setInboxOpen, toast, useStore } from '../store'
+import { addProject, attempt, openPage, openSettings, openWizard, selectProject, setInboxOpen, toast, useStore } from '../store'
+import { modKey } from './Shortcuts'
 import { useWaiting } from './waiting'
 import type { AppSettings, PlanUsage } from '@shared/types'
 import { Avatar, Icon, resetsText, usd } from './ui'
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const projects = useStore((s) => s.projects)
   const selected = useStore((s) => s.selectedProjectId)
   const page = useStore((s) => s.page)
@@ -99,10 +100,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             )}
           </>
         )}
-        <button className="side-btn" onClick={onOpenSettings}>
-          <Icon name="gear" />
-          Settings
-        </button>
+        <div className="side-btn-row">
+          <button className="side-btn" onClick={() => openSettings()} title={`Settings (${modKey()},)`}>
+            <Icon name="gear" />
+            Settings
+          </button>
+          <button className="side-btn side-btn-icon" onClick={onOpenShortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+            ?
+          </button>
+        </div>
         <button
           className="side-btn side-btn-danger"
           disabled={!anyRunning}

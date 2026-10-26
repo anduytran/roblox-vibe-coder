@@ -5,6 +5,7 @@ import type {
   AppSettings,
   ApprovalDecision,
   ApprovalRequest,
+  CostDay,
   CostSummary,
   GitStatus,
   Project,
@@ -56,6 +57,7 @@ export const IPC = {
   gitRevertFile: 'git:revertFile',
   gitInit: 'git:init',
   costsSummary: 'costs:summary',
+  costsHistory: 'costs:history',
   planUsageRefresh: 'planUsage:refresh',
   reviewsList: 'reviews:list',
   reviewsDiff: 'reviews:diff',
@@ -156,7 +158,7 @@ export interface HangarApi {
   }
   system: {
     /** Which build tools are installed (used to pick the checks for new projects). */
-    tools(): Promise<{ rojo: boolean; selene: boolean; stylua: boolean; git: boolean; defaultParent: string }>
+    tools(): Promise<{ rojo: boolean; selene: boolean; stylua: boolean; git: boolean; studio: boolean; defaultParent: string }>
     /** Offer to open an https link in the browser (Hangar asks first, showing the full address). */
     openUrl(url: string): Promise<void>
   }
@@ -222,6 +224,8 @@ export interface HangarApi {
   }
   costs: {
     summary(): Promise<CostSummary>
+    /** Spend per day, oldest first: one project's split by agent, or every game's split by project. */
+    history(days: number, projectId?: string): Promise<CostDay[]>
     /** Claude Max mode: ask the plan for its current 5-hour and weekly usage. */
     refreshPlan(): Promise<CostSummary>
   }

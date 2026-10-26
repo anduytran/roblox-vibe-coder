@@ -319,7 +319,7 @@ function ToolRow({ call, opened, setOpen }: { call: ToolCall } & Opened) {
   const failed = call.result?.kind === 'error'
   const callText = revealHidden(call.use.text)
   return (
-    <div className={`entry tool-row ${failed ? 'tool-row-err' : ''}`}>
+    <div className={`entry feed-tool ${failed ? 'feed-tool-err' : ''}`}>
       <button className="tool-line" aria-expanded={open} title={callText.slice(0, 2000)} onClick={() => setOpen([call.use.id], !open)}>
         <span className="dv-caret" aria-hidden>
           {open ? '▾' : '▸'}
@@ -354,7 +354,7 @@ function ToolRun({ runKey, calls, live, opened, setOpen }: { runKey: string; cal
   const errors = calls.filter((c) => c.result?.kind === 'error').length
   const last = calls[calls.length - 1]!
   return (
-    <div className="entry tool-run">
+    <div className="entry feed-run">
       <button className="tool-line" aria-expanded={open} onClick={() => (open ? setOpen([runKey, ...calls.map((c) => c.use.id)], false) : setOpen([runKey], true))}>
         <span className="dv-caret" aria-hidden>
           {open ? '▾' : '▸'}

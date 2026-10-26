@@ -1,4 +1,4 @@
-import type { AppSettings, CostSummary, PlanUsage, PlanUsageWindow } from '@shared/types'
+import type { AppSettings, CostDay, CostSummary, PlanUsage, PlanUsageWindow } from '@shared/types'
 import { JsonStore } from './jsonStore'
 
 interface CostEntry {
@@ -84,6 +84,31 @@ export class CostTracker {
       projectTodayUsd[e.projectId] = (projectTodayUsd[e.projectId] ?? 0) + e.usd
     }
     return { todayUsd, projectTodayUsd, projectTotalUsd: { ...this.store.get().totals }, plan: this.planUsage(now), weekUsd }
+  }
+
+  /**
+   * Spend per local day for the last `days` days (oldest first, today last), from the entries kept for 60 days.
+   * For one project it is split by agent; for all games, by project.
+   */
+  history(days: number, projectId?: string, now = Date.now()): CostDay[] {
+    const n = Math.max(1, Math.min(60, Math.floor(days)))
+    const today = new Date(now)
+    const starts: number[] = []
+    // Built from calendar fields, so a daylight-saving change (even one at midnight) never shifts the other bars.
+    for (let i = n - 1; i >= 0; i--) starts.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i).getTime())
+    // Maps, not plain objects: an id like "constructor" (role ids come from file names) must not hit Object's own keys.
+    const by = starts.map(() => new Map<string, number>())
+    const usd = starts.map(() => 0)
+    for (const e of this.store.get().entries) {
+      if (projectId && e.projectId !== projectId) continue
+      if (e.ts < starts[0]! || e.ts > now || !Number.isFinite(e.usd)) continue
+      let i = starts.length - 1
+      while (i > 0 && e.ts < starts[i]!) i--
+      const key = projectId ? e.agentId : e.projectId
+      usd[i] = usd[i]! + e.usd
+      by[i]!.set(key, (by[i]!.get(key) ?? 0) + e.usd)
+    }
+    return starts.map((start, i) => ({ start, usd: usd[i]!, by: Object.fromEntries(by[i]!) }))
   }
 
   /**

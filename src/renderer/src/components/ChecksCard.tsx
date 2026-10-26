@@ -13,9 +13,12 @@ const PLAIN = /^[A-Za-z0-9._/@+,-]+( [A-Za-z0-9._/@+,-]+)*$/
 export function ChecksCard({ project, update }: { project: Project; update: (patch: { settings: Partial<ProjectSettings> }, message?: string) => void }) {
   const s = project.settings
   const [rows, setRows] = useState<CheckCommand[]>(s.checks)
+  // Only a change to the saved checks resets the rows (saving another setting must not drop unsaved ones).
+  const savedKey = JSON.stringify(project.settings.checks)
   useEffect(() => {
     setRows(project.settings.checks)
-  }, [project])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey])
   const dirty = JSON.stringify(rows) !== JSON.stringify(s.checks)
   const invalid = rows.some((r) => r.command.trim() && !PLAIN.test(r.command.trim().replace(/\s+/g, ' ')))
   const set = (i: number, patch: Partial<CheckCommand>): void => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
