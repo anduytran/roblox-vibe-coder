@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
+import { Notifier } from './notifier'
 import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
 import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
@@ -29,7 +30,7 @@ import { basename } from 'node:path'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
-import { createVault, vaultStatus } from './vault'
+import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault'
 import { ProjectRegistry } from './projects'
 import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
@@ -46,6 +47,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   studioMcpArgs: [],
   hideKeyFromAgents: true,
   rojoCommand: 'rojo',
+  notifications: true,
   authMode: 'apiKey',
   planLimits: DEFAULT_PLAN_LIMITS
 }
@@ -73,6 +75,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
 
+// Windows shows notifications only for an app with an id (in development, the Electron binary stands in).
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'dev.hangar.app' : process.execPath)
+
 const dataDir = (): string => app.getPath('userData')
 
 function createWindow(): BrowserWindow {
@@ -94,6 +99,10 @@ function createWindow(): BrowserWindow {
     }
   })
   win.once('ready-to-show', () => win.show())
+  // On macOS the app outlives its window; forget a closed one so nothing sends to it.
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   // Never open new windows inside the app; send real web links to the default browser.
   // Links can come from agent or web content (research sources), so say where it goes before opening.
@@ -173,6 +182,7 @@ function sanitizeAppSettings(patch: Partial<AppSettings>, current: AppSettings):
   if (typeof patch.blenderMcpCommand === 'string') next.blenderMcpCommand = patch.blenderMcpCommand.trim().slice(0, 500)
   if (Array.isArray(patch.blenderMcpArgs)) next.blenderMcpArgs = patch.blenderMcpArgs.filter((a): a is string => typeof a === 'string').slice(0, 20)
   if (typeof patch.hideKeyFromAgents === 'boolean') next.hideKeyFromAgents = patch.hideKeyFromAgents
+  if (typeof patch.notifications === 'boolean') next.notifications = patch.notifications
   if (patch.planLimits && typeof patch.planLimits === 'object') {
     const cur = current.planLimits ?? DEFAULT_PLAN_LIMITS
     next.planLimits = {
@@ -225,8 +235,38 @@ app.whenReady().then(() => {
   let remote: RemoteServer | null = null
   let pipeline: ReviewPipeline | null = null
   let autopilot: Autopilot | null = null
+  // Desktop notifications (kept referenced until clicked or closed, so they aren't collected early).
+  const shown = new Set<Notification>()
+  const notifier = new Notifier({
+    enabled: () => settings.get().notifications !== false && Notification.isSupported(),
+    focused: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+    projectName: (id) => registry.list().find((p) => p.id === id)?.name ?? null,
+    show: ({ title, body }) => {
+      const n = new Notification({ title, body })
+      shown.add(n)
+      n.on('click', () => {
+        shown.delete(n)
+        const open: AgentEvent = { type: 'openInbox' }
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          // The window was closed (macOS keeps running): open a new one, then the Inbox once it has loaded.
+          const win = (mainWindow = createWindow())
+          win.webContents.once('did-finish-load', () => {
+            if (!win.isDestroyed()) win.webContents.send(IPC.agentEvent, open)
+          })
+          return
+        }
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+        mainWindow.webContents.send(IPC.agentEvent, open)
+      })
+      n.on('close', () => shown.delete(n))
+      n.show()
+    }
+  })
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
+    notifier.onEvent(event)
     remote?.onEvent(event)
     if (event.type === 'review') autopilot?.onReview(event.review)
   }
@@ -342,6 +382,11 @@ app.whenReady().then(() => {
     merge: (id) => reviewActions.merge(id)
   })
   const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
+  // What's already waiting at startup doesn't notify again.
+  notifier.seed({
+    reviews: reviews.list().filter((r) => r.status === 'pending').map((r) => r.id),
+    autopilot: autopilot.list().map((a) => ({ projectId: a.projectId, status: a.status }))
+  })
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot })
   void remote.start().catch(() => undefined)
 
@@ -520,13 +565,33 @@ app.whenReady().then(() => {
     createVault(root(id), f, listRoles(root(id)).find((r) => r.vault === f)?.vaultKind ?? 'ui')
     return vaultStatus(root(id), str(folder, 'folder'))
   })
+  handle(IPC.vaultNotes, (id: unknown) => {
+    const r = root(id)
+    // Only folders a role in this project names as its vault, design vaults first.
+    return listRoles(r)
+      .filter((role) => role.vault)
+      .map((role) => ({ folder: role.vault!, kind: role.vaultKind === 'design' ? ('design' as const) : ('ui' as const), role: role.name, notes: listVaultNotes(r, role.vault!) }))
+      .filter((v, i, all) => all.findIndex((x) => x.folder === v.folder) === i)
+      .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'design' ? -1 : 1))
+  })
+  handle(IPC.vaultRead, (id: unknown, folder: unknown, path: unknown) => {
+    const r = root(id)
+    const f = str(folder, 'folder')
+    if (!listRoles(r).some((role) => role.vault === f)) throw new Error('That is not one of this project’s vaults.')
+    return readVaultNote(r, f, str(path, 'note'))
+  })
   handle(IPC.vaultOpen, async (id: unknown, folder: unknown) => {
     const f = str(folder, 'folder')
     const st = vaultStatus(root(id), f)
     if (!st.exists) throw new Error('Create the vault first.')
-    const home = join(root(id), f, 'Home.md')
+    const r = root(id)
+    const dir = join(r, f)
+    // Only a real folder inside the project, with no links on the way: never somewhere a link points.
+    if (linkInPath(r, dir) || !isInsideRoot(r, dir) || !statSync(dir).isDirectory()) throw new Error('That vault is not a plain folder in this project.')
+    const home = join(dir, 'Home.md')
     // obsidian:// is the only non-https scheme Hangar ever opens, and only for a vault inside a project.
-    await shell.openExternal(`obsidian://open?path=${encodeURIComponent(home)}`).catch(() => shell.openPath(join(root(id), f)))
+    // Without Obsidian, show the folder rather than open it (opening runs whatever the OS associates with it).
+    await shell.openExternal(`obsidian://open?path=${encodeURIComponent(home)}`).catch(() => shell.showItemInFolder(dir))
   })
 
   // New game flow
@@ -585,10 +650,17 @@ app.whenReady().then(() => {
   // Autopilot
   const pid = (id: unknown): string => registry.get(str(id, 'project')).id
   handle(IPC.autopilotList, () => autopilot!.list())
-  handle(IPC.autopilotStart, (id: unknown, opts?: { feedback?: unknown; config?: Record<string, unknown> }) =>
+  handle(IPC.autopilotStart, (id: unknown, opts?: { feedback?: unknown; config?: Record<string, unknown>; answers?: unknown }) =>
     autopilot!.start(pid(id), {
       feedback: typeof opts?.feedback === 'string' ? opts.feedback.slice(0, 8000) : undefined,
-      config: opts?.config && typeof opts.config === 'object' ? (opts.config as never) : undefined
+      config: opts?.config && typeof opts.config === 'object' ? (opts.config as never) : undefined,
+      answers: Array.isArray(opts?.answers)
+        ? opts.answers
+            .filter((a): a is { question: string; answer: string } => !!a && typeof a === 'object' && typeof (a as { question?: unknown }).question === 'string' && typeof (a as { answer?: unknown }).answer === 'string')
+            .map((a) => ({ question: a.question.slice(0, 500), answer: a.answer.slice(0, 2000) }))
+            .filter((a) => a.answer.trim())
+            .slice(0, 20)
+        : undefined
     })
   )
   handle(IPC.autopilotPause, (id: unknown) => autopilot!.pause(pid(id)))
@@ -618,7 +690,8 @@ app.whenReady().then(() => {
   mainWindow = createWindow()
 
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
+    else {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
     }

@@ -139,12 +139,17 @@ export class Autopilot {
   }
 
   /** Start sprint 1 (or the next sprint) with optional extra direction for the Lead. */
-  start(projectId: string, opts: { feedback?: string; config?: Partial<AutopilotConfig> } = {}): AutopilotState {
+  start(projectId: string, opts: { feedback?: string; config?: Partial<AutopilotConfig>; answers?: { question: string; answer: string }[] } = {}): AutopilotState {
     const project = this.deps.registry.get(projectId)
     if (!project.settings.autonomous) throw new Error('Turn on Autonomous mode for this project first (in its Project tab).')
     let st = this.get(projectId)
     if (st.status === 'running' || st.status === 'waiting') throw new Error('Autopilot is already running.')
     if (opts.config) st = { ...st, config: clampConfig(opts.config, st.config) }
+    // Answers to the check-in being closed are kept on that report, so earlier check-ins show what was decided.
+    if (opts.answers?.length && st.status === 'checkin' && st.reports.length) {
+      const last = st.reports[st.reports.length - 1]!
+      st = { ...st, reports: [...st.reports.slice(0, -1), { ...last, answers: opts.answers.slice(0, 20) }] }
+    }
     const feedback = opts.feedback?.trim() ? [...st.feedback, opts.feedback.trim().slice(0, 8000)] : st.feedback
     st = this.put({
       ...st,

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
-import { attempt, confirmDialog, replaceProject, setAutopilot, toast, useStore } from '../store'
+import { attempt, confirmDialog, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
+import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
 import { AUTOPILOT_LABEL } from './Dashboard'
 import { Button, Toggle, timeAgo, usd } from './ui'
 import { SafeText } from './SafeText'
@@ -107,37 +108,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
         )}
       </section>
 
-      {status === 'checkin' && report && (
-        <section className="card checkin">
-          <h3>Sprint {report.sprint} check-in</h3>
-          <p className="muted small">
-            {timeAgo(report.at)} · {usd(report.spentUsd)} spent · {report.tasks.filter((t) => t.outcome === 'merged').length} of {report.tasks.length} tasks merged
-          </p>
-          <SafeText className="summary report-text" text={report.text} />
-          <TaskList tasks={report.tasks} />
-          <div className="field">
-            <span className="field-label">Your feedback and answers</span>
-            <textarea
-              rows={4}
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              placeholder="Answer the Lead's questions, say what to change, what to do next, or what you liked."
-            />
-          </div>
-          <div className="row gap-xs">
-            <Button tone="primary" disabled={busy} onClick={() => run(async () => {
-              const st = await window.hangar.autopilot.start(project.id, { feedback })
-              setFeedback('')
-              return st
-            }, `Sprint ${report.sprint + 1} started.`)}>
-              Start sprint {report.sprint + 1}
-            </Button>
-            <Button tone="ghost" disabled={busy} onClick={() => run(() => window.hangar.autopilot.stop(project.id), 'Autopilot off. Start it again any time.')}>
-              Stop here
-            </Button>
-          </div>
-        </section>
-      )}
+      {status === 'checkin' && report && <CheckinCard key={report.sprint + ':' + report.at} project={project} report={report} busy={busy} run={run} />}
 
       {status === 'off' && <StartCard project={project} ap={ap} hasLead={hasLead} busy={busy} run={run} />}
 
@@ -155,6 +126,19 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
                   Sprint {r.sprint} · {timeAgo(r.at)} · {r.tasks.filter((t) => t.outcome === 'merged').length} merged · {usd(r.spentUsd)}
                 </summary>
                 <SafeText className="summary report-text" text={r.text} />
+                {r.answers && r.answers.length > 0 && (
+                  <div className="decisions">
+                    <span className="side-label">Your answers</span>
+                    <dl>
+                      {r.answers.map((a, i) => (
+                        <div key={i}>
+                          <dt>{a.question}</dt>
+                          <dd>{a.answer}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
               </details>
             ))}
         </section>
@@ -257,6 +241,185 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         </label>
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
+    </section>
+  )
+}
+
+/**
+ * A sprint check-in, read section by section: what was built, how to try it, the plan for next sprint
+ * (reorder or drop items), and one answer box per question. Falls back to plain text and one feedback box
+ * when the report doesn't have the usual sections.
+ */
+const FEEDBACK_MAX = 8000
+
+interface PlanItem {
+  id: number
+  text: string
+}
+
+function CheckinCard({ project, report, busy, run }: { project: Project; report: SprintReport; busy: boolean; run: (fn: () => Promise<AutopilotState>, ok?: string) => void }) {
+  const c = useMemo(() => parseCheckin(report.text), [report.text])
+  // Each plan item keeps an id, so moving or removing one doesn't reset the others or lose keyboard focus.
+  const nextId = useRef(0)
+  const fresh = (texts: string[]): PlanItem[] => texts.map((text) => ({ id: nextId.current++, text }))
+  const [plan, setPlan] = useState<PlanItem[]>(() => fresh(c.next))
+  const [newItem, setNewItem] = useState('')
+  const [answers, setAnswers] = useState<string[]>(() => c.questions.map(() => ''))
+  const [notes, setNotes] = useState('')
+  const listRef = useRef<HTMLOListElement>(null)
+  const addRef = useRef<HTMLInputElement>(null)
+  const refocus = useRef<{ id: number; act: 'up' | 'down' | 'remove' } | 'add' | null>(null)
+  const texts = plan.map((p) => p.text)
+  const planChanged = JSON.stringify(texts) !== JSON.stringify(c.next)
+
+  useLayoutEffect(() => {
+    const want = refocus.current
+    refocus.current = null
+    if (!want) return
+    if (want === 'add') return addRef.current?.focus()
+    const q = (act: string): HTMLButtonElement | null => listRef.current?.querySelector<HTMLButtonElement>(`[data-plan="${want.id}"][data-act="${act}"]`) ?? null
+    // At the top or bottom the arrow just used is disabled: land on the other one.
+    const el = [q(want.act), q(want.act === 'up' ? 'down' : 'up'), q('remove')].find((b) => b && !b.disabled)
+    el?.focus()
+  }, [plan])
+
+  const move = (i: number, d: -1 | 1): void => {
+    const j = i + d
+    if (j < 0 || j >= plan.length) return
+    refocus.current = { id: plan[i]!.id, act: d < 0 ? 'up' : 'down' }
+    const n = [...plan]
+    ;[n[i], n[j]] = [n[j]!, n[i]!]
+    setPlan(n)
+  }
+  const remove = (i: number): void => {
+    const after = plan[i + 1] ?? plan[i - 1]
+    refocus.current = after ? { id: after.id, act: 'remove' } : 'add'
+    setPlan(plan.filter((_, j) => j !== i))
+  }
+  const add = (): void => {
+    if (!newItem.trim()) return
+    setPlan((p) => [...p, ...fresh([newItem.trim().slice(0, 300)])])
+    setNewItem('')
+  }
+  const feedback = c.structured ? composeCheckinFeedback({ questions: c.questions, answers, plan: texts, planChanged, notes }) : notes
+  // Autopilot keeps the first 8,000 characters of a reply: say so rather than cut the end off quietly.
+  const tooLong = feedback.trim().length > FEEDBACK_MAX
+  const start = (): void => {
+    const pairs = c.questions.map((q, i) => ({ question: q, answer: (answers[i] ?? '').trim() })).filter((x) => x.answer)
+    run(() => window.hangar.autopilot.start(project.id, { feedback, answers: pairs }), `Sprint ${report.sprint + 1} started.`)
+  }
+  const merged = report.tasks.filter((t) => t.outcome === 'merged').length
+
+  return (
+    <section className="card checkin">
+      <h3>Sprint {report.sprint} check-in</h3>
+      <p className="muted small">
+        {timeAgo(report.at)} · {usd(report.spentUsd)} spent · {merged} of {report.tasks.length} tasks merged
+      </p>
+      {!c.structured ? (
+        <>
+          <SafeText className="summary report-text" text={report.text} />
+          <TaskList tasks={report.tasks} />
+        </>
+      ) : (
+        <>
+          {c.intro && <SafeText className="summary" text={c.intro} />}
+          <div className="checkin-block">
+            <span className="side-label">Built</span>
+            {c.built ? <SafeText text={c.built} /> : <p className="small muted">The Lead didn't list anything.</p>}
+            <TaskList tasks={report.tasks} />
+          </div>
+          {c.tryIt && (
+            <div className="checkin-block">
+              <span className="side-label">Try it</span>
+              <SafeText text={c.tryIt} />
+              <div className="row gap-xs wrap">
+                <Button size="sm" onClick={() => setProjectTab('reviews')}>
+                  Open Reviews
+                </Button>
+              </div>
+            </div>
+          )}
+          <div className="checkin-block">
+            <span className="side-label">Next sprint {planChanged && <span className="tag tag-warn">edited</span>}</span>
+            <ol className="plan-list" ref={listRef}>
+              {plan.map((item, i) => (
+                <li key={item.id}>
+                  <span className="plan-text">{item.text}</span>
+                  <span className="row gap-xs plan-tools">
+                    <button className="icon-btn" data-plan={item.id} data-act="up" aria-label={`Move “${item.text}” up`} disabled={i === 0} onClick={() => move(i, -1)}>
+                      ↑
+                    </button>
+                    <button className="icon-btn" data-plan={item.id} data-act="down" aria-label={`Move “${item.text}” down`} disabled={i === plan.length - 1} onClick={() => move(i, 1)}>
+                      ↓
+                    </button>
+                    <button className="icon-btn" data-plan={item.id} data-act="remove" aria-label={`Remove “${item.text}”`} onClick={() => remove(i)}>
+                      ×
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            {plan.length === 0 && <p className="small muted">{c.next.length ? "Nothing planned: the Lead won't do the items you removed." : "The Lead didn't propose a plan."}</p>}
+            <div className="row gap-xs">
+              <input
+                ref={addRef}
+                value={newItem}
+                placeholder="Add something to the plan…"
+                onChange={(e) => setNewItem(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') add()
+                }}
+              />
+              <Button size="sm" disabled={!newItem.trim()} onClick={add}>
+                Add
+              </Button>
+              {planChanged && (
+                <Button size="sm" tone="ghost" onClick={() => setPlan(fresh(c.next))}>
+                  Undo changes
+                </Button>
+              )}
+            </div>
+          </div>
+          {c.questions.length > 0 && (
+            <div className="checkin-block">
+              <span className="side-label">Questions for you</span>
+              {c.questions.map((q, i) => (
+                <label key={i} className="field">
+                  <span className="field-label">{q}</span>
+                  <textarea rows={2} maxLength={2000} value={answers[i] ?? ''} onChange={(e) => setAnswers((a) => a.map((x, j) => (j === i ? e.target.value : x)))} />
+                </label>
+              ))}
+            </div>
+          )}
+          <details className="checkin-full">
+            <summary className="small muted">Full report</summary>
+            <SafeText className="summary report-text" text={report.text} />
+          </details>
+        </>
+      )}
+      <label className="field">
+        <span className="field-label">{c.structured ? 'Anything else for the Lead (optional)' : 'Your feedback and answers'}</span>
+        <textarea
+          rows={c.structured ? 2 : 4}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder={c.structured ? 'What you liked, what to change…' : "Answer the Lead's questions, say what to change, what to do next, or what you liked."}
+        />
+      </label>
+      <div className="row gap-xs">
+        <Button tone="primary" disabled={busy || tooLong} onClick={start}>
+          Start sprint {report.sprint + 1}
+        </Button>
+        {tooLong && (
+          <span className="small err">
+            Your reply is {feedback.trim().length.toLocaleString()} characters; the Lead takes up to {FEEDBACK_MAX.toLocaleString()}. Shorten it to start.
+          </span>
+        )}
+        <Button tone="ghost" disabled={busy} onClick={() => run(() => window.hangar.autopilot.stop(project.id), 'Autopilot off. Start it again any time.')}>
+          Stop here
+        </Button>
+      </div>
     </section>
   )
 }

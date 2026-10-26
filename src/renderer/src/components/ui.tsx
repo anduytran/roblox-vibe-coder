@@ -137,7 +137,8 @@ const ICONS: Record<string, string> = {
   phone: 'M5 2h6v12H5zM7.3 12h1.4',
   shield: 'M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4l5-2Zm-2 6 1.5 1.5L10.5 6.5',
   bulb: 'M6 12.5h4M6.5 14h3M8 2a4 4 0 0 0-2.3 7.3c.4.3.8.9.8 1.4v.3h3v-.3c0-.5.4-1.1.8-1.4A4 4 0 0 0 8 2Z',
-  bell: 'M4 11.5V7.5a4 4 0 0 1 8 0v4l1 1H3l1-1ZM6.5 14h3'
+  bell: 'M4 11.5V7.5a4 4 0 0 1 8 0v4l1 1H3l1-1ZM6.5 14h3',
+  book: 'M3 3.5h4a1 1 0 0 1 1 1v9a1 1 0 0 0-1-1H3zM13 3.5H9a1 1 0 0 0-1 1v9a1 1 0 0 1 1-1h4z'
 }
 
 /** Small line icons drawn at 16px on a 16-unit grid; they inherit the text colour. */

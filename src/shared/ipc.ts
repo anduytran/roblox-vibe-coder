@@ -71,6 +71,8 @@ export const IPC = {
   vaultStatus: 'vault:status',
   vaultCreate: 'vault:create',
   vaultOpen: 'vault:open',
+  vaultNotes: 'vault:notes',
+  vaultRead: 'vault:read',
   remoteStatus: 'remote:status',
   remoteSet: 'remote:set',
   remotePair: 'remote:pair',
@@ -159,7 +161,7 @@ export interface HangarApi {
   }
   autopilot: {
     list(): Promise<AutopilotState[]>
-    start(projectId: string, opts?: { feedback?: string; config?: Partial<AutopilotConfig> }): Promise<AutopilotState>
+    start(projectId: string, opts?: { feedback?: string; config?: Partial<AutopilotConfig>; answers?: { question: string; answer: string }[] }): Promise<AutopilotState>
     pause(projectId: string): Promise<AutopilotState>
     resume(projectId: string): Promise<AutopilotState>
     stop(projectId: string): Promise<AutopilotState>
@@ -240,6 +242,9 @@ export interface HangarApi {
     create(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>
     /** Open the vault in Obsidian (or the folder, if Obsidian isn't installed). */
     open(projectId: string, folder: string): Promise<void>
+    /** Every role vault in the project with its notes (design vaults first), for the Design tab. */
+    notes(projectId: string): Promise<{ folder: string; kind: 'design' | 'ui'; role: string; notes: { path: string; title: string }[] }[]>
+    read(projectId: string, folder: string, path: string): Promise<string>
   }
   testPlaceKey: {
     status(projectId: string): Promise<{ hasKey: boolean }>

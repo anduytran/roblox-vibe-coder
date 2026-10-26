@@ -104,7 +104,9 @@ const api: HangarApi = {
   vault: {
     status: (id, folder) => invoke(IPC.vaultStatus, id, folder),
     create: (id, folder) => invoke(IPC.vaultCreate, id, folder),
-    open: (id, folder) => invoke(IPC.vaultOpen, id, folder)
+    open: (id, folder) => invoke(IPC.vaultOpen, id, folder),
+    notes: (id) => invoke(IPC.vaultNotes, id),
+    read: (id, folder, path) => invoke(IPC.vaultRead, id, folder, path)
   },
   testPlaceKey: {
     status: (id) => invoke(IPC.testPlaceKeyStatus, id),

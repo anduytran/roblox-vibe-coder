@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AgentState, AppSettings, ApprovalRequest, AutopilotState, CostSummary, IdeaCategory, Project, Review, Role, TrendsSnapshot } from '@shared/types'
 
-export type ProjectTab = 'overview' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
+export type ProjectTab = 'overview' | 'design' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
 export type Page = 'home' | 'ideas'
 
 export interface StoreState {
@@ -167,6 +167,11 @@ function applyEvent(e: AgentEvent): void {
     case 'autopilot':
       set((s) => ({ autopilot: { ...s.autopilot, [e.state.projectId]: e.state } }))
       break
+    case 'openInbox':
+      // Never over a dialog that's waiting for an answer.
+      if (document.querySelector('.modal-backdrop')) break
+      set({ inboxOpen: true })
+      break
     case 'review':
       set((s) => {
         const list = (s.reviews[e.review.projectId] ?? []).filter((r) => r.id !== e.review.id)
@@ -252,8 +257,9 @@ export function openIdeaChat(draft = '', category: IdeaCategory = 'trend'): void
 }
 
 /** The starting draft has been sent: forget it, so coming back to Ideas doesn't put it in the box again. */
-export function clearIdeaChatDraft(): void {
-  set((s) => (s.ideaChat?.draft ? { ideaChat: { ...s.ideaChat, draft: '' } } : {}))
+/** Once a prefilled message is sent, keep the chip the user has on now (the panel re-reads the request). */
+export function clearIdeaChatDraft(category: IdeaCategory): void {
+  set((s) => (s.ideaChat?.draft ? { ideaChat: { draft: '', category } } : {}))
 }
 
 export function openIdeaRefine(id: string): void {

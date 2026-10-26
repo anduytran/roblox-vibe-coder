@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VaultKind } from '@shared/types'
 import { relativeInside } from './pathScope'
@@ -331,4 +331,111 @@ This project's UI knowledge base. The user reads and edits it in Obsidian, so ke
 - After changing the UI: create or update the matching notes in ${folder}/Screens and ${folder}/Components (status, elements, states, mobile notes, file paths), add new notes to the _Index tables, and link notes with [[wikilinks]].
 - When you finish an Inbox item, tick it and link the note where it now lives.
 - Plain Markdown and Obsidian links only. Never create or edit anything in a .obsidian folder.`
+}
+
+// ---------- reading a vault in Hangar (the project's Design tab) ----------
+
+export interface VaultNote {
+  /** Path inside the vault, forward slashes ("Mechanics/Gliding.md"). */
+  path: string
+  title: string
+}
+
+const MAX_NOTES = 200
+const MAX_NOTE_BYTES = 200 * 1024
+/** Notes shown first, in this order; everything else follows alphabetically. */
+const NOTE_ORDER = ['Roadmap.md', 'Game Overview.md', 'Brief.md', 'Mechanics/', 'Balance.md', 'Content/', 'Decisions.md', 'Inbox.md', 'Home.md']
+
+const rank = (path: string): number => {
+  const i = NOTE_ORDER.findIndex((o) => (o.endsWith('/') ? path.startsWith(o) : path === o))
+  return i < 0 ? NOTE_ORDER.length : i
+}
+
+/** The vault folder if it's a real folder inside the project (no links on the way), else null. */
+function vaultDir(projectRoot: string, folder: string): string | null {
+  if (!validVaultFolder(folder)) return null
+  let cur = projectRoot
+  for (const seg of folder.split('/')) {
+    cur = join(cur, seg)
+    try {
+      if (lstatSync(cur).isSymbolicLink()) return null
+    } catch {
+      return null
+    }
+  }
+  if (!statSync(cur).isDirectory() || relativeInside(projectRoot, cur) !== folder) return null
+  return cur
+}
+
+interface Found {
+  note: VaultNote
+  /** Which file the listing saw, so a read can check it opened that same file. */
+  dev: number
+  ino: number
+}
+
+/**
+ * Markdown notes in a vault: the top folder and one level of subfolders, links skipped, never `.obsidian/`
+ * or other dot-folders, `_`-folders or `_Template` notes, at most 200, ordered for reading (roadmap and overview first).
+ * A folder's `_Index.md` is titled after the folder.
+ */
+function scanVault(projectRoot: string, folder: string): Found[] {
+  const dir = vaultDir(projectRoot, folder)
+  if (!dir) return []
+  const found: Found[] = []
+  const scan = (rel: string, depth: number): void => {
+    let names: string[]
+    try {
+      names = readdirSync(join(dir, rel))
+    } catch {
+      return
+    }
+    for (const name of names.sort()) {
+      if (found.length >= MAX_NOTES || name.startsWith('.')) continue
+      const path = rel ? `${rel}/${name}` : name
+      let st
+      try {
+        st = lstatSync(join(dir, path))
+      } catch {
+        continue
+      }
+      if (st.isSymbolicLink()) continue
+      if (st.isDirectory()) {
+        if (depth < 1 && !name.startsWith('_')) scan(path, depth + 1)
+      } else if (st.isFile() && name.toLowerCase().endsWith('.md') && !/^_template/i.test(name)) {
+        const title = /^_index\.md$/i.test(name) ? (rel || 'Index') : name.replace(/\.md$/i, '')
+        found.push({ note: { path, title }, dev: st.dev, ino: st.ino })
+      }
+    }
+  }
+  scan('', 0)
+  return found.sort((a, b) => rank(a.note.path) - rank(b.note.path) || a.note.path.localeCompare(b.note.path))
+}
+
+export function listVaultNotes(projectRoot: string, folder: string): VaultNote[] {
+  return scanVault(projectRoot, folder).map((f) => f.note)
+}
+
+/** One note's text, if it's a note the listing found (so a path from the window can't point anywhere else). */
+export function readVaultNote(projectRoot: string, folder: string, path: string): string {
+  const dir = vaultDir(projectRoot, folder)
+  if (!dir) throw new Error('That vault is not a plain folder in this project.')
+  const found = scanVault(projectRoot, folder).find((f) => f.note.path === path)
+  if (!found) throw new Error('That note is not in the vault.')
+  const full = join(dir, found.note.path)
+  // Opened without following a link at the end (where the OS supports it) and without waiting on a pipe,
+  // then checked to be the very file the listing saw: a note or its folder swapped for a link in between
+  // can't be read through. Only the first 200 KB is read.
+  const fd = openSync(full, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0))
+  try {
+    const st = fstatSync(fd)
+    if (!st.isFile()) throw new Error('That note is not a plain file.')
+    if (st.dev !== found.dev || st.ino !== found.ino) throw new Error('That note changed while it was being read. Try again.')
+    const buf = Buffer.alloc(Math.min(st.size, MAX_NOTE_BYTES))
+    const n = readSync(fd, buf, 0, buf.length, 0)
+    const text = buf.subarray(0, n).toString('utf8')
+    return st.size > MAX_NOTE_BYTES ? `${text}\n\n(This note is longer than Hangar shows. Open it in Obsidian to read the rest.)` : text
+  } finally {
+    closeSync(fd)
+  }
 }

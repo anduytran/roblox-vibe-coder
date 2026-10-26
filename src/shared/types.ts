@@ -92,6 +92,8 @@ export interface AppSettings {
   /** Blender connection (an MCP server such as blender-mcp) for the Blender 3D modeler. Empty = not set up. */
   blenderMcpCommand?: string
   blenderMcpArgs?: string[]
+  /** Desktop notifications when something needs you and Hangar isn't the focused window (default on). */
+  notifications?: boolean
   /** Claude Max mode: no new work starts once plan usage reaches these percentages. */
   planLimits: { fiveHourPct: number; weeklyPct: number }
 }
@@ -310,6 +312,8 @@ export interface SprintReport {
   /** Tasks finished in this sprint and what happened to them. */
   tasks: { title: string; outcome: 'merged' | 'waiting' | 'discarded' | 'no-changes' | 'failed' }[]
   spentUsd: number
+  /** The product owner's answers to this check-in's questions (the decisions trail). */
+  answers?: { question: string; answer: string }[]
 }
 
 export interface AutopilotState {
@@ -432,6 +436,8 @@ export type AgentEvent =
   | { type: 'reset'; projectId: string; agentId: string }
   | { type: 'review'; review: Review }
   | { type: 'autopilot'; state: AutopilotState }
+  /** Sent to the window only (from a clicked desktop notification): open the Inbox. */
+  | { type: 'openInbox' }
 
 export interface Result<T> {
   ok: boolean

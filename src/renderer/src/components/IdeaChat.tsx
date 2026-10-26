@@ -75,7 +75,7 @@ export function IdeaChat() {
     if (!message || busy) return
     setBusy(true)
     setDraft('')
-    clearIdeaChatDraft()
+    clearIdeaChatDraft(category)
     setMessages((m) => [...m, pendingMessage(message)])
     const promise = attempt(() => window.hangar.ideaChat.send(message, category))
     inflight = { text: message, promise }

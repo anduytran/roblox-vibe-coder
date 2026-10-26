@@ -67,3 +67,9 @@ export function firstLine(text: string): string {
   const line = lines.filter((l) => !heading(l)).map(clean).find(Boolean) ?? lines.map(clean).find(Boolean) ?? ''
   return line.length > 140 ? `${line.slice(0, 139)}…` : line
 }
+
+/** Obsidian note text made readable in Hangar: front matter dropped, [[Note|alias]] links shown as their names. */
+export function readableNote(text: string): string {
+  const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+  return body.replace(/\[\[([^\]|\n]{1,200})(?:\|([^\]\n]{1,200}))?\]\]/g, (_, name: string, alias?: string) => alias ?? name)
+}

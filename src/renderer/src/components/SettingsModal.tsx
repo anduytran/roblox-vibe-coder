@@ -181,6 +181,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               </div>
               <p className="muted small">Match system turns animations off when your computer's “Reduce motion” setting is on.</p>
             </section>
+            <section className="card">
+              <h3>Notifications</h3>
+              <Toggle
+                checked={settings?.notifications !== false}
+                onChange={(v) => void attempt(async () => setSettings(await window.hangar.settings.set({ notifications: v })))}
+                label="Notify me when something needs me"
+                hint="A desktop notification when an approval, a review or a check-in is waiting and Hangar isn't the window you're using. It names the game only; click it to open the Inbox."
+              />
+            </section>
             </>
           )}
           {tab === 'account' && (
