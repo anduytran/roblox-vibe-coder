@@ -4290,3 +4290,27 @@ kbd {
   flex-shrink: 0;
   animation: pulse 1.6s ease-in-out infinite;
 }
+
+/* Uncommitted changes dialog */
+.uncommitted-list {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.uncommitted-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.uncommitted-list code {
+  overflow-wrap: anywhere;
+}
+.error-bar-action {
+  margin-left: 10px;
+}

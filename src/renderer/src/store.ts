@@ -24,6 +24,8 @@ export interface StoreState {
   settingsTab: SettingsTab | null
   /** The trending charts are being fetched. */
   trendsLoading: boolean
+  /** A branch switch blocked by uncommitted changes: the dialog to commit or discard them, then retry. */
+  uncommitted: { projectId: string; retry?: () => Promise<unknown> } | null
   /** Live sync into Roblox Studio (one game at a time). */
   studioSync: StudioSyncState
   /** projectId -> agentId -> state */
@@ -70,6 +72,7 @@ let state: StoreState = {
   inboxOpen: false,
   settingsTab: null,
   trendsLoading: false,
+  uncommitted: null,
   studioSync: { projectId: null, status: 'off', port: 34872, message: null },
   agents: {},
   roles: {},
@@ -131,6 +134,12 @@ export async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
     return await fn()
   } catch (err) {
     const message = err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err)
+    // Blocked by uncommitted changes in the open game: show them, to commit or discard, then try again.
+    const projectId = getState().selectedProjectId
+    if (/There are uncommitted changes/i.test(message) && projectId && !getState().uncommitted) {
+      openUncommitted(projectId, fn)
+      return undefined
+    }
     toast(message, 'error')
     return undefined
   }
@@ -264,6 +273,14 @@ export function setInboxOpen(open: boolean): void {
 }
 
 const SETTINGS_TABS: SettingsTab[] = ['general', 'account', 'agents', 'limits', 'roblox', 'phone', 'privacy']
+
+export function openUncommitted(projectId: string, retry?: () => Promise<unknown>): void {
+  set({ uncommitted: { projectId, retry } })
+}
+
+export function closeUncommitted(): void {
+  set({ uncommitted: null })
+}
 
 export function openSettings(tab: SettingsTab = 'general'): void {
   set({ settingsTab: SETTINGS_TABS.includes(tab) ? tab : 'general', inboxOpen: false })

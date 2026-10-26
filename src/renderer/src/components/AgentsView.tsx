@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentState, LogEntry, Project, QueuedTask, Role } from '@shared/types'
 import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '@shared/feed'
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
-import { attempt, confirmDialog, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
+import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
@@ -199,7 +199,16 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         </div>
       </header>
 
-      {state?.lastError && state.status === 'error' && <div className="error-bar">{state.lastError}</div>}
+      {state?.lastError && state.status === 'error' && (
+        <div className="error-bar">
+          {state.lastError}
+          {/There are uncommitted changes/i.test(state.lastError) && (
+            <button className="link small error-bar-action" onClick={() => openUncommitted(project.id)}>
+              Commit or discard them…
+            </button>
+          )}
+        </div>
+      )}
 
       <div
         className="feed"

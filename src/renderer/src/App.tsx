@@ -3,6 +3,7 @@ import { AgentsView } from './components/AgentsView'
 import { DesignView } from './components/DesignView'
 import { FilesView } from './components/FilesView'
 import { StudioSyncControl } from './components/StudioSyncControl'
+import { UncommittedDialog } from './components/UncommittedDialog'
 import { ChangesView } from './components/ChangesView'
 import { ProjectSettingsView } from './components/ProjectSettingsView'
 import { ReviewsView } from './components/ReviewsView'
@@ -131,6 +132,7 @@ export function App() {
           <IdeaRefine />
         </ErrorBoundary>
       )}
+      <UncommittedDialog />
       <ConfirmDialog />
       {toast && (
         <div key={toast.id} className={`toast toast-${toast.tone}`} role="status">

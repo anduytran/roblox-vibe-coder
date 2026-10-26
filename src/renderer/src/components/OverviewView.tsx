@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
-import { attempt, confirmDialog, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
+import { attempt, confirmDialog, openUncommitted, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
 import { composeCheckinFeedback, parseCheckin } from '@shared/checkin'
 import { AUTOPILOT_LABEL } from './Dashboard'
 import { Button, Toggle, timeAgo, usd } from './ui'
@@ -74,7 +74,16 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
           </div>
         </div>
 
-        {ap?.reason && <div className={`callout ${status === 'waiting' ? 'callout-amber' : ''}`}>{ap.reason}</div>}
+        {ap?.reason && (
+          <div className={`callout ${status === 'waiting' ? 'callout-amber' : ''}`}>
+            {ap.reason}
+            {/uncommitted changes/i.test(ap.reason) && (
+              <button className="link small error-bar-action" onClick={() => openUncommitted(project.id)}>
+                Commit or discard them…
+              </button>
+            )}
+          </div>
+        )}
         {status === 'waiting' && (
           <Button tone="primary" onClick={onOpenReviews}>
             Open Reviews
