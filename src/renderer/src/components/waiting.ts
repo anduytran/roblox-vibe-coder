@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { agentLabel } from '@shared/lanes'
 import type { ApprovalRequest, AutopilotState, Project, Review, SprintReport } from '@shared/types'
 import { useStore } from '../store'
 
@@ -21,7 +22,7 @@ export function useWaiting(): Waiting {
   return useMemo(() => {
     const byId = new Map(projects.map((p) => [p.id, p]))
     const agentName = (projectId: string, agentId: string): string =>
-      agentId === 'main' ? 'Main' : (roles[projectId]?.find((r) => r.id === agentId)?.name ?? agentId)
+      agentLabel(agentId, (rid) => roles[projectId]?.find((r) => r.id === rid)?.name)
     const a = approvals
       .map((request) => ({ request, project: byId.get(request.projectId) ?? null, agent: agentName(request.projectId, request.agentId) }))
       .sort((x, y) => y.request.ts - x.request.ts)

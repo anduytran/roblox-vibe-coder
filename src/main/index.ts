@@ -517,7 +517,7 @@ app.whenReady().then(() => {
     file: join(dataDir(), 'briefs.json'),
     getProject: (id) => registry.get(id),
     agents: (id) => runner.snapshot(id),
-    agentName: (id, agentId) => (agentId === 'main' ? 'Main' : (listRoles(registry.get(id).path).find((r) => r.id === agentId)?.name ?? agentId)),
+    agentName: (id, agentId) => runner.agentName(registry.get(id), agentId),
     reviews: (id) => reviews.list(id),
     autopilot: (id) => autopilot!.get(id),
     approvals: () => runner.pendingApprovals()

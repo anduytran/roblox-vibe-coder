@@ -156,7 +156,7 @@ export class ReviewActions {
     const project = this.deps.registry.get(review.projectId)
     if (!project.settings.autonomous) throw new Error('Fixing a clash needs autonomous mode (Project → General).')
     // The agent that made the change knows it best; if that role is gone, the Main agent does it.
-    const agentId = this.deps.runner.agentIds(project).includes(review.agentId) ? review.agentId : 'main'
+    const agentId = this.deps.runner.isAgentId(project, review.agentId) ? review.agentId : 'main'
     this.deps.runner.send(review.projectId, agentId, `Resolve the merge clash in “${review.title}”`, { fixClash: id })
     // You asked for it to go in: once fixed and checked again (checks pass, the reviewer doesn't say no), it merges itself.
     this.mergeWhenFixed.set(id, { tries: 0 })

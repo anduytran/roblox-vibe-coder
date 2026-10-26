@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { agentLabel } from '@shared/lanes'
 import { Explanation } from './ApprovalCard'
 import { BriefCard } from './BriefCard'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
@@ -274,7 +275,7 @@ const PIECE_DONE: Record<string, string> = { merged: 'Merged', waiting: 'Waiting
 function SprintPieces({ project, parallel, running }: { project: Project; parallel: NonNullable<AutopilotState['parallel']>; running: boolean }) {
   const agents = useStore((s) => s.agents[project.id])
   const roles = useStore((s) => s.roles[project.id])
-  const name = (id: string): string => roles?.find((r) => r.id === id)?.name ?? id
+  const name = (id: string): string => agentLabel(id, (rid) => roles?.find((r) => r.id === rid)?.name)
   if (parallel.phase === 'planning') return <div className="activity">{running ? 'The Lead is planning pieces to build at the same time…' : 'The Lead was planning this sprint.'}</div>
   return (
     <div className="sprint-pieces">

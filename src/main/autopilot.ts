@@ -1,6 +1,7 @@
 import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintItem, SprintReport } from '@shared/types'
 import { stripHidden } from '@shared/text'
 import { mergeWarnings } from '@shared/reviewRules'
+import { laneId, MAX_LANES } from '@shared/lanes'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
 import type { ProjectRegistry } from './projects'
@@ -84,7 +85,16 @@ export function autoMergeBlocker(review: Review): string | null {
   const checksOk = !!checks && checks.status === 'done' && checks.results.length > 0 && !checks.reason && checks.results.every((r) => r.status === 'passed')
   if (checks && !checksOk) return "Checks didn't all pass."
   const ai = review.aiReview
-  if (ai) return ai.status === 'done' && ai.verdict === 'approve' ? null : ai.verdict === 'concerns' ? 'The reviewer agent has concerns.' : "The reviewer agent didn't approve it."
+  if (ai) {
+    if (ai.status === 'done' && ai.verdict === 'approve') return null
+    // Low and medium concerns don't hold the work up: it merges once the checks pass, and the concerns become a
+    // follow-up for the next sprint. A high one, or "don't merge", waits for you.
+    if (ai.status === 'done' && ai.verdict === 'concerns') {
+      if (ai.findings.some((f) => f.severity === 'high')) return 'The reviewer agent found a serious problem.'
+      return checksOk ? null : 'The reviewer agent has concerns, and no checks passed to back it up.'
+    }
+    return "The reviewer agent didn't approve it."
+  }
   return checksOk ? null : 'No checks or reviewer agent ran, so there is nothing to approve it automatically.'
 }
 
@@ -670,6 +680,7 @@ Reply with only these sections, short and concrete:
     if (review.status !== 'pending') {
       const outcome = review.status === 'merged' ? 'merged' : 'discarded'
       if (outcome === 'merged') this.bumpAway(review.projectId, 'merged')
+      if (outcome === 'merged') this.followUpConcerns(review)
       this.settle(review, outcome)
       return
     }
@@ -729,6 +740,21 @@ Reply with only these sections, short and concrete:
   }
 
   /** A review autopilot waited on is decided (merged, discarded, or left for you): note it and take the next step. */
+  /** A change merged with the reviewer's (low or medium) concerns: they're handed to the Lead for the next sprint. */
+  private followUpConcerns(review: Review): void {
+    const ai = review.aiReview
+    if (ai?.status !== 'done' || ai.verdict !== 'concerns' || !ai.findings.length) return
+    // The reviewer read agent-written code: its words are shown as data, cleaned and cut short.
+    const clean = (s: string, n: number): string => stripHidden(s).replace(/\s+/g, ' ').trim().slice(0, n)
+    const points = ai.findings
+      .slice(0, 6)
+      .map((f) => `${clean(f.title, 120)} (${clean(f.file, 80)}${f.line ? `:${f.line}` : ''}, ${f.severity})`)
+      .join('; ')
+    const note = `Follow-up from the reviewer agent (not the product owner): address its concerns on "${clean(review.title, 80)}", merged as is: ${points}`
+    const st = this.get(review.projectId)
+    this.put({ ...st, feedback: [...st.feedback, note].slice(-20) })
+  }
+
   private settle(review: Review, outcome: SprintReport['tasks'][number]['outcome']): void {
     const after = this.record(review.projectId, review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title, outcome)
     const items = after.parallel?.items.map((i) => (i.reviewId === review.id && i.status === 'review' ? { ...i, status: 'done' as const, outcome } : i))
@@ -777,7 +803,7 @@ Reply with only these sections, short and concrete:
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
 2. Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, or work that isn't merged): say so in your plan instead.
-Agents you can give pieces to:
+Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with a short plan, then one \`\`\`json block like this, and nothing after it:
 \`\`\`json
@@ -825,6 +851,15 @@ Each brief is all its agent gets: say what to build, which files to read and cha
     if (st.status !== 'running' || st.parallel?.phase !== 'building') return
     const qa = this.hasQa(st.projectId)
     let items = st.parallel.items
+    // Several pieces for one role are built at the same time, each by its own lane of that role (up to MAX_LANES;
+    // beyond that, a lane takes the next piece when it's free).
+    const nth = new Map<string, number>()
+    const laneFor = new Map<string, string>()
+    for (const item of items) {
+      const n = (nth.get(item.agentId) ?? 0) + 1
+      nth.set(item.agentId, n)
+      laneFor.set(item.id, item.lane ?? laneId(item.agentId, ((n - 1) % MAX_LANES) + 1))
+    }
     for (const item of items) {
       if (item.status !== 'queued' || item.sent) continue
       const prompt = `${ITEM_PREFIX}${item.id}, sprint ${st.sprint}: ${item.title}
@@ -838,8 +873,9 @@ ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 2. ${qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix what it finds, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
-      this.deps.send(st.projectId, item.agentId, prompt, { origin: 'autopilot' })
-      items = items.map((i) => (i.id === item.id ? { ...i, sent: true } : i))
+      const lane = laneFor.get(item.id) ?? item.agentId
+      this.deps.send(st.projectId, lane, prompt, { origin: 'autopilot' })
+      items = items.map((i) => (i.id === item.id ? { ...i, sent: true, lane } : i))
     }
     this.put({ ...this.get(st.projectId), parallel: { ...st.parallel, items } })
   }

@@ -447,4 +447,36 @@ test('context: each agent gets a context size for its job, which the engine summ
   const agents = o.agents as Record<string, { autoCompactWindow: number }>
   assert.equal(agents.scripter!.autoCompactWindow, 200_000)
   assert.equal(agents['qa-tester']!.autoCompactWindow, 100_000)
+  // QA's playtests have a turn limit; others keep the usual one.
+  const turns = o.agents as Record<string, { maxTurns: number }>
+  assert.equal(turns['qa-tester']!.maxTurns, 60)
+  assert.equal(turns.scripter!.maxTurns, 80)
+  assert.equal(o.maxTurns, 80)
+  assert.equal(parseRole('qa', serializeRole({ id: 'qa', name: 'QA', description: '', prompt: 'p', maxTurns: 40 }))!.maxTurns, 40)
+  t.runner.send(t.project.id, 'qa-tester', 'play it')
+  await until(() => t.calls.length === 2)
+  assert.equal(t.calls[1]!.options.maxTurns, 60, 'also when it runs on its own')
+})
+
+test('lanes: a second Scripter runs with the Scripter\'s settings, in its own lane', async () => {
+  const { agentLabel, laneOf, roleOf } = await import('../src/shared/lanes')
+  assert.equal(roleOf('scripter~2'), 'scripter')
+  assert.equal(laneOf('scripter~2'), 2)
+  assert.equal(laneOf('scripter'), 1)
+  assert.equal(roleOf('scripter~x'), 'scripter~x', 'not a lane')
+  assert.equal(agentLabel('scripter~3', () => 'Scripter'), 'Scripter (3)')
+  const dir = tmp('hangar-lane-')
+  saveRole(dir, { id: 'scripter', name: 'Scripter', description: 'code', prompt: 'Scripter here.', effort: 'low' })
+  const t = runnerFor(dir)
+  assert.throws(() => t.runner.send(t.project.id, 'scripter~4', 'x'), /Unknown agent/, 'at most 3 lanes')
+  assert.throws(() => t.runner.send(t.project.id, 'nobody~2', 'x'), /Unknown agent/)
+  t.runner.send(t.project.id, 'scripter', 'piece one')
+  t.runner.send(t.project.id, 'scripter~2', 'piece two')
+  await until(() => t.calls.length === 2)
+  for (const c of t.calls) {
+    assert.equal(c.options.effort, 'low', 'the role\'s settings')
+    assert.match((c.options.systemPrompt as { append: string }).append, /# Your role: Scripter\nScripter here\./)
+  }
+  assert.ok(t.runner.snapshot(t.project.id).some((a) => a.agentId === 'scripter~2'), 'the lane shows next to its role')
+  assert.equal(t.runner.agentName(t.project, 'scripter~2'), 'Scripter (2)')
 })

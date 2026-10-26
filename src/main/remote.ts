@@ -17,6 +17,7 @@ import { listRoles } from './roles'
 import { DECEPTIVE_CHARS, shellWords } from './permissions'
 import { checkinReply, phoneCheckin, phoneIdeas } from './phoneData'
 import type { Trends } from './trending'
+import { laneOf, roleOf } from '@shared/lanes'
 import { revealHidden } from '@shared/text'
 
 /**
@@ -478,10 +479,12 @@ export class RemoteServer {
   }
 
   private agentName(projectId: string, agentId: string): string {
-    if (agentId === 'main') return 'Main'
+    const lane = laneOf(agentId) > 1 ? ` (${laneOf(agentId)})` : ''
+    const id = roleOf(agentId)
+    if (id === 'main') return `Main${lane}`
     try {
       // Role names come from files in the repo: hidden characters are shown, not obeyed.
-      return revealHidden(listRoles(this.deps.registry.get(projectId).path).find((r) => r.id === agentId)?.name ?? agentId)
+      return revealHidden(listRoles(this.deps.registry.get(projectId).path).find((r) => r.id === id)?.name ?? id) + lane
     } catch {
       return agentId
     }

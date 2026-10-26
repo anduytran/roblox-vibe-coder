@@ -28,7 +28,8 @@ import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
 import { knowledgeUsable, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
-import { contextTokensFor, disallowedFor } from '@shared/agentConfig'
+import { contextTokensFor, disallowedFor, maxTurnsFor } from '@shared/agentConfig'
+import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
 import { convertMessage, type StreamMessage } from './sdkMessages'
@@ -37,6 +38,8 @@ import { firstLine, revealHidden, stripHidden } from '@shared/text'
 /** The always-present general agent for each project. Role agents come from .claude/agents/. */
 export const MAIN_AGENT_ID = 'main'
 
+export { laneId, laneOf, MAX_LANES, roleOf } from '@shared/lanes'
+
 /**
  * Backstop: a conversation this far past its agent's context size (which the engine should have summarized it down
  * to) starts over on the next message, since it's re-read in full on every turn.
@@ -44,7 +47,6 @@ export const MAIN_AGENT_ID = 'main'
 export const CONTEXT_BACKSTOP = 1.5
 
 const MAX_LOG = 400
-const MAX_TURNS = 80
 const MAX_DETAILS = 20_000
 
 /**
@@ -309,9 +311,24 @@ export class AgentRunner {
     return [MAIN_AGENT_ID, ...listRoles(project.path).map((r) => r.id)]
   }
 
+  /** How an agent is shown: "Scripter", or "Scripter (2)" for its second lane. */
+  agentName(project: Project, agentId: string): string {
+    const id = roleOf(agentId)
+    const base = id === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === id)?.name ?? id)
+    return laneOf(agentId) > 1 ? `${base} (${laneOf(agentId)})` : base
+  }
+
+  /** A role (or Main), or one of its lanes. */
+  isAgentId(project: Project, id: string): boolean {
+    return this.agentIds(project).includes(roleOf(id)) && laneOf(id) <= MAX_LANES
+  }
+
   snapshot(projectId: string): AgentState[] {
     const project = this.deps.registry.get(projectId)
-    return this.agentIds(project).map((id) => {
+    const ids = this.agentIds(project)
+    // Lanes that have worked in this session show up next to their role.
+    const lanes = [...this.states.values()].filter((x) => x.projectId === projectId && laneOf(x.agentId) > 1 && ids.includes(roleOf(x.agentId))).map((x) => x.agentId)
+    return [...ids, ...lanes].map((id) => {
       const s = this.state(projectId, id)
       return { ...s, queue: [...s.queue], log: [...s.log] }
     })
@@ -364,7 +381,7 @@ export class AgentRunner {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
-    if (!this.agentIds(project).includes(agentId)) throw new Error('Unknown agent.')
+    if (!this.isAgentId(project, agentId)) throw new Error('Unknown agent.')
     const s = this.state(projectId, agentId)
     const task: QueuedTask = {
       id: randomUUID(),
@@ -584,12 +601,13 @@ export class AgentRunner {
     const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), reserved, reservedHere, planLimitsFor(settings))
     if (blocked) return this.fail(s, blocked)
 
-    const role: Role | undefined = s.agentId === MAIN_AGENT_ID ? undefined : listRoles(project.path).find((r) => r.id === s.agentId)
-    if (s.agentId !== MAIN_AGENT_ID && !role) return this.fail(s, 'This role no longer exists.')
+    const roleId = roleOf(s.agentId)
+    const role: Role | undefined = roleId === MAIN_AGENT_ID ? undefined : listRoles(project.path).find((r) => r.id === roleId)
+    if (roleId !== MAIN_AGENT_ID && !role) return this.fail(s, 'This role no longer exists.')
     // This agent's own settings: its role file, or the project's Main agent settings.
     const own = role ?? project.settings.mainAgent ?? {}
     const runBudget = own.budgetUsd ?? settings.perRunBudgetUsd
-    const contextWindow = contextTokensFor(s.agentId, own.contextTokens)
+    const contextWindow = contextTokensFor(roleId, own.contextTokens)
     // On a Claude Max plan there's no per-task dollar cap: the plan's usage limits decide (checked before each run).
     const onPlan = settings.authMode === 'max'
 
@@ -725,7 +743,7 @@ export class AgentRunner {
       else if (project.settings.mainAgent?.prompt) append += `\n\n# Your instructions\n${project.settings.mainAgent.prompt}`
       if (role?.vault && !research) append += `\n${vaultInstructions(role.vault, role.vaultKind)}`
       if (!research) {
-        const folder = knowledgeFolder(s.agentId, own.knowledge)
+        const folder = knowledgeFolder(roleId, own.knowledge)
         if (knowledgeUsable(work.path, folder)) {
           const canWrite = !own.tools?.length || own.tools.includes('Write') || own.tools.includes('Edit')
           append += `\n${knowledgeInstructions(folder, knowledgeTitles(work.path, folder), canWrite)}`
@@ -771,16 +789,18 @@ export class AgentRunner {
                 ...(r.effort ? { effort: r.effort } : {}),
                 model: r.model ?? project.settings.model ?? settings.defaultModel,
                 // Its own context size: a long helper run is summarized instead of growing without bound.
-                autoCompactWindow: contextTokensFor(r.id, r.contextTokens)
+                autoCompactWindow: contextTokensFor(r.id, r.contextTokens),
+                // Most steps per run, so a playtest (QA) can't drag on for hundreds of turns.
+                maxTurns: maxTurnsFor(r.id, r.maxTurns)
               }]
             })
         ),
         mcpServers: research ? {} : mcpServersFor(project, settings, review.servers, { blender: !!role?.mcp?.includes('blender'), studio: own.studio }),
         ...(onPlan ? {} : { maxBudgetUsd: runBudget }),
         ...(own.effort && !research ? { effort: own.effort } : {}),
-        maxTurns: MAX_TURNS,
+        maxTurns: maxTurnsFor(roleId, own.maxTurns),
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
-        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, role?.name ?? 'Main', own, coordinate, { taskId: task.id, agentId: s.agentId, label: `${role?.name ?? 'Main'}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
+        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, coordinate, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
       }
       if (research) {
         // An empty folder of its own: nothing from your project or computer to read.
@@ -839,7 +859,7 @@ export class AgentRunner {
       started = true
       for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
-        if (!research) this.trackHelpers(s, role?.name ?? 'Main', allRoles, helpers, raw as StreamMessage, c)
+        if (!research) this.trackHelpers(s, this.agentName(project, s.agentId), allRoles, helpers, raw as StreamMessage, c)
         // Resuming didn't take (a new conversation started): its running total starts from nothing.
         if (c.sessionId && resumed && c.sessionId !== resumed && costSoFar) costSoFar = 0
         if (c.sessionId && !research && !fresh) s.sessionId = c.sessionId
@@ -1131,7 +1151,7 @@ export class AgentRunner {
     completed: boolean,
     opts: { stoppedBecause?: string; recovering?: boolean } = {}
   ): Promise<string | null> {
-    const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
+    const roleName = this.agentName(project, s.agentId)
     // Autopilot prompts are long instructions; the agent's own first line says what it actually built.
     // Titles show on Home, in the Inbox and on the phone: hidden characters never make it in.
     const reportLine = firstLine(lastText) || undefined
@@ -1227,7 +1247,7 @@ export class AgentRunner {
       for (const t of c.toolUses ?? []) {
         if ((t.name !== 'Agent' && t.name !== 'Task') || !t.id) continue
         const id = typeof t.input.subagent_type === 'string' ? t.input.subagent_type : ''
-        if (id === s.agentId || !roles.some((r) => r.id === id)) continue
+        if (id === roleOf(s.agentId) || !roles.some((r) => r.id === id)) continue
         const helper = this.state(s.projectId, id)
         const brief = stripHidden(typeof t.input.description === 'string' ? t.input.description : 'a task').replace(/\s+/g, ' ').slice(0, 120)
         helpers.set(t.id, { state: helper, background: t.input.run_in_background === true })
@@ -1300,7 +1320,7 @@ export class AgentRunner {
     clip: ClipSession | null,
     completed: boolean
   ): Promise<string | null> {
-    const roleName = s.agentId === MAIN_AGENT_ID ? 'Main' : (listRoles(project.path).find((r) => r.id === s.agentId)?.name ?? s.agentId)
+    const roleName = this.agentName(project, s.agentId)
     let problem: string | null = completed ? null : (s.lastError ?? 'The run was stopped before it finished.')
     if (!problem) problem = await finishClashFix(branch.dir ?? project.path, branch.name, branch.from.baseSha, roleName).catch((e: Error) => e.message)
     if (problem) {

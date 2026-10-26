@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { agentLabel } from '@shared/lanes'
 import type { AiReview, Project, Review, ReviewChecks } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
 import { diffTotals, splitDiff } from '@shared/diff'
@@ -21,7 +22,7 @@ export function ReviewsView({ project }: { project: Project }) {
   const pending = useMemo(() => reviews.filter((r) => r.status === 'pending'), [reviews])
   const recent = useMemo(() => reviews.filter((r) => r.status !== 'pending').slice(0, 15), [reviews])
   const current = reviews.find((r) => r.id === selected) ?? pending[0] ?? null
-  const agentName = (id: string): string => (id === 'main' ? 'Main' : (roles?.find((r) => r.id === id)?.name ?? id))
+  const agentName = (id: string): string => agentLabel(id, (rid) => roles?.find((r) => r.id === rid)?.name)
   const [mergingAll, setMergingAll] = useState(false)
   const queuedCount = pending.filter((r) => r.mergeQueued).length
   /** Merge every waiting change, oldest first; clashes go to Fix with AI and merge once fixed. */

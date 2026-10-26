@@ -4,6 +4,7 @@ import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
 import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
+import { laneOf, roleOf } from '@shared/lanes'
 import { BriefCard } from './BriefCard'
 import { MainAgentEditor, RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
@@ -29,7 +30,15 @@ export function AgentsView({ project }: { project: Project }) {
   const [editing, setEditing] = useState<Role | null>(null)
   const [editingMain, setEditingMain] = useState(false)
 
-  const all = useMemo(() => [MAIN_AGENT, ...roles], [roles])
+  // A role's lanes (a second or third Scripter working at the same time) show right after it, once they've worked.
+  const laneIds = Object.keys(agents).filter((id) => laneOf(id) > 1).sort().join(',')
+  const all = useMemo(() => {
+    const lanes = laneIds ? laneIds.split(',') : []
+    return [MAIN_AGENT, ...roles].flatMap((r) => [
+      r,
+      ...lanes.filter((id) => roleOf(id) === r.id).map((id): Role => ({ ...r, id, name: `${r.name} (${laneOf(id)})`, description: `A second worker with ${r.name}'s settings, building another piece at the same time.` }))
+    ])
+  }, [roles, laneIds])
   useEffect(() => {
     if (!all.some((r) => r.id === selected)) setSelected('main')
   }, [all, selected])
@@ -101,7 +110,7 @@ export function AgentsView({ project }: { project: Project }) {
         project={project}
         role={role}
         state={state}
-        onEdit={role.id === 'main' ? () => setEditingMain(true) : () => setEditing(role)}
+        onEdit={laneOf(role.id) > 1 ? undefined : role.id === 'main' ? () => setEditingMain(true) : () => setEditing(role)}
       />
       {editingMain && <MainAgentEditor project={project} onClose={() => setEditingMain(false)} />}
       {editing && <RoleEditor project={project} role={editing} onClose={() => setEditing(null)} onSaved={(id) => setSelected(id)} />}

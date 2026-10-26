@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import type { Role } from '@shared/types'
 import { validVaultFolder } from './vault'
-import { cleanBudget, cleanContextTokens, isEffort } from '@shared/agentConfig'
+import { cleanBudget, cleanContextTokens, cleanMaxTurns, isEffort } from '@shared/agentConfig'
 
 /** Roles live in <project>/.claude/agents/*.md, the same format Claude Code uses for subagents. */
 export function agentsDir(projectRoot: string): string {
@@ -58,6 +58,8 @@ export function parseRole(id: string, text: string): Role | null {
   if (meta.studio === 'off') role.studio = false
   const ctx = cleanContextTokens(meta.context)
   if (ctx) role.contextTokens = ctx
+  const turns = cleanMaxTurns(meta['max-turns'])
+  if (turns) role.maxTurns = turns
   if (meta.delegate === 'on') role.delegate = true
   else if (meta.delegate === 'off') role.delegate = false
   if (meta.knowledge && validVaultFolder(meta.knowledge)) role.knowledge = meta.knowledge
@@ -78,6 +80,8 @@ export function serializeRole(role: Role): string {
   if (role.studio === false) lines.push('studio: off')
   const ctx = cleanContextTokens(role.contextTokens)
   if (ctx) lines.push(`context: ${Math.round(ctx / 1000)}k`)
+  const turns = cleanMaxTurns(role.maxTurns)
+  if (turns) lines.push(`max-turns: ${turns}`)
   if (typeof role.delegate === 'boolean') lines.push(`delegate: ${role.delegate ? 'on' : 'off'}`)
   if (role.knowledge && validVaultFolder(role.knowledge)) lines.push(`knowledge: ${role.knowledge}`)
   lines.push('---', '', role.prompt.trim(), '')

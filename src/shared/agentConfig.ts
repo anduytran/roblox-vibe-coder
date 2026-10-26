@@ -66,6 +66,8 @@ export function cleanAgentSettings(v: unknown): AgentSettings {
   if (typeof o.knowledge === 'string' && FOLDER.test(o.knowledge.trim())) out.knowledge = o.knowledge.trim()
   const ctx = cleanContextTokens(o.contextTokens)
   if (ctx) out.contextTokens = ctx
+  const turns = cleanMaxTurns(o.maxTurns)
+  if (turns) out.maxTurns = turns
   return out
 }
 
@@ -99,4 +101,14 @@ export function contextTokensFor(agentId: string, own?: number): number {
 export function cleanContextTokens(v: unknown): number | undefined {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? (/^\s*(\d+(?:\.\d+)?)\s*k\s*$/i.test(v) ? parseFloat(v) * 1000 : parseFloat(v)) : NaN
   return Number.isFinite(n) && n > 0 ? Math.round(Math.min(CONTEXT_MAX, Math.max(CONTEXT_MIN, n))) : undefined
+}
+
+/** Steps (model turns) per run: the QA Tester's playtests ran to hundreds of short turns, so it gets fewer. */
+export const DEFAULT_MAX_TURNS = 80
+export function maxTurnsFor(agentId: string, own?: number): number {
+  return cleanMaxTurns(own) ?? (agentId === 'qa-tester' ? 60 : DEFAULT_MAX_TURNS)
+}
+export function cleanMaxTurns(v: unknown): number | undefined {
+  const n = typeof v === 'string' ? parseInt(v, 10) : typeof v === 'number' ? v : NaN
+  return Number.isFinite(n) && n > 0 ? Math.round(Math.min(300, Math.max(5, n))) : undefined
 }

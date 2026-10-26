@@ -20,6 +20,8 @@ export interface AgentSettings {
   knowledge?: string
   /** Context size in tokens: past it, the conversation is summarized so it stays small. Missing: sized for the role. */
   contextTokens?: number
+  /** Most steps (model turns) in one run. Missing: 60 for the QA Tester (a playtest shouldn't drag on), 80 otherwise. */
+  maxTurns?: number
 }
 
 /** The Main agent's own settings (it has no role file): its extra instructions and the shared settings. */
@@ -522,6 +524,8 @@ export interface SprintItem {
   status: 'queued' | 'review' | 'done'
   /** Handed to its agent (not yet after a restart, when queued tasks are gone). */
   sent?: boolean
+  /** Which of the role's lanes builds it ("scripter~2" for a second Scripter working at the same time). */
+  lane?: string
   reviewId?: string | null
   outcome?: SprintReport['tasks'][number]['outcome'] | null
 }

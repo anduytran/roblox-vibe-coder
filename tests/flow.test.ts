@@ -407,11 +407,11 @@ test('autopilot: sprint loop — green work merges itself, the sprint ends with 
   assert.match(t.sent[1]!.prompt, /task 2 of 2/)
   assert.match(t.sent[1]!.prompt, /Glider controls \(merged\)/)
 
-  // Task 2: reviewer has concerns → autopilot waits for you; your merge lets it carry on.
-  const r2 = t.review({ ...green, title: 'Weather', aiReview: { ...green.aiReview, verdict: 'concerns' } })
+  // Task 2: the reviewer found a serious (high) problem → autopilot waits for you; your merge lets it carry on.
+  const r2 = t.review({ ...green, title: 'Weather', aiReview: { ...green.aiReview, verdict: 'concerns', findings: [{ severity: 'high' as const, file: 'src/w.luau', line: 3, title: 'Trusts the client', detail: '' }] } })
   t.done({ reviewId: r2.id })
   assert.equal(t.ap().get(t.project.id).status, 'waiting')
-  assert.match(t.ap().get(t.project.id).reason ?? '', /Weather.*needs your review.*concerns/)
+  assert.match(t.ap().get(t.project.id).reason ?? '', /Weather.*needs your review.*serious problem/)
   assert.equal(t.merged.length, 1)
   t.ap().onReview(t.reviews.update(r2.id, { status: 'merged' }))
   // Sprint used up → the check-in report is requested.

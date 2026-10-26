@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { agentLabel } from '@shared/lanes'
 import type { Project, ProjectSettings } from '@shared/types'
 import { attempt, confirmDialog, EMPTY_ROLES, removeProject, replaceProject, toast, useStore } from '../store'
 import { revealHidden } from '@shared/text'
@@ -29,7 +30,7 @@ export function ProjectSettingsView({ project }: { project: Project }) {
   const appModel = useStore((s) => s.settings?.defaultModel ?? DEFAULT_MODEL)
   const roles = useStore((s) => s.roles[project.id] ?? EMPTY_ROLES)
   const agentName = (id: string): string =>
-    id === 'main' ? 'Main' : id === 'hangar:explain' ? 'Explain (approvals)' : revealHidden(roles.find((r) => r.id === id)?.name ?? id)
+    id === 'hangar:explain' ? 'Explain (approvals)' : revealHidden(agentLabel(id, (rid) => roles.find((r) => r.id === rid)?.name))
   const [cat, setCat] = useState<Category>('general')
   const pane = useRef<HTMLDivElement>(null)
   useEffect(() => {

@@ -164,3 +164,55 @@ test('parallel sprint: pieces handed out but not started when Hangar closed are 
   assert.equal(t.sent.length, before + 1)
   assert.match(t.sent.at(-1)!.prompt, /^Autopilot item \w+, sprint 2: Bots melee/)
 })
+
+test('parallel sprint: several pieces for one role are built at the same time, each by its own lane', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  assert.match(t.sent.at(-1)!.prompt, /up to 3 pieces at the same time/)
+  t.done(t.sent.at(-1)!.prompt, 'lead', {
+    text: plan([
+      { agent: 'scripter', title: 'Sprint and slide', brief: 'Sprint.', files: ['src/client/Sprint.luau'] },
+      { agent: 'scripter', title: 'Ledge grab', brief: 'Grab.', files: ['src/client/Ledge.luau'] },
+      { agent: 'ui-builder', title: 'HUD', brief: 'HUD.', files: ['src/client/Hud.luau'] }
+    ])
+  })
+  const items = t.sent.slice(-3)
+  assert.deepEqual(items.map((s) => s.agent).sort(), ['scripter', 'scripter~2', 'ui-builder'])
+  assert.deepEqual(
+    t.ap.get(t.project.id).parallel!.items.map((i) => [i.title, i.agentId, i.lane]),
+    [
+      ['Sprint and slide', 'scripter', 'scripter'],
+      ['Ledge grab', 'scripter', 'scripter~2'],
+      ['HUD', 'ui-builder', 'ui-builder']
+    ]
+  )
+  // The second lane's piece finishing is matched to its item like any other.
+  t.done(items.find((s) => s.agent === 'scripter~2')!.prompt, 'scripter~2', { text: 'Blocked.' })
+  assert.equal(t.ap.get(t.project.id).parallel!.items.find((i) => i.title === 'Ledge grab')!.status, 'done')
+})
+
+test('auto-merge: low and medium concerns merge once the checks pass, and become a follow-up for the Lead', async () => {
+  const { autoMergeBlocker } = await import('../src/main/autopilot')
+  const t = setup()
+  const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
+  const base = { projectId: t.project.id, agentId: 'scripter', title: 'Ledge grab', branch: 'hangar/scripter-ledge-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Ledge grab', files: ['src/client/Ledge.luau'], incomplete: null, note: null, clip: null }
+  const concerns = (severity: 'low' | 'medium' | 'high') => ({ status: 'done' as const, verdict: 'concerns' as const, summary: 's', costUsd: 0, error: null, findings: [{ severity, file: 'src/client/Ledge.luau', line: 57, title: 'Ground probe hits other players', detail: 'x' }] })
+  const r = t.reviews.add(base)
+  assert.equal(autoMergeBlocker(t.reviews.update(r.id, { checks: passed, aiReview: concerns('medium') })), null)
+  assert.match(autoMergeBlocker(t.reviews.update(r.id, { aiReview: concerns('high') })) ?? '', /serious problem/)
+  assert.match(autoMergeBlocker(t.reviews.update(r.id, { checks: null, aiReview: concerns('low') })) ?? '', /no checks passed/)
+  assert.match(autoMergeBlocker(t.reviews.update(r.id, { checks: passed, aiReview: { ...concerns('low'), verdict: 'block' as const } })) ?? '', /not to merge/)
+
+  // In a sprint: the medium-concern change merges itself, and the Lead gets the concerns for next time.
+  t.ap.start(t.project.id)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: plan([{ agent: 'scripter', title: 'Ledge grab', brief: 'Grab.', files: ['src/client/Ledge.luau'] }]) })
+  const item = t.sent.at(-1)!
+  const r2 = t.reviews.add({ ...base, title: 'Ledge grab works' })
+  t.reviews.update(r2.id, { checks: passed, aiReview: concerns('medium') })
+  t.done(item.prompt, 'scripter', { reviewId: r2.id })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(t.reviews.get(r2.id).status, 'merged')
+  const st = t.ap.get(t.project.id)
+  const followUp = [...st.feedback, ...(st.handedFeedback ?? [])].find((f) => /Follow-up from the reviewer agent/.test(f))
+  assert.match(followUp ?? '', /"Ledge grab works".*Ground probe hits other players \(src\/client\/Ledge\.luau:57, medium\)/)
+})
