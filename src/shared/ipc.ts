@@ -9,6 +9,7 @@ import type {
   FileListing,
   FileView,
   CostSummary,
+  GitHubLink,
   GitStatus,
   Project,
   ProjectSettings,
@@ -58,6 +59,12 @@ export const IPC = {
   gitCommit: 'git:commit',
   gitRevertFile: 'git:revertFile',
   gitInit: 'git:init',
+  githubStatus: 'github:status',
+  githubLink: 'github:link',
+  githubUnlink: 'github:unlink',
+  githubPush: 'github:push',
+  githubPull: 'github:pull',
+  githubClone: 'github:clone',
   costsSummary: 'costs:summary',
   costsHistory: 'costs:history',
   filesList: 'files:list',
@@ -226,6 +233,19 @@ export interface HangarApi {
     commit(projectId: string, message: string): Promise<void>
     revertFile(projectId: string, file: string): Promise<void>
     init(projectId: string): Promise<void>
+  }
+  /** The project's GitHub repository (git's origin). Only you push or pull, from here; agents never do. */
+  github: {
+    status(projectId: string): Promise<GitHubLink>
+    /** Point origin at a GitHub repository link (https or ssh). Sends nothing. */
+    link(projectId: string, url: string): Promise<GitHubLink>
+    unlink(projectId: string): Promise<GitHubLink>
+    /** Push the current branch (never a task branch, never forced). */
+    push(projectId: string): Promise<{ repo: string; branch: string }>
+    /** Fast-forward the current branch from GitHub; refuses with uncommitted changes or anything to merge. */
+    pull(projectId: string): Promise<{ repo: string; branch: string; commits: number }>
+    /** Download a GitHub repository into a new folder under `parentDir` (default: Hangar Games) and open it. */
+    clone(url: string, parentDir?: string): Promise<Project>
   }
   /** The project's files, read-only: folders one at a time, files up to 512 KB. Links and .git are never shown. */
   files: {

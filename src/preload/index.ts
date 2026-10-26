@@ -87,6 +87,14 @@ const api: HangarApi = {
     revertFile: (id, file) => invoke(IPC.gitRevertFile, id, file),
     init: (id) => invoke(IPC.gitInit, id)
   },
+  github: {
+    status: (id) => invoke(IPC.githubStatus, id),
+    link: (id, url) => invoke(IPC.githubLink, id, url),
+    unlink: (id) => invoke(IPC.githubUnlink, id),
+    push: (id) => invoke(IPC.githubPush, id),
+    pull: (id) => invoke(IPC.githubPull, id),
+    clone: (url, parentDir) => invoke(IPC.githubClone, url, parentDir)
+  },
   files: {
     list: (id, dir) => invoke(IPC.filesList, id, dir),
     read: (id, path) => invoke(IPC.filesRead, id, path),

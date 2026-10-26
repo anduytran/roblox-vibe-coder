@@ -9,7 +9,7 @@ import { Notifier } from './notifier'
 import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
 import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
-import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus, setNoHooksBase } from './git'
+import { cloneGitHub, gitCommit, gitDiff, gitInit, githubLink, gitRevertFile, gitStatus, linkGitHub, parseGitHubRepo, pullFromGitHub, pushToGitHub, setNoHooksBase, unlinkGitHub } from './git'
 import { scrubProcessEnv } from './env'
 import { JsonStore } from './jsonStore'
 import { KeyProxy } from './keyProxy'
@@ -21,12 +21,12 @@ import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
-import { createGameProject, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
+import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
 import { Trends } from './trending'
 import { SUGGESTED_CHECKS } from './checks'
 import { resolveCommand } from './testPlace'
 import { readFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, isAbsolute } from 'node:path'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
@@ -543,6 +543,30 @@ app.whenReady().then(() => {
     if (outcome === 'untracked') await shell.trashItem(join(projectRoot, f))
   })
   handle(IPC.gitInit, (id: unknown) => gitInit(root(id)))
+
+  // GitHub: only ever from these buttons. Agents have no way to push or pull.
+  handle(IPC.githubStatus, (id: unknown) => githubLink(root(id)))
+  handle(IPC.githubLink, (id: unknown, url: unknown) => linkGitHub(root(id), str(url, 'link')))
+  handle(IPC.githubUnlink, (id: unknown) => unlinkGitHub(root(id)))
+  handle(IPC.githubPush, (id: unknown) => pushToGitHub(root(id)))
+  handle(IPC.githubPull, (id: unknown) => {
+    const projectId = str(id, 'project')
+    // Pulling rewrites files; an agent editing at the same time could lose work or mix it in.
+    if (runner.snapshot(projectId).some((s) => s.status === 'working' || s.status === 'queued' || s.status === 'awaiting_approval')) {
+      throw new Error('Agents are working on this project. Pull when they have finished.')
+    }
+    return pullFromGitHub(root(projectId))
+  })
+  handle(IPC.githubClone, async (url: unknown, parent: unknown) => {
+    const repo = parseGitHubRepo(str(url, 'link'))
+    if (!repo) throw new Error('That isn\'t a GitHub repository link. Paste one like https://github.com/you/my-game.')
+    const parentDir = typeof parent === 'string' && parent ? parent : defaultParent()
+    if (parentDir === defaultParent() && !existsSync(parentDir)) mkdirSync(parentDir, { recursive: true })
+    if (!isAbsolute(parentDir) || !existsSync(parentDir) || !statSync(parentDir).isDirectory()) throw new Error('Choose a folder to download the project into.')
+    const dest = freeProjectFolder(parentDir, projectFolderName(repo.name))
+    await cloneGitHub(repo.url, dest)
+    return registry.update(registry.add(dest).id, { name: repo.name })
+  })
 
   // Costs
   handle(IPC.costsSummary, () => costs.summary())

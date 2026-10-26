@@ -6,8 +6,9 @@ import { Button, Field, Icon, Toggle, usd } from './ui'
 import { SpendBars } from './SpendBars'
 import { VaultsCard } from './VaultsCard'
 import { ChecksCard } from './ChecksCard'
+import { GitHubCard } from './GitHubCard'
 
-type Category = 'general' | 'tools' | 'autonomy' | 'safety' | 'spending' | 'vaults' | 'testplace' | 'remove'
+type Category = 'general' | 'tools' | 'autonomy' | 'safety' | 'spending' | 'vaults' | 'github' | 'testplace' | 'remove'
 
 const CATEGORIES: [Category, string, string][] = [
   ['general', 'General', 'gear'],
@@ -16,6 +17,7 @@ const CATEGORIES: [Category, string, string][] = [
   ['safety', 'Safety', 'shield'],
   ['spending', 'Spending', 'gauge'],
   ['vaults', 'Vaults', 'book'],
+  ['github', 'GitHub', 'changes'],
   ['testplace', 'Test place', 'phone'],
   ['remove', 'Remove', 'stop']
 ]
@@ -243,6 +245,9 @@ export function ProjectSettingsView({ project }: { project: Project }) {
           </div>
           <div className="pane-group" hidden={cat !== 'vaults'}>
             <VaultsCard project={project} />
+          </div>
+          <div className="pane-group" hidden={cat !== 'github'}>
+            <GitHubCard project={project} />
           </div>
           <div className="pane-group" hidden={cat !== 'testplace'}>
             <section className="card">

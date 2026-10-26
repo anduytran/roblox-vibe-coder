@@ -1,5 +1,7 @@
 import { addProject, attempt, openPage, openSettings, openWizard, selectProject, setInboxOpen, toast, useStore } from '../store'
+import { useState } from 'react'
 import { modKey } from './Shortcuts'
+import { CloneDialog } from './CloneDialog'
 import { useWaiting } from './waiting'
 import type { AppSettings, PlanUsage } from '@shared/types'
 import { Avatar, Icon, resetsText, usd } from './ui'
@@ -15,6 +17,7 @@ export function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const costs = useStore((s) => s.costs)
   const settings = useStore((s) => s.settings)
   const autopilot = useStore((s) => s.autopilot)
+  const [cloning, setCloning] = useState(false)
 
   const anyRunning = Object.values(agents).some((proj) =>
     Object.values(proj).some((a) => a.status === 'working' || a.status === 'awaiting_approval' || a.status === 'queued')
@@ -80,6 +83,11 @@ export function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
         <Icon name="folder" />
         Open existing folder
       </button>
+      <button className="side-btn side-btn-quiet" onClick={() => setCloning(true)}>
+        <Icon name="changes" />
+        Clone from GitHub
+      </button>
+      {cloning && <CloneDialog onClose={() => setCloning(false)} />}
 
       <div className="side-foot">
         {settings?.authMode === 'max' ? (

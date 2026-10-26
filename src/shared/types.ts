@@ -305,6 +305,19 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+/** The project's GitHub repository (git's `origin` remote), for the GitHub settings card. */
+export interface GitHubLink {
+  isRepo: boolean
+  /** "owner/name" when origin is a GitHub repository. */
+  repo: string | null
+  /** The repository's page, to open in the browser. */
+  webUrl: string | null
+  /** origin's address when it is set but isn't a GitHub repository (Hangar won't push there). */
+  otherRemote: string | null
+  /** The branch Push and Pull use (the current one). */
+  branch: string | null
+}
+
 // ---------- new game flow, autopilot, trends ----------
 
 /** Everything the "New game" wizard collects. */

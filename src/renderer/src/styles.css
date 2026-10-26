@@ -1633,6 +1633,18 @@ button.file-item {
   border-top: 1px solid var(--line);
   gap: 12px;
 }
+.github-row {
+  padding: 4px 0 10px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.clone-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .check-list {
   display: flex;
   flex-direction: column;

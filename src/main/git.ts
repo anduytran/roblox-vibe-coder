@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { GitFile, GitStatus } from '@shared/types'
+import type { GitFile, GitHubLink, GitStatus } from '@shared/types'
 import { isInsideRoot } from './pathScope'
 import { minimalEnv } from './env'
 
@@ -61,13 +61,18 @@ export function gitSafetyEnv(): Record<string, string> {
 }
 
 /** Run git with an argument array (never through a shell), inside the project folder, with forced safe config. */
-function git(cwd: string, args: string[], opts: { okExitCodes?: number[] } = {}): Promise<string> {
+function git(cwd: string, args: string[], opts: { okExitCodes?: number[]; network?: boolean } = {}): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     // Minimal environment: no tokens, and no GIT_DIR/GIT_WORK_TREE or similar from the user's shell.
-    const env = { ...minimalEnv(), ...gitSafetyEnv() }
-    execFile('git', args, { cwd, env, maxBuffer: 20 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    const env: Record<string, string> = { ...minimalEnv(), ...gitSafetyEnv() }
+    // Talking to GitHub needs your sign-in, which git keeps in a credential helper that is often set in the
+    // system config (the macOS keychain, Git Credential Manager on Windows). That config is yours, not the repo's.
+    if (opts.network) delete env.GIT_CONFIG_NOSYSTEM
+    const timeout = opts.network ? NETWORK_TIMEOUT_MS : 0
+    execFile('git', args, { cwd, env, maxBuffer: 20 * 1024 * 1024, windowsHide: true, timeout }, (err, stdout, stderr) => {
       const code = err && typeof (err as NodeJS.ErrnoException).code === 'number' ? Number((err as NodeJS.ErrnoException).code) : null
-      if (err && !(code !== null && opts.okExitCodes?.includes(code))) reject(new Error((stderr || err.message).trim()))
+      if (err && (err as { killed?: boolean }).killed) reject(new Error('git timed out'))
+      else if (err && !(code !== null && opts.okExitCodes?.includes(code))) reject(new Error((stderr || err.message).trim()))
       else resolvePromise(stdout)
     })
   })
@@ -585,4 +590,179 @@ export async function linksInCommit(root: string, sha: string): Promise<string[]
 export async function removeTempWorktree(root: string, dir: string): Promise<void> {
   await git(root, ['worktree', 'remove', '--force', dir]).catch(() => undefined)
   await git(root, ['worktree', 'prune']).catch(() => undefined)
+}
+
+// ---------- GitHub (origin remote) ----------
+
+/** Pushing, pulling and cloning give up after this long (a sign-in prompt that can't be shown, a dead network). */
+const NETWORK_TIMEOUT_MS = 3 * 60_000
+
+/**
+ * Forced onto every command that talks to GitHub: only https and ssh, with certificate checks on, whatever the
+ * repository's config says (a planted `url.*.insteadOf` can't turn a GitHub address into a local program).
+ */
+const NETWORK_CONFIG = ['-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always', '-c', 'http.sslVerify=true']
+
+export interface GitHubRepo {
+  owner: string
+  name: string
+  /** The address git uses: https://github.com/owner/name.git or git@github.com:owner/name.git. */
+  url: string
+  webUrl: string
+}
+
+/** A GitHub repository from what the user pasted (its page, the https clone link or the ssh one), else null. */
+export function parseGitHubRepo(input: string): GitHubRepo | null {
+  if (typeof input !== 'string') return null
+  const s = input.trim()
+  if (s.length > 300 || /[\s\0]/.test(s)) return null
+  const m =
+    /^(?:https:\/\/)?(?:www\.)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(s) ??
+    /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(s)
+  if (!m) return null
+  const [, owner, name] = m as unknown as [string, string, string]
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)) return null
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === '.' || name === '..' || name.startsWith('-')) return null
+  const ssh = s.includes('git@')
+  return {
+    owner,
+    name,
+    url: ssh ? `git@github.com:${owner}/${name}.git` : `https://github.com/${owner}/${name}.git`,
+    webUrl: `https://github.com/${owner}/${name}`
+  }
+}
+
+/** git's own words turned into something to do about it. */
+function networkError(e: Error, action: string): Error {
+  const m = e.message
+  if (/ETIMEDOUT|timed out/i.test(m)) {
+    return new Error(`${action} took too long and was stopped. Check your internet connection, and that git can sign in to GitHub without asking.`)
+  }
+  if (/could not read Username|Authentication failed|terminal prompts disabled|Permission denied \(publickey\)|403/i.test(m)) {
+    return new Error(
+      `GitHub didn't accept your sign-in. Sign in once in a terminal with "gh auth login" (or with GitHub Desktop), check you can push to this repository, then try again.\n\n${m}`
+    )
+  }
+  if (/Repository not found|not found|does not appear to be a git repository/i.test(m)) {
+    return new Error(`GitHub couldn't find that repository, or your account can't see it.\n\n${m}`)
+  }
+  return new Error(`${action} failed: ${m}`)
+}
+
+async function originRepo(root: string): Promise<{ raw: string | null; repo: GitHubRepo | null }> {
+  // Exit code 1 means origin has no address.
+  const raw = (await git(root, ['config', '--get', 'remote.origin.url'], { okExitCodes: [1] })).trim() || null
+  return { raw, repo: raw ? parseGitHubRepo(raw) : null }
+}
+
+export async function githubLink(root: string): Promise<GitHubLink> {
+  const status = await gitStatus(root) // refuses repositories with dangerous config
+  if (!status.isRepo) return { isRepo: false, repo: null, webUrl: null, otherRemote: null, branch: null }
+  const { raw, repo } = await originRepo(root)
+  return {
+    isRepo: true,
+    repo: repo ? `${repo.owner}/${repo.name}` : null,
+    webUrl: repo?.webUrl ?? null,
+    otherRemote: raw && !repo ? raw : null,
+    branch: await currentBranch(root)
+  }
+}
+
+/** Point origin at a GitHub repository (adding it, or replacing what was there). Nothing is sent yet. */
+export async function linkGitHub(root: string, input: string): Promise<GitHubLink> {
+  const repo = parseGitHubRepo(input)
+  if (!repo) throw new Error('That isn\'t a GitHub repository link. Paste one like https://github.com/you/my-game.')
+  const status = await gitStatus(root)
+  if (!status.isRepo) throw new Error('This project isn\'t a git repository yet. Initialize one in the Changes tab first.')
+  await git(root, ['remote', (await hasRemote(root, 'origin')) ? 'set-url' : 'add', 'origin', repo.url])
+  return githubLink(root)
+}
+
+async function hasRemote(root: string, name: string): Promise<boolean> {
+  return (await git(root, ['remote'])).split('\n').some((r) => r.trim() === name)
+}
+
+/** Forget the link (only on this computer; the repository on GitHub is untouched). */
+export async function unlinkGitHub(root: string): Promise<GitHubLink> {
+  await assertSafeRepo(root)
+  if (await hasRemote(root, 'origin')) await git(root, ['remote', 'remove', 'origin'])
+  return githubLink(root)
+}
+
+/** The linked repository and the branch to sync, or a reason not to. */
+async function syncTarget(root: string, action: string): Promise<{ repo: GitHubRepo; branch: string }> {
+  await assertSafeRepo(root)
+  const { repo } = await originRepo(root)
+  if (!repo) throw new Error(`Link a GitHub repository first, then ${action}.`)
+  const branch = await currentBranch(root)
+  if (!branch) throw new Error('Make a first commit in the Changes tab first.')
+  if (branch.startsWith(BRANCH_PREFIX)) throw new Error(`You're on a task branch (${branch}). Switch back to your main branch first; unreviewed work is never sent to GitHub.`)
+  if (!/^[A-Za-z0-9._/-]{1,120}$/.test(branch) || branch.startsWith('-')) throw new Error(`Hangar can't sync a branch named ${branch}.`)
+  return { repo, branch }
+}
+
+/**
+ * Send the current branch's commits to the same branch on GitHub. Never forces: if GitHub has commits this
+ * copy doesn't, it stops and asks you to pull. Uncommitted changes and task branches stay on this computer.
+ */
+export async function pushToGitHub(root: string): Promise<{ repo: string; branch: string }> {
+  const { repo, branch } = await syncTarget(root, 'push')
+  try {
+    await git(root, [...NETWORK_CONFIG, 'push', '--no-verify', repo.url, `refs/heads/${branch}:refs/heads/${branch}`], { network: true })
+  } catch (e) {
+    const m = (e as Error).message
+    if (/non-fast-forward|fetch first|rejected/i.test(m)) {
+      throw new Error(`GitHub's ${branch} has commits this copy doesn't have. Pull first, then push again.`)
+    }
+    throw networkError(e as Error, 'Pushing to GitHub')
+  }
+  // Remember what GitHub now has, so plain git (and the Changes tab) can tell what's not pushed yet.
+  await git(root, ['update-ref', `refs/remotes/origin/${branch}`, `refs/heads/${branch}`]).catch(() => undefined)
+  return { repo: `${repo.owner}/${repo.name}`, branch }
+}
+
+/**
+ * Bring in commits from the same branch on GitHub, only when that's a plain fast-forward (no merges, so nothing
+ * of yours is rewritten or mixed), and only with no uncommitted changes.
+ */
+export async function pullFromGitHub(root: string): Promise<{ repo: string; branch: string; commits: number }> {
+  const { repo, branch } = await syncTarget(root, 'pull')
+  const status = await gitStatus(root)
+  if (status.files.length > 0) throw new Error('There are uncommitted changes. Commit or discard them in the Changes tab first.')
+  try {
+    await git(root, [...NETWORK_CONFIG, 'fetch', '--no-tags', '--no-recurse-submodules', repo.url, `refs/heads/${branch}`], { network: true })
+  } catch (e) {
+    if (/couldn't find remote ref/i.test((e as Error).message)) throw new Error(`GitHub doesn't have a ${branch} branch yet. Push first.`)
+    throw networkError(e as Error, 'Pulling from GitHub')
+  }
+  const fetched = (await git(root, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])).trim()
+  if (!SHA.test(fetched)) throw new Error('Pulling from GitHub failed: no commit came back.')
+  const commits = Number((await git(root, ['rev-list', '--count', `HEAD..${fetched}`])).trim()) || 0
+  if (commits > 0) {
+    const ff = await git(root, ['merge-base', '--is-ancestor', 'HEAD', fetched]).then(() => true).catch(() => false)
+    if (!ff) {
+      throw new Error(
+        `This copy and GitHub's ${branch} have both changed since they last matched. Hangar only pulls when nothing needs merging; sort it out with git or GitHub Desktop.`
+      )
+    }
+    await git(root, ['merge', '--ff-only', '--no-verify', fetched])
+  }
+  await git(root, ['update-ref', `refs/remotes/origin/${branch}`, fetched]).catch(() => undefined)
+  return { repo: `${repo.owner}/${repo.name}`, branch, commits }
+}
+
+/**
+ * Download a GitHub repository into `dest` (which must not exist yet, or be empty). Submodules aren't fetched.
+ * The result is treated like any folder you open: its .mcp.json, roles and git config are checked before use.
+ */
+export async function cloneGitHub(input: string, dest: string): Promise<GitHubRepo> {
+  const repo = parseGitHubRepo(input)
+  if (!repo) throw new Error('That isn\'t a GitHub repository link. Paste one like https://github.com/you/my-game.')
+  try {
+    await git(dirname(dest), [...NETWORK_CONFIG, 'clone', '--no-recurse-submodules', '--origin', 'origin', '--', repo.url, dest], { network: true })
+  } catch (e) {
+    throw networkError(e as Error, 'Downloading from GitHub')
+  }
+  await assertSafeRepo(dest)
+  return repo
 }
