@@ -448,7 +448,8 @@ app.whenReady().then(() => {
     emit,
     send: (projectId, agentId, prompt, opts) => runner.send(projectId, agentId, prompt, opts),
     merge: (id) => reviewActions.merge(id),
-    fixClash: (id) => reviewActions.fixClash(id)
+    fixClash: (id) => reviewActions.fixClash(id),
+    usesPlan: () => settings.get().authMode === 'max'
   })
   const trends = new Trends(join(dataDir(), 'trends.json'), { loadQuery, getApiKey: getCredential, getSettings: () => settings.get(), engineAuth, costs })
   const explainer = new ApprovalExplainer({

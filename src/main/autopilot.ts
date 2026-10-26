@@ -47,6 +47,11 @@ export interface AutopilotDeps {
   emit: (e: AgentEvent) => void
   send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin'] }) => void
   merge: (reviewId: string) => Promise<unknown>
+  /**
+   * True on a Claude Max plan: dollar budgets don't apply (the plan's usage limits do, through the runner, which
+   * pauses work at them and autopilot picks up again when they reset).
+   */
+  usesPlan?: () => boolean
   /** Hand a merge clash to the agent that made the change (used while you're away). */
   fixClash?: (reviewId: string) => unknown
 }
@@ -187,7 +192,7 @@ export class Autopilot {
   private awayOver(st: AutopilotState): string | null {
     if (!st.config.unattended || !st.away) return null
     if (st.config.unattendedUntil && Date.now() >= st.config.unattendedUntil) return 'the time you set is up'
-    if (this.spent(st.projectId) - st.away.spentAtStart >= (st.config.unattendedBudgetUsd ?? 20)) return 'its budget is used up'
+    if (!this.deps.usesPlan?.() && this.spent(st.projectId) - st.away.spentAtStart >= (st.config.unattendedBudgetUsd ?? 20)) return 'its budget is used up'
     return null
   }
 
@@ -428,7 +433,7 @@ Reply with only these sections, short and concrete:
     }
     const spent = this.spent(st.projectId) - st.spentAtSprintStart
     const enough = st.config.sprintTasks === 0 ? st.sprintDoneSaid === true || st.tasksDone >= LEAD_SPRINT_MAX : st.tasksDone >= st.config.sprintTasks
-    if (enough || spent >= st.config.sprintBudgetUsd) this.queueReport(st)
+    if (enough || (!this.deps.usesPlan?.() && spent >= st.config.sprintBudgetUsd)) this.queueReport(st)
     else this.queueBuild(st)
   }
 

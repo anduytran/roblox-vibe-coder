@@ -16,7 +16,18 @@ const OUTCOME: Record<SprintReport['tasks'][number]['outcome'], string> = {
 }
 
 /** A project's autopilot: start it, watch the sprint, read check-ins and steer the next sprint. */
+/** On a Claude Max plan, usage limits decide when work pauses, not dollar budgets: the plan's limits and usage. */
+function usePlanMode(): { on: boolean; text: string } {
+  const on = useStore((s) => s.settings?.authMode === 'max')
+  const limits = useStore((s) => s.settings?.planLimits)
+  const usage = useStore((s) => s.costs.plan)
+  const pct = (w: { usedPct: number } | null | undefined): string => (w ? `${Math.round(w.usedPct)}%` : '–')
+  const text = `5-hour ${pct(usage?.fiveHour)} of ${limits?.fiveHourPct ?? 90}% · weekly ${pct(usage?.weekly)} of ${limits?.weeklyPct ?? 80}%`
+  return { on, text }
+}
+
 export function OverviewView({ project, onOpenReviews }: { project: Project; onOpenReviews: () => void }) {
+  const plan = usePlanMode()
   const ap = useStore((s) => s.autopilot[project.id])
   const spentTotal = useStore((s) => s.costs.projectTotalUsd[project.id] ?? 0)
   const hasLead = useStore((s) => (s.roles[project.id] ?? []).some((r) => r.id === 'lead'))
@@ -48,7 +59,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
             </h3>
             {ap && ap.sprint > 0 && (
               <p className="muted small">
-                Sprint {ap.sprint} · {ap.config.sprintTasks ? `${ap.tasksDone} of ${ap.config.sprintTasks} tasks` : `${ap.tasksDone} task${ap.tasksDone === 1 ? '' : 's'} done, Lead decides when it's finished`} · {usd(sprintSpent)} of {usd(ap.config.sprintBudgetUsd)} this sprint · {usd(spentTotal)} total
+                Sprint {ap.sprint} · {ap.config.sprintTasks ? `${ap.tasksDone} of ${ap.config.sprintTasks} tasks` : `${ap.tasksDone} task${ap.tasksDone === 1 ? '' : 's'} done, Lead decides when it's finished`} · {plan.on ? `plan usage: ${plan.text}` : `${usd(sprintSpent)} of ${usd(ap.config.sprintBudgetUsd)} this sprint · ${usd(spentTotal)} total`}
               </p>
             )}
           </div>
@@ -135,7 +146,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
             .map((r) => (
               <details key={r.sprint + ':' + r.at} className="history">
                 <summary>
-                  Sprint {r.sprint} · {timeAgo(r.at)} · {r.tasks.filter((t) => t.outcome === 'merged').length} merged · {usd(r.spentUsd)}
+                  Sprint {r.sprint} · {timeAgo(r.at)} · {r.tasks.filter((t) => t.outcome === 'merged').length} merged{plan.on ? '' : ` · ${usd(r.spentUsd)}`}
                 </summary>
                 <SafeText className="summary report-text" text={r.text} />
                 {r.answers && r.answers.length > 0 && (
@@ -165,6 +176,7 @@ function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: 
   const [budget, setBudget] = useState(String(ap?.config.sprintBudgetUsd ?? 10))
   const [autoMerge, setAutoMerge] = useState(ap?.config.autoMerge ?? true)
   const [direction, setDirection] = useState('')
+  const plan = usePlanMode()
   return (
     <section className="card">
       <h3>{ap?.reports.length ? 'Start a new sprint' : 'Let the agents build'}</h3>
@@ -191,12 +203,20 @@ function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: 
               </button>
             ))}
           </div>
-          <span className="field-hint">{tasks === 0 ? 'The Lead works through the plan and checks in when it\'s done (or the budget runs out).' : 'Checks in after this many tasks.'}</span>
+          <span className="field-hint">{tasks === 0 ? `The Lead works through the plan and checks in when it's done${plan.on ? '' : ' (or the budget runs out)'}.` : 'Checks in after this many tasks.'}</span>
         </div>
-        <label className="field">
-          <span className="field-label">Budget per sprint (USD)</span>
-          <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" />
-        </label>
+        {plan.on ? (
+          <div className="field">
+            <span className="field-label">Usage</span>
+            <span className="small">Your Max plan: {plan.text}.</span>
+            <span className="field-hint">Work pauses at those limits and picks up when they reset (Settings → Account).</span>
+          </div>
+        ) : (
+          <label className="field">
+            <span className="field-label">Budget per sprint (USD)</span>
+            <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" />
+          </label>
+        )}
       </div>
       <Toggle checked={autoMerge} onChange={setAutoMerge} label="Merge approved work automatically" hint="Checks pass and the reviewer agent approves → merged. Anything else waits for you." />
       <label className="field">
@@ -240,6 +260,8 @@ const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour
 function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState }) {
   const on = !!ap.config.unattended
   const limit = ap.config.unattendedBudgetUsd ?? 20
+  const plan = usePlanMode()
+  const stops = plan.on ? 'pauses at your Max plan limits and picks up again when they reset' : `stops after ${usd(limit)}`
   const save = (patch: Partial<AutopilotState['config']>, ok?: string): void => {
     void attempt(async () => {
       setAutopilot(await window.hangar.autopilot.configure(project.id, patch))
@@ -261,8 +283,8 @@ function UnattendedCard({ project, ap }: { project: Project; ap: AutopilotState 
         label="Keep going while I'm away"
         hint={
           on
-            ? `On until you turn it off, or ${usd(limit)} is spent. Check-ins answer themselves, clashes get fixed, anything that needs you waits in Reviews or below, and the Mac stays awake.`
-            : `Autopilot won't stop for check-ins, reviews or approvals; you get a summary when you're back. Stops after ${usd(limit)} (change it in Sprint settings).`
+            ? `On until you turn it off; it ${stops}. Check-ins answer themselves, clashes get fixed, anything that needs you waits in Reviews or below, and the Mac stays awake.`
+            : `Autopilot won't stop for check-ins, reviews or approvals; you get a summary when you're back. It ${stops}.`
         }
       />
       {away && (
@@ -307,6 +329,7 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
   const [tasks, setTasks] = useState(ap.config.sprintTasks)
   const [budget, setBudget] = useState(String(ap.config.sprintBudgetUsd))
   const [awayBudget, setAwayBudget] = useState(String(ap.config.unattendedBudgetUsd ?? 20))
+  const plan = usePlanMode()
   const save = (patch: Partial<AutopilotState['config']>): void => {
     void attempt(async () => setAutopilot(await window.hangar.autopilot.configure(project.id, patch)))
   }
@@ -325,17 +348,25 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
           </div>
           <span className="field-hint">{tasks === 0 ? 'The Lead checks in when the sprint\'s plan is done.' : 'Tasks before each check-in.'}</span>
         </div>
-        <label className="field">
-          <span className="field-label">Budget per sprint (USD)</span>
-          <input value={budget} inputMode="decimal" onChange={(e) => setBudget(e.target.value)} onBlur={() => parseFloat(budget) !== ap.config.sprintBudgetUsd && save({ sprintBudgetUsd: parseFloat(budget) })} />
-        </label>
+        {plan.on ? (
+          <div className="field">
+            <span className="field-label">Usage</span>
+            <span className="small">Your Max plan: {plan.text}.</span>
+            <span className="field-hint">Work pauses at those limits and picks up when they reset (Settings → Account).</span>
+          </div>
+        ) : (
+          <label className="field">
+            <span className="field-label">Budget per sprint (USD)</span>
+            <input value={budget} inputMode="decimal" onChange={(e) => setBudget(e.target.value)} onBlur={() => parseFloat(budget) !== ap.config.sprintBudgetUsd && save({ sprintBudgetUsd: parseFloat(budget) })} />
+          </label>
+        )}
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
-      <label className="field">
+      {!plan.on && <label className="field">
         <span className="field-label">Most to spend while you're away (USD)</span>
         <input value={awayBudget} inputMode="decimal" onChange={(e) => setAwayBudget(e.target.value)} onBlur={() => parseFloat(awayBudget) > 0 && parseFloat(awayBudget) !== (ap.config.unattendedBudgetUsd ?? 20) && save({ unattendedBudgetUsd: parseFloat(awayBudget) })} />
         <span className="field-hint">“Keep going while I'm away” stops once this much is spent.</span>
-      </label>
+      </label>}
     </section>
   )
 }
@@ -353,6 +384,7 @@ interface PlanItem {
 }
 
 function CheckinCard({ project, report, busy, run }: { project: Project; report: SprintReport; busy: boolean; run: (fn: () => Promise<AutopilotState>, ok?: string) => void }) {
+  const planMode = usePlanMode()
   const c = useMemo(() => parseCheckin(report.text), [report.text])
   // Each plan item keeps an id, so moving or removing one doesn't reset the others or lose keyboard focus.
   const nextId = useRef(0)
@@ -409,7 +441,7 @@ function CheckinCard({ project, report, busy, run }: { project: Project; report:
     <section className="card checkin">
       <h3>Sprint {report.sprint} check-in</h3>
       <p className="muted small">
-        {timeAgo(report.at)} · {usd(report.spentUsd)} spent · {merged} of {report.tasks.length} tasks merged
+        {timeAgo(report.at)} · {planMode.on ? '' : `${usd(report.spentUsd)} spent · `}{merged} of {report.tasks.length} tasks merged
       </p>
       {!c.structured ? (
         <>

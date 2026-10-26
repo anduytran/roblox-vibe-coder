@@ -29,6 +29,7 @@ export function NewGameWizard() {
   const prefill = useStore((s) => s.wizard) ?? {}
   const settings = useStore((s) => s.settings)
   const hasKey = useStore((s) => s.key.ready)
+  const onPlan = settings?.authMode === 'max'
   const [idea, setIdea] = useState(prefill.idea ?? '')
   const [doc, setDoc] = useState<{ name: string; text: string } | null>(null)
   // Until the user types a name, it follows the idea (or the attached document's title).
@@ -106,8 +107,9 @@ export function NewGameWizard() {
   const setupLine = [
     platformText || 'No platforms picked',
     model,
-    daily.trim() ? `$${daily.trim()} a day` : 'no daily limit for this game',
+    ...(onPlan ? [] : [daily.trim() ? `$${daily.trim()} a day` : 'no daily limit for this game']),
     sprintTasks ? `${sprintTasks} tasks per sprint` : 'the Lead decides when a sprint is done',
+    ...(onPlan ? ['pauses at your Max plan limits'] : []),
     autoMerge ? 'approved work merges itself' : 'you merge everything'
   ].join(' · ')
 
@@ -228,9 +230,11 @@ export function NewGameWizard() {
             <Field label="Model">
               <ModelSelect value={model} onChange={setModel} />
             </Field>
-            <Field label="Daily spending limit for this game (USD)" hint="Empty = only the app-wide limit.">
-              <input value={daily} onChange={(e) => setDaily(e.target.value)} inputMode="decimal" />
-            </Field>
+            {!onPlan && (
+              <Field label="Daily spending limit for this game (USD)" hint="Empty = only the app-wide limit.">
+                <input value={daily} onChange={(e) => setDaily(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
           </div>
           <Toggle checked={studio} onChange={setStudio} label="Roblox Studio tools" hint="Agents playtest in Studio. Keep Studio open with “Enable Studio as MCP server” on." />
         </section>
@@ -250,9 +254,11 @@ export function NewGameWizard() {
               </div>
               <span className="field-hint">{sprintTasks === 0 ? 'The Lead checks in when the sprint\'s plan is done (or the budget runs out).' : 'Each task is one feature or fix on its own branch.'}</span>
             </div>
-            <Field label="Budget per sprint (USD)" hint="The sprint ends early when it's reached.">
-              <input value={sprintBudget} onChange={(e) => setSprintBudget(e.target.value)} inputMode="decimal" />
-            </Field>
+            {!onPlan && (
+              <Field label="Budget per sprint (USD)" hint="The sprint ends early when it's reached.">
+                <input value={sprintBudget} onChange={(e) => setSprintBudget(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
           </div>
           <Toggle
             checked={autoMerge}
