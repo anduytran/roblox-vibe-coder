@@ -624,6 +624,10 @@ export class AgentRunner {
       if (task.record && !research) {
         append += `\n\nThis task asks for a recorded playtest. When you playtest the feature, demonstrate it clearly within about 30 seconds, and take a screenshot (screen_capture) at each key moment.`
       }
+      // A coordinator (the Lead, by default) hands building and playtesting to the other agents and only edits its
+      // own notes. Not when resolving a merge clash: that's its own change to fix.
+      const coordinate = !research && !clash && role ? coordinatorFor(role, allRoles, knowledgeFolder(role.id, role.knowledge)) : null
+      if (coordinate) append += `\n${coordinateInstructions(coordinate)}`
       const options: Record<string, unknown> = {
         cwd: project.path,
         model: role?.model ?? project.settings.model ?? settings.defaultModel,
@@ -658,7 +662,7 @@ export class AgentRunner {
         ...(own.effort && !research ? { effort: own.effort } : {}),
         maxTurns: MAX_TURNS,
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
-        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, project, role?.name ?? 'Main', own)
+        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, project, role?.name ?? 'Main', own, coordinate)
       }
       if (research) {
         // An empty folder of its own: nothing from your project or computer to read.
@@ -1094,7 +1098,7 @@ export class AgentRunner {
     this.publish(s)
   }
 
-  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings): CanUseTool {
+  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, coordinate: Coordinate | null = null): CanUseTool {
     return async (toolName, input, { signal, agentID }) => {
       // Re-read settings each time so "Always allow" applies immediately.
       const current = this.deps.registry.get(project.id)
@@ -1106,6 +1110,8 @@ export class AgentRunner {
         if (own.studio === false && toolName.startsWith(`mcp__${STUDIO_MCP_NAME}__`)) {
           return { behavior: 'deny', message: `The ${name} agent has Roblox Studio turned off.` }
         }
+        const handOff = coordinate ? coordinateBlock(coordinate, current.path, toolName, input) : null
+        if (handOff) return { behavior: 'deny', message: handOff }
       }
       const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings })
       if (decision.action === 'allow') return { behavior: 'allow', updatedInput: input }
@@ -1228,4 +1234,49 @@ Resolve them:
 4. Don't run git commands; Hangar commits for you. If Roblox Studio tools are available, playtest the parts involved.
 
 Finish with a short summary: what you kept from each side and anything that still needs a look.`
+}
+
+/** What a coordinating agent may still do itself, and who it hands work to. */
+export interface Coordinate {
+  /** Folders it edits itself (its vault and knowledge folder). */
+  notes: string[]
+  builders: string[]
+  qa: string | null
+}
+
+/** The coordinator setup for a role, or null when it builds itself (setting off, or nobody to hand work to). */
+export function coordinatorFor(role: Role, roles: Role[], knowledge: string): Coordinate | null {
+  if (!(role.delegate ?? role.id === 'lead')) return null
+  const helpers = roles.filter((r) => r.id !== role.id && r.mode !== 'research' && !r.mcp?.length)
+  const qa = helpers.find((r) => r.id === 'qa-tester') ?? null
+  const builders = helpers.filter((r) => r !== qa && (!r.tools?.length || r.tools.some((t) => NOTE_EDIT_TOOLS.has(t))))
+  if (!builders.length) return null
+  return { notes: [role.vault, knowledge].filter((f): f is string => !!f), builders: builders.map((b) => b.id), qa: qa?.id ?? null }
+}
+
+const NOTE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+/** Why a coordinator must hand this tool use to another agent, or null when it may do it itself. */
+export function coordinateBlock(c: Coordinate, root: string, toolName: string, input: Record<string, unknown>): string | null {
+  const ask = c.builders.map((b) => `"${b}"`).join(' or ')
+  if (NOTE_EDIT_TOOLS.has(toolName)) {
+    const p = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
+    const rel = p ? relativeInside(root, p) : null
+    if (rel !== null && c.notes.some((f) => rel === f || rel.startsWith(`${f}/`))) return null
+    return `You coordinate: hand this change to ${ask} with the Agent tool (one clear brief: what to change, which files, the acceptance criteria). You only edit your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}).`
+  }
+  if (c.qa && toolName.startsWith(`mcp__${STUDIO_MCP_NAME}__`)) {
+    return `You coordinate: hand playtesting to "${c.qa}" with the Agent tool (what to try, the acceptance criteria to check), and have it report back.`
+  }
+  return null
+}
+
+export function coordinateInstructions(c: Coordinate): string {
+  return `
+# How you work: you coordinate, the team builds
+- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (what to build, which files, the acceptance criteria). Run independent briefs at the same time.${
+    c.qa ? `\n- Hand playtesting to "${c.qa}" with the Agent tool, then have the builders fix what it finds.` : ''
+  }
+- You edit only your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}); Hangar refuses other file edits${c.qa ? ' and Studio use' : ''} from you. Don't edit files with shell commands either.
+- You can read anything and run checks (builds, linters) to judge the team's work.`
 }

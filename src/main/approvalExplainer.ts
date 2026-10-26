@@ -1,3 +1,4 @@
+import { HELPER_MODEL } from '@shared/models'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -591,7 +592,7 @@ export class ApprovalExplainer {
         prompt,
         options: {
           cwd,
-          model: project?.settings.model ?? settings.defaultModel,
+          model: HELPER_MODEL,
           settingSources: [],
           systemPrompt: EXPLAIN_INSTRUCTIONS,
           tools: [],

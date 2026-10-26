@@ -26,6 +26,11 @@ export interface MainAgentSettings extends AgentSettings {
 }
 
 export interface Role extends AgentSettings {
+  /**
+   * Coordinates instead of building: hands code and playtests to the other agents, and only edits its own notes
+   * (vault and knowledge folder). Missing: on for the Lead, off for everyone else.
+   */
+  delegate?: boolean
   id: string
   name: string
   description: string

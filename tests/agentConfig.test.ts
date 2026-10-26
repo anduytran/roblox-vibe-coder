@@ -166,3 +166,42 @@ test('agent config: the runner applies each agent\'s tools, Studio, effort, budg
   assert.match((m.systemPrompt as { append: string }).append, /Always answer in haiku\./)
   assert.match((m.systemPrompt as { append: string }).append, /knowledge\/main\/[\s\S]*no notes yet \(the folder is created with your first note\)/)
 })
+
+test('coordinator: the Lead hands code and playtests to the team and only edits its own notes', async () => {
+  const { coordinatorFor, coordinateBlock } = await import('../src/main/agentRunner')
+  const { ROLE_TEMPLATES } = await import('../src/main/roles')
+  const lead = ROLE_TEMPLATES.find((r) => r.id === 'lead')!
+  const c = coordinatorFor(lead, ROLE_TEMPLATES, 'knowledge/lead')!
+  assert.deepEqual(c.builders.sort(), ['scripter', 'studio-modeler', 'ui-builder'])
+  assert.equal(c.qa, 'qa-tester')
+  const root = '/game'
+  assert.match(coordinateBlock(c, root, 'Edit', { file_path: '/game/src/server/Gun.luau' }) ?? '', /hand this change to "scripter"/)
+  assert.equal(coordinateBlock(c, root, 'Write', { file_path: '/game/design-vault/Roadmap.md' }), null)
+  assert.equal(coordinateBlock(c, root, 'Edit', { file_path: '/game/knowledge/lead/Shop.md' }), null)
+  assert.match(coordinateBlock(c, root, 'Edit', { file_path: '/game/design-vault-evil/x.md' }) ?? '', /hand this change/)
+  assert.match(coordinateBlock(c, root, 'mcp__Roblox_Studio__execute_luau', {}) ?? '', /hand playtesting to "qa-tester"/)
+  assert.equal(coordinateBlock(c, root, 'Bash', { command: 'selene src' }), null)
+  // Off when switched off, for other roles, or with nobody to hand work to.
+  assert.equal(coordinatorFor({ ...lead, delegate: false }, ROLE_TEMPLATES, 'k'), null)
+  assert.equal(coordinatorFor(ROLE_TEMPLATES.find((r) => r.id === 'scripter')!, ROLE_TEMPLATES, 'k'), null)
+  assert.equal(coordinatorFor(lead, [lead], 'k'), null)
+  // The setting round-trips through the role file.
+  assert.equal(parseRole('lead', serializeRole({ ...lead, delegate: false }))!.delegate, false)
+  assert.equal(parseRole('lead', serializeRole(lead))!.delegate, undefined, 'unset: on for the Lead by default')
+})
+
+test('coordinator: the runner refuses the Lead\'s own code edits but not its helpers\'', async () => {
+  const dir = tmp('hangar-co-')
+  const { installTemplates } = await import('../src/main/roles')
+  installTemplates(dir)
+  const t = runnerFor(dir)
+  t.registry.update(t.project.id, { settings: { autoApproveEdits: true } })
+  t.runner.send(t.project.id, 'lead', 'build the shop')
+  await until(() => t.calls.length === 1)
+  const o = t.calls[0]!.options
+  assert.match((o.systemPrompt as { append: string }).append, /you coordinate, the team builds/)
+  const can = o.canUseTool as CanUseTool
+  const ac = new AbortController()
+  assert.equal((await can('Edit', { file_path: join(dir, 'src', 'Shop.luau') }, { signal: ac.signal })).behavior, 'deny')
+  assert.equal((await can('Edit', { file_path: join(dir, 'src', 'Shop.luau') }, { signal: ac.signal, agentID: 'sub-1' })).behavior, 'allow', 'the Scripter it hands work to can edit')
+})

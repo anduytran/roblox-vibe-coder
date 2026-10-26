@@ -572,6 +572,7 @@ app.whenReady().then(() => {
       ...(typeof role.vault === 'string' && role.vault.trim() ? { vault: role.vault.trim() } : {}),
       ...(role.vaultKind === 'design' ? { vaultKind: 'design' as const } : {}),
       ...(role.mode === 'research' ? { mode: 'research' as const } : {}),
+      ...(typeof role.delegate === 'boolean' ? { delegate: role.delegate } : {}),
       ...(Array.isArray(role.mcp) && role.mcp.includes('blender') ? { mcp: ['blender' as const] } : {}),
       ...cleanAgentSettings(role)
     })

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Project, Role } from '@shared/types'
 import { confirmDialog, attempt, replaceProject, setRoles, toast } from '../store'
 import { AgentSettingsFields, agentFormState, agentSettingsFrom } from './AgentSettingsFields'
-import { Button, Field, Modal } from './ui'
+import { Button, Field, Modal, Toggle } from './ui'
 import { ModelSelect } from './ModelSelect'
 
 export function RoleEditor(props: { project: Project; role: Role; onClose: () => void; onSaved: (id: string) => void }) {
@@ -12,6 +12,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
   const [description, setDescription] = useState(props.role.description)
   const [agent, setAgent] = useState(() => agentFormState(props.role))
   const [blender, setBlender] = useState(props.role.mcp?.includes('blender') ?? false)
+  const [delegate, setDelegate] = useState(props.role.delegate ?? props.role.id === 'lead')
   const [model, setModel] = useState(props.role.model ?? '')
   const [prompt, setPrompt] = useState(props.role.prompt)
   const [vault, setVault] = useState(props.role.vault ?? '')
@@ -28,6 +29,8 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
         prompt,
         ...(research ? {} : agentSettingsFrom(agent)),
         mcp: !research && blender ? ['blender'] : undefined,
+        // Saved only when it differs from the default (on for the Lead, off for others).
+        delegate: research || delegate === (props.role.id === 'lead') ? undefined : delegate,
         model: model.trim() || undefined,
         vault: research ? undefined : vault.trim() || undefined,
         vaultKind: !research && vault.trim() && vaultKind === 'design' ? 'design' : undefined,
@@ -99,6 +102,12 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
       </Field>
       {!research && (
         <>
+          <Toggle
+            checked={delegate}
+            onChange={setDelegate}
+            label="Hands building to the other agents"
+            hint="Coordinates instead of building: code and UI go to the builders, playtests to the QA Tester. It only edits its own notes (vault and knowledge folder)."
+          />
           <AgentSettingsFields agentId={props.role.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} />
           <div className="grid-2">
             <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated. Created from templates on first use.">

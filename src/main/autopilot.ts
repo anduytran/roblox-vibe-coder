@@ -163,7 +163,7 @@ export class Autopilot {
   }
 
   /**
-   * How the Lead splits a task among the project's specialists (subagents it calls with the Task tool): building to
+   * How the Lead splits a task among the project's specialists (subagents it calls with the Agent tool): building to
    * the Scripter and UI Builder, then a playtest by the QA Tester against the acceptance criteria, with fixes and a
    * re-test. Only the roles the project has are named; with none, the Lead works alone.
    */
@@ -180,10 +180,10 @@ export class Autopilot {
     if (!builders.length && !qa) return null
     return {
       build: builders.length
-        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Task tool, one clear brief each (what to build, which files, the acceptance criteria). Do only glue too small to hand off.`
+        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each (what to build, which files, the acceptance criteria). Do only glue too small to hand off.`
         : 'Build it yourself.',
       test: qa
-        ? 'Then hand "qa-tester" a playtest with the Task tool: play it in Studio against the acceptance criteria and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
+        ? 'Then hand "qa-tester" a playtest with the Agent tool: play it in Studio against the acceptance criteria and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
         : 'Then playtest it yourself against the acceptance criteria.'
     }
   }

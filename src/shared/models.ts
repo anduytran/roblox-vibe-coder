@@ -13,6 +13,9 @@ export type ModelId = (typeof MODELS)[number]['id']
 
 export const DEFAULT_MODEL: ModelId = 'claude-sonnet-5-5'
 
+/** Hangar's own short jobs (the reviewer agent, the safety checker): capable enough, much cheaper than Opus. */
+export const HELPER_MODEL: ModelId = 'claude-sonnet-5-5'
+
 /** "Opus 5.5 (most capable, costs more)", or the name itself for one Hangar doesn't know. */
 export function modelLabel(id: string): string {
   const m = MODELS.find((x) => x.id === id)

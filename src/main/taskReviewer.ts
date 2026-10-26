@@ -1,3 +1,4 @@
+import { HELPER_MODEL } from '@shared/models'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AiFinding, AiReview, AppSettings, Project, Review, ReviewChecks } from '@shared/types'
@@ -134,7 +135,7 @@ export class TaskReviewer {
         prompt,
         options: {
           cwd: tree,
-          model: project.settings.model ?? settings.defaultModel,
+          model: HELPER_MODEL,
           settingSources: [],
           permissionMode: 'default',
           systemPrompt: { type: 'preset', preset: 'claude_code', append: INSTRUCTIONS },

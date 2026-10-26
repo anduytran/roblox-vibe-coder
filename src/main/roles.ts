@@ -56,6 +56,8 @@ export function parseRole(id: string, text: string): Role | null {
   const budget = cleanBudget(meta.budget)
   if (budget) role.budgetUsd = budget
   if (meta.studio === 'off') role.studio = false
+  if (meta.delegate === 'on') role.delegate = true
+  else if (meta.delegate === 'off') role.delegate = false
   if (meta.knowledge && validVaultFolder(meta.knowledge)) role.knowledge = meta.knowledge
   return role
 }
@@ -72,6 +74,7 @@ export function serializeRole(role: Role): string {
   const budget = cleanBudget(role.budgetUsd)
   if (budget) lines.push(`budget: ${budget}`)
   if (role.studio === false) lines.push('studio: off')
+  if (typeof role.delegate === 'boolean') lines.push(`delegate: ${role.delegate ? 'on' : 'off'}`)
   if (role.knowledge && validVaultFolder(role.knowledge)) lines.push(`knowledge: ${role.knowledge}`)
   lines.push('---', '', role.prompt.trim(), '')
   return lines.join('\n')
@@ -126,6 +129,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'scripter',
+    model: 'claude-sonnet-5-5',
     name: 'Scripter',
     description: 'Writes and fixes Luau gameplay code: systems, modules, server/client logic.',
     prompt: `You write Luau for a Roblox game that is synced to disk with Rojo.
@@ -138,6 +142,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'ui-builder',
+    model: 'claude-sonnet-5-5',
     name: 'UI Builder',
     description: 'Builds and adjusts game UI: ScreenGuis, layouts, UI scripts. Keeps the project\'s UI vault (Obsidian) up to date.',
     vault: 'ui-vault',
@@ -150,6 +155,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'qa-tester',
+    model: 'claude-haiku-5-5',
     name: 'QA Tester',
     description: 'Playtests, reads console output and reports bugs with reproduction steps. Does not edit code.',
     tools: ['Read', 'Glob', 'Grep'],
@@ -160,6 +166,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'studio-modeler',
+    model: 'claude-sonnet-5-5',
     name: '3D Modeler (Studio)',
     description: 'Builds 3D models in Roblox Studio from parts, checks them with screenshots, and saves each as a builder script in git.',
     prompt: `You build 3D models for a Roblox game in Roblox Studio, from parts.
@@ -173,6 +180,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'blender-modeler',
+    model: 'claude-sonnet-5-5',
     name: '3D Modeler (Blender)',
     description: 'Models real 3D meshes in Blender, exports them for Roblox and renders a preview. Needs the Blender connection in Settings.',
     mcp: ['blender'],
@@ -187,6 +195,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'researcher',
+    model: 'claude-haiku-5-5',
     name: 'Researcher',
     description: 'Searches the web (docs, DevForum, APIs, comparable games) and writes up findings. Findings wait for your approval before other agents can read them.',
     mode: 'research',
