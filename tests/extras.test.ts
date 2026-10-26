@@ -545,10 +545,12 @@ test('audit2: git refuses repos whose working tree is elsewhere, or a subfolder 
   await assert.rejects(gitStatus(proj), /core\.worktree|bigger git repository/)
 })
 
-test('audit2: git-ignored files an autonomous task creates or changes are moved out of the project', async () => {
+test('audit2: git-ignored files an autonomous task creates or changes never reach the game folder', async () => {
+  let copy = ''
   const t = setup({
     script: async function* (_prompt, options) {
       const cwd = options.cwd as string
+      copy = cwd
       writeFileSync(join(cwd, 'feature.luau'), '-- tracked change\n')
       mkdirSync(join(cwd, 'Packages'), { recursive: true })
       writeFileSync(join(cwd, 'Packages', 'Evil.luau'), 'require(123)')
@@ -566,34 +568,12 @@ test('audit2: git-ignored files an autonomous task creates or changes are moved 
   await until(() => t.reviews.list().length === 1)
   const r = t.reviews.list()[0]!
   assert.deepEqual(r.files, ['feature.luau'])
-  assert.equal(existsSync(join(t.dir, 'Packages', 'Evil.luau')), false, 'new ignored file moved out')
-  assert.equal(existsSync(join(t.dir, '.env')), false, 'changed ignored file moved out')
-  assert.equal(readFileSync(join(t.dir, 'keep.log'), 'utf8'), 'untouched', 'untouched ignored files stay')
-  assert.match(r.note ?? '', /git-ignored files .*Packages\/Evil\.luau/)
-  const qdir = /to (\S+quarantine\S+)\.$/.exec(r.note ?? '')
-  assert.ok(qdir && existsSync(join(qdir[1]!, 'Packages', 'Evil.luau')), 'kept in quarantine for inspection')
-})
-
-test('audit2: ignored files that cannot be moved out are named in the review', async () => {
-  // App data is a file, so the quarantine folder can't be created.
-  const blocked = join(tmp('hangar-x-blocked-'), 'not-a-folder')
-  writeFileSync(blocked, '')
-  const t = setup({
-    appDataDir: blocked,
-    script: async function* (_prompt, options) {
-      const cwd = options.cwd as string
-      writeFileSync(join(cwd, 'feature.luau'), '-- tracked change\n')
-      mkdirSync(join(cwd, 'Packages'), { recursive: true })
-      writeFileSync(join(cwd, 'Packages', 'Evil.luau'), 'require(123)')
-      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
-    }
-  })
-  writeFileSync(join(t.dir, '.gitignore'), 'Packages/\n')
-  t.g('add', '.gitignore')
-  t.g('commit', '-qm', 'ignore')
-  t.runner.send(t.project.id, 'main', 'change things')
-  await until(() => t.reviews.list().length === 1)
-  assert.match(t.reviews.list()[0]!.note ?? '', /couldn't move out \(Packages\/Evil\.luau\)/)
+  // The agent worked in its own copy, which is removed: its ignored files go with it.
+  assert.notEqual(copy, t.dir)
+  assert.equal(existsSync(copy), false)
+  assert.equal(existsSync(join(t.dir, 'Packages', 'Evil.luau')), false, 'new ignored file never in the game folder')
+  assert.equal(readFileSync(join(t.dir, '.env'), 'utf8'), 'ORIGINAL=1', 'your ignored files are untouched')
+  assert.equal(readFileSync(join(t.dir, 'keep.log'), 'utf8'), 'untouched')
 })
 
 test('audit2: edits through links ask in red, and a write that ends up outside stops the run', async () => {

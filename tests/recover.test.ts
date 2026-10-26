@@ -40,11 +40,13 @@ function setup() {
   const trustFile = join(tmp('hangar-rec-t-'), 'trust.json')
   const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 3, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
   let started = 0
+  const cwds: string[] = []
   // The agent writes a file if asked to "change" something, then never finishes: Hangar "closes" mid-task.
   const query: QueryFn = ({ prompt, options }) =>
     (async function* () {
       yield { type: 'system', subtype: 'init', session_id: 's', mcp_servers: [] }
       if (prompt.includes('change')) writeFileSync(join(options.cwd as string, 'storm.luau'), '-- storms\n')
+      cwds.push(options.cwd as string)
       started++
       await new Promise(() => {})
     })()
@@ -68,15 +70,19 @@ function setup() {
     })
     return runner
   }
-  return { dir, g, project, reviews, hangar, started: () => started, persistFile }
+  // The task's own copy of the game, and git there.
+  const copy = (): string => cwds.at(-1)!
+  const cg = (...a: string[]) => execFileSync('git', a, { cwd: copy() }).toString()
+  return { dir, g, project, reviews, hangar, started: () => started, persistFile, copy, cg }
 }
 
-test('restart mid-task: the work becomes a "stopped early" review and the project is back on main', async () => {
+test('restart mid-task: the work in its copy becomes a "stopped early" review; the game folder stays on main', async () => {
   const t = setup()
   const first = t.hangar()
   first.send(t.project.id, 'main', 'change the storms')
   await until(() => t.started() === 1)
-  assert.match((await currentBranch(t.dir)) ?? '', /^hangar\//)
+  assert.match((await currentBranch(t.copy())) ?? '', /^hangar\//)
+  assert.equal(await currentBranch(t.dir), 'main')
   // Hangar closes here (the first runner never finishes). Next launch:
   const again = t.hangar()
   await again.recoverInterrupted()
@@ -88,6 +94,7 @@ test('restart mid-task: the work becomes a "stopped early" review and the projec
   assert.equal(review.incomplete, 'Hangar was closed while this task was running.')
   assert.equal(review.title, 'change the storms')
   assert.equal(t.g('status', '--porcelain').trim(), '')
+  assert.equal(existsSync(t.copy()), false, 'the copy is removed')
   // Recovery happens once.
   await again.recoverInterrupted()
   assert.equal(t.reviews.list().length, 1)
@@ -108,11 +115,11 @@ test('restart while wrapping up: a task branch with commits but no review become
   const t = setup()
   t.hangar().send(t.project.id, 'main', 'change the storms')
   await until(() => t.started() === 1)
-  const branch = (await currentBranch(t.dir))!
-  // As if Hangar committed and switched back, then closed before making the review.
-  t.g('add', '-A')
-  t.g('commit', '-qm', 'wip')
-  t.g('checkout', '-q', 'main')
+  const branch = (await currentBranch(t.copy()))!
+  // As if Hangar committed and removed the copy, then closed before making the review.
+  t.cg('add', '-A')
+  t.cg('commit', '-qm', 'wip')
+  t.g('worktree', 'remove', '--force', t.copy())
   await t.hangar().recoverInterrupted()
   const [review] = t.reviews.list()
   assert.equal(review?.branch, branch)
@@ -153,18 +160,20 @@ test('the record survives other agents saving, and nothing you changed while Han
   assert.equal(existsSync(join(t.dir, 'local.env')), true, 'your ignored file is not moved')
   const [review] = t.reviews.list()
   assert.match(review?.note ?? '', /left them as they are: .*(v1|my-idea)/)
-  assert.match(review?.note ?? '', /local\.env/)
+  // The task ran in its own copy: your game folder (and its ignored files) were never part of it.
+  assert.doesNotMatch(review?.note ?? '', /local\.env/)
 })
 
 test('a recovery that fails (a git lock left behind) is tried again at the next launch', async () => {
   const t = setup()
   t.hangar().send(t.project.id, 'main', 'change the storms')
   await until(() => t.started() === 1)
-  writeFileSync(join(t.dir, '.git', 'index.lock'), '')
+  const lock = join(t.cg('rev-parse', '--absolute-git-dir').trim(), 'index.lock')
+  writeFileSync(lock, '')
   await t.hangar().recoverInterrupted()
-  assert.match((await currentBranch(t.dir)) ?? '', /^hangar\//, 'left as it was')
+  assert.equal(existsSync(t.copy()), true, 'left as it was')
   assert.equal(t.reviews.list().length, 0)
-  rmSync(join(t.dir, '.git', 'index.lock'))
+  rmSync(lock)
   await t.hangar().recoverInterrupted()
   assert.equal(await currentBranch(t.dir), 'main')
   assert.equal(t.reviews.list().length, 1)
@@ -197,28 +206,27 @@ test('recovery says what it found: uncommitted edits it committed, branches move
   t.hangar().send(t.project.id, 'main', 'change the storms')
   await until(() => t.started() === 1)
   t.g('branch', '-D', 'my-feature') // deleted mid-task (by the agent, or by you)
-  writeFileSync(join(t.dir, 'game.luau'), 'print("my edit")\n') // your edit while Hangar was closed
+  writeFileSync(join(t.copy(), 'game.luau'), 'print("agent edit")\n') // more of the agent's unsaved work
   await t.hangar().recoverInterrupted()
   const [review] = t.reviews.list()
   assert.deepEqual(review?.files.sort(), ['game.luau', 'storm.luau'])
-  assert.match(review?.note ?? '', /Everything uncommitted .*2 files.* may include changes you made/)
+  assert.match(review?.note ?? '', /Everything uncommitted .*2 files/)
   assert.match(review?.note ?? '', /my-feature deleted \(was [0-9a-f]{9}\).*git branch <name>/)
 })
 
-test('the agent moved main and left its branch empty: nothing is put back, but the feed says so', async () => {
+test('main moved while a task that changed nothing ran: nothing is put back, but the feed says so', async () => {
   const t = setup()
   const first = t.hangar()
   first.send(t.project.id, 'main', 'look around')
   await until(() => t.started() === 1)
-  // The agent switches to main and commits there, then Hangar closes.
-  t.g('checkout', '-q', 'main')
+  // A commit lands on main in the game folder, then Hangar closes.
   writeFileSync(join(t.dir, 'sneaky.luau'), 'x')
   t.g('add', '.')
-  t.g('commit', '-qm', 'agent on main')
+  t.g('commit', '-qm', 'on main')
   const again = t.hangar()
   await again.recoverInterrupted()
   assert.equal(t.reviews.list().length, 0)
   assert.equal(t.g('branch', '--list', 'hangar/*').trim(), '', 'the empty task branch is removed')
   const log = again.snapshot(t.project.id).find((a) => a.agentId === 'main')!.log.map((e) => e.text).join('\n')
-  assert.match(log, /hadn't changed anything .* main moved \([0-9a-f]{9} → [0-9a-f]{9}\)/)
+  assert.match(log, /No files changed.* main moved \([0-9a-f]{9} → [0-9a-f]{9}\)/)
 })

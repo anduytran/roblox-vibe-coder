@@ -165,13 +165,35 @@ export async function dangerousGitConfig(root: string): Promise<string[]> {
  * one whose config points its working tree (or git folder) somewhere else — otherwise "git add -A" or a
  * checkout could reach files outside the project.
  */
+const realPath = (p: string): string => {
+  try {
+    return realpathSync.native(p)
+  } catch {
+    return p
+  }
+}
+
+/** Task copies Hangar made itself (folder → the game folder whose repository they belong to). */
+const taskCopies = new Map<string, string>()
+
+/** Let git run in a task's copy of the game: its git data must be the game's own (.git/worktrees/...). */
+export function trustTaskCopy(dir: string, root: string): void {
+  taskCopies.set(realPath(dir).toLowerCase(), root)
+}
+
 async function assertRepoIsProject(root: string): Promise<void> {
-  const real = (p: string): string => {
-    try {
-      return realpathSync.native(p)
-    } catch {
-      return p
+  const real = realPath
+  const owner = taskCopies.get(real(root).toLowerCase())
+  if (owner) {
+    // A copy Hangar made: a worktree whose git data sits inside the game's own .git folder, nowhere else.
+    const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
+    const gitDir = (await git(root, ['rev-parse', '--absolute-git-dir'])).trim()
+    const common = (await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim()
+    const mainGit = join(real(owner), '.git')
+    if (real(top).toLowerCase() !== real(root).toLowerCase() || real(common).toLowerCase() !== mainGit.toLowerCase() || !isInsideRoot(join(mainGit, 'worktrees'), real(gitDir))) {
+      throw new Error(`This copy of the game isn't one Hangar can trust (${gitDir}), so Hangar won't run git here.`)
     }
+    return
   }
   const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
   if (real(top).toLowerCase() !== real(root).toLowerCase()) {
@@ -313,6 +335,7 @@ export async function commitFile(root: string, file: string, message: string): P
   await git(root, ['add', '--', file])
   const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
   await git(root, [...identity, 'commit', '--no-verify', '--only', '-m', message.slice(0, 200), '--', file])
+  await noteHangarCommit(root)
 }
 
 // ---------- branch-per-task (autonomous mode) ----------
@@ -464,19 +487,74 @@ export async function startTaskBranch(root: string, branch: string, from: TaskBa
 }
 
 /**
+ * A task's own copy of the game: its new branch, from the base's commit, checked out in a folder of its own, so the
+ * game folder never switches branches and several tasks can run at once. Anything left in `dir` is cleared first.
+ */
+export async function startTaskWorktree(root: string, dir: string, branch: string, from: TaskBase): Promise<void> {
+  assertTaskBranch(branch)
+  if (!SHA.test(from.baseSha)) throw new Error('Invalid starting point.')
+  await clearWorktreeDir(root, dir)
+  await assertSafeRepo(root)
+  await git(root, ['worktree', 'add', '-q', '-b', branch, dir, from.baseSha])
+  trustTaskCopy(dir, root)
+}
+
+/** An existing task branch (a follow-up in the same conversation, or a clash to fix) in its own folder again. */
+export async function resumeTaskWorktree(root: string, dir: string, branch: string, headSha: string): Promise<void> {
+  assertTaskBranch(branch)
+  if (!SHA.test(headSha)) throw new Error('Invalid review.')
+  const tip = (await git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
+  if (tip !== headSha) throw new Error('That change\'s branch moved since it was reviewed.')
+  await clearWorktreeDir(root, dir)
+  await assertSafeRepo(root)
+  await git(root, ['worktree', 'add', '-q', dir, branch])
+  trustTaskCopy(dir, root)
+}
+
+/** Remove a task's copy (its branch stays). Safe to call when it's already gone. */
+export async function closeTaskWorktree(root: string, dir: string): Promise<void> {
+  await clearWorktreeDir(root, dir)
+}
+
+async function clearWorktreeDir(root: string, dir: string): Promise<void> {
+  await git(root, ['worktree', 'remove', '--force', '--force', dir]).catch(() => undefined)
+  rmSync(dir, { recursive: true, force: true })
+  await git(root, ['worktree', 'prune']).catch(() => undefined)
+}
+
+/**
  * Put back any branch or tag the agent changed, created or deleted (everything except its own task
  * branch). Returns what was restored, so the user is told.
  */
-async function restoreOtherRefs(root: string, from: TaskBase, branch: string): Promise<string[]> {
+/** Commits Hangar itself put on a base branch (merges, saved outside edits), so a task doesn't undo them. */
+const hangarCommits = new Set<string>()
+async function noteHangarCommit(root: string): Promise<void> {
+  const sha = (await git(root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']).catch(() => '')).trim()
+  if (sha) hangarCommits.add(sha)
+}
+
+async function restoreOtherRefs(root: string, from: TaskBase, branch: string, notes: string[] = []): Promise<string[]> {
   const own = `refs/heads/${branch}`
+  const base = `refs/heads/${from.base}`
   const now = await snapshotRefs(root)
   const restored: string[] = []
   // Remote-tracking refs (refs/remotes/...) only record what GitHub had at the last push or pull, which Hangar
   // updates itself (a push after a merge) while tasks run; they change nothing in the game, so they're left alone.
-  const kept = (ref: string): boolean => ref === own || ref.startsWith('refs/remotes/')
+  // Other task branches belong to tasks running at the same time.
+  const kept = (ref: string): boolean => ref === own || ref.startsWith('refs/remotes/') || ref.startsWith(`refs/heads/${BRANCH_PREFIX}`)
   for (const [ref, sha] of Object.entries(from.refs)) {
     if (kept(ref)) continue
     if (now[ref] !== sha) {
+      // The base branch moving forward while tasks run in their own copies: merges Hangar made are fine. If it now
+      // points at this task's own work, the agent moved it: put back. Anything else may be you: said, not undone.
+      if (ref === base && now[ref] && (await git(root, ['merge-base', '--is-ancestor', sha, now[ref]!]).then(() => true, () => false))) {
+        const tip = now[ref]!
+        const agents = await git(root, ['merge-base', '--is-ancestor', tip, `refs/heads/${branch}`]).then(() => true, () => false)
+        if (!agents) {
+          if (!hangarCommits.has(tip)) notes.push(`${from.base} gained commits while this task ran that Hangar didn't make (now at ${tip.slice(0, 9)}). They were left as they are: check them if you didn't make them.`)
+          continue
+        }
+      }
       await git(root, ['update-ref', ref, sha])
       restored.push(ref)
     }
@@ -536,6 +614,33 @@ export async function startClashFix(root: string, branch: string, base: string, 
   return { from, conflicts }
 }
 
+/**
+ * The same, in the change's own copy (`dir`): the game folder stays on the base branch throughout. If the merge fails
+ * for any reason other than conflicts, the copy is removed and the branch is as it was.
+ */
+export async function startClashFixWorktree(root: string, dir: string, branch: string, base: string, headSha: string): Promise<{ from: TaskBase; conflicts: string[] }> {
+  assertTaskBranch(branch)
+  if (!SHA.test(headSha)) throw new Error('Invalid review.')
+  let from = await prepareTaskBase(root)
+  if (from.base !== base) {
+    await git(root, ['checkout', base])
+    from = await prepareTaskBase(root)
+  }
+  await resumeTaskWorktree(root, dir, branch, headSha)
+  let conflicts: string[] = []
+  try {
+    await git(dir, ['merge', '--no-ff', '--no-commit', from.baseSha])
+  } catch (e) {
+    conflicts = conflictedFiles((await gitStatus(dir)).files)
+    if (!conflicts.length) {
+      await abortClashFix(dir, branch, headSha, from.base, { worktree: true }).catch(() => undefined)
+      await closeTaskWorktree(root, dir)
+      throw e
+    }
+  }
+  return { from, conflicts }
+}
+
 /** Files that still hold conflict marker lines (tracked or new, in the working folder). */
 export async function filesWithMarkers(root: string): Promise<string[]> {
   const out = await git(root, ['grep', '-l', '-I', '--untracked', '-E', ...MARKERS.flatMap((m) => ['-e', m]), '--'], { okExitCodes: [1] })
@@ -563,14 +668,15 @@ export async function finishClashFix(root: string, branch: string, baseSha: stri
 }
 
 /** Put the change's branch back exactly as it was before the fix, and the folder back on the base branch. */
-export async function abortClashFix(root: string, branch: string, headSha: string, base: string): Promise<void> {
+export async function abortClashFix(root: string, branch: string, headSha: string, base: string, opts: { worktree?: boolean } = {}): Promise<void> {
   assertTaskBranch(branch)
   if (!SHA.test(headSha)) throw new Error('Invalid review.')
   await assertSafeRepo(root)
   if (await hasMergeHead(root)) await git(root, ['merge', '--abort']).catch(() => undefined)
   if ((await currentBranch(root)) === branch) await git(root, ['reset', '--hard', '-q', headSha])
   else await git(root, ['update-ref', `refs/heads/${branch}`, headSha])
-  await git(root, ['checkout', base])
+  // A change's own copy is removed by the caller; the game folder never left the base branch.
+  if (!opts.worktree) await git(root, ['checkout', base])
 }
 
 export interface FinishedTask {
@@ -592,7 +698,7 @@ export async function finishTaskBranch(
   agentName: string,
   message: string,
   quarantineDir?: string,
-  opts: { recovering?: boolean } = {}
+  opts: { recovering?: boolean; worktree?: boolean } = {}
 ): Promise<FinishedTask> {
   assertTaskBranch(branch)
   await assertSafeRepo(root)
@@ -616,7 +722,7 @@ export async function finishTaskBranch(
     const changed = await refsChangedSince(root, from, branch)
     if (changed.length) notes.push(refsNote(changed))
   } else {
-    const restored = await restoreOtherRefs(root, from, branch)
+    const restored = await restoreOtherRefs(root, from, branch, notes)
     if (restored.length) notes.push(`The agent changed other branches or tags; Hangar put them back: ${restored.join(', ')}.`)
   }
 
@@ -637,11 +743,14 @@ export async function finishTaskBranch(
     await git(root, ['-c', `user.name=Hangar (${who})`, '-c', 'user.email=hangar@localhost', 'commit', '--no-verify', '-m', message.slice(0, 200)])
   }
   const headSha = (await git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
-  await git(root, ['checkout', from.base])
+  // In its own copy, the task's folder is simply removed afterwards (by the caller, who then deletes an empty branch).
+  if (!opts.worktree) await git(root, ['checkout', from.base])
   const files = (await git(root, ['diff', '--name-only', '-z', '--ignore-submodules=none', from.baseSha, headSha, '--'])).split('\0').filter(Boolean)
-  if (files.length === 0) await git(root, ['branch', '-D', branch]).catch(() => undefined)
+  if (files.length === 0 && !opts.worktree) await git(root, ['branch', '-D', branch]).catch(() => undefined)
   if (files.some((f) => /(^|\/)\.gitignore$/.test(f))) notes.push('This change edits .gitignore — check it doesn\'t hide or expose files you care about.')
-  if (opts.recovering) {
+  if (opts.worktree) {
+    // Git-ignored files the agent made stay in its copy, which is removed: they never reach your game folder.
+  } else if (opts.recovering) {
     const note = await ignoredChangesNote(root, from.ignored ?? null)
     if (note) notes.push(note)
   } else if (quarantineDir) {
@@ -708,6 +817,7 @@ export async function mergeTaskBranch(root: string, base: string, branch: string
       await git(root, ['reset', '--hard', '-q', 'HEAD'])
       throw e
     }
+    await noteHangarCommit(root)
   }
   await git(root, ['branch', '-D', branch]).catch(() => undefined)
 }
@@ -836,6 +946,7 @@ export async function tidyWorkingFolder(root: string): Promise<string[]> {
   await git(root, ['add', '-A'])
   const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
   await git(root, [...identity, 'commit', '--no-verify', '-m', 'Changes made outside Hangar'])
+  await noteHangarCommit(root)
   const n = status.files.length
   return [`Saved ${n} change${n === 1 ? '' : 's'} made outside Hangar (in Studio or an editor) as a commit on ${branch}, so the task starts from them.`]
 }

@@ -43,11 +43,13 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
   const gates: (() => void)[] = []
   const authCalls: unknown[] = []
   const prompts: string[] = []
+  const cwds: string[] = []
   let active = 0
   let maxActive = 0
   const query: QueryFn = ({ prompt, options }) =>
     (async function* () {
       prompts.push(prompt)
+      cwds.push(options.cwd as string)
       active++
       maxActive = Math.max(maxActive, active)
       try {
@@ -97,18 +99,22 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
   })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
-  return { dir, g, registry, project, runner, reviews, actions, events, gates, prompts, status, authCalls, maxActive: () => maxActive }
+  return { dir, g, registry, project, runner, reviews, actions, events, gates, prompts, cwds, status, authCalls, maxActive: () => maxActive }
 }
 
-test('autonomous: each task runs on its own branch and ends as a review; the base branch is untouched', async () => {
+test('autonomous: each task runs on its own branch, in its own copy of the game, and ends as a review; the game folder stays on main', async () => {
   const t = setup()
   t.runner.send(t.project.id, 'main', 'change the dash cooldown')
   await until(() => t.gates.length === 1)
-  assert.match((await currentBranch(t.dir)) ?? '', /^hangar\/main-change-the-dash-cooldown-/)
+  const copy = t.cwds[0]!
+  assert.notEqual(copy, t.dir, 'the agent works in its own copy')
+  assert.match((await currentBranch(copy)) ?? '', /^hangar\/main-change-the-dash-cooldown-/)
+  assert.equal(await currentBranch(t.dir), 'main', 'the game folder never switches branches')
   t.gates[0]!()
   await until(() => t.reviews.list().length === 1)
   const review = t.reviews.list()[0]!
-  assert.equal(await currentBranch(t.dir), 'main', 'switched back to the base branch')
+  assert.equal(await currentBranch(t.dir), 'main')
+  assert.equal(existsSync(copy), false, 'the copy is removed once the task is wrapped up')
   assert.equal(existsSync(join(t.dir, 'change_the_dash_cooldown.luau')), false, 'work is not on main yet')
   assert.deepEqual(review.files, ['change_the_dash_cooldown.luau'])
   assert.match(review.summary, /Playtested, no errors/)
@@ -243,7 +249,7 @@ test('audit: an agent moving main or other branches is undone, and the review on
   assert.ok(r.files.includes('evil.luau'), 'the sneaky commit is part of the reviewed change, not hidden in main')
 })
 
-test('audit: if the agent leaves the project on main with conflicting changes, nothing is committed to main', async () => {
+test('audit: an agent can\'t switch its copy onto main, and nothing is committed to main', async () => {
   const t = setup({
     during: (cwd, g) => {
       writeFileSync(join(cwd, 'game.luau'), 'print("task edit")\n')
@@ -255,10 +261,10 @@ test('audit: if the agent leaves the project on main with conflicting changes, n
   })
   const mainBefore = t.g('rev-parse', 'main').trim()
   t.runner.send(t.project.id, 'main', 'change conflict')
-  await until(() => t.gates.length === 1)
-  t.gates[0]!()
-  await until(() => t.runner.snapshot(t.project.id)[0]!.log.some((e) => /couldn't switch back/.test(e.text)))
+  // main is in use by the game folder, so the agent's checkout fails and its run ends with that error.
+  await until(() => t.status('main') === 'error')
   assert.equal(t.g('rev-parse', 'main').trim(), mainBefore, 'main has no new commit')
+  assert.equal(t.g('status', '--porcelain').trim(), '', 'the game folder is untouched')
   assert.equal(t.reviews.list().length, 0)
 })
 
