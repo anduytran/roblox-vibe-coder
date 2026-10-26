@@ -447,7 +447,8 @@ app.whenReady().then(() => {
     registry,
     reviews,
     emit,
-    runChecks: (project, review) => runChecks(project, review, { workDir: join(dataDir(), 'builds'), appDataDir: dataDir() }),
+    runChecks: (project, review) =>
+      runChecks(project, review, { workDir: join(dataDir(), 'builds'), appDataDir: dataDir(), keys: testPlaceKeys, rojoCommand: settings.get().rojoCommand }),
     reviewer: new TaskReviewer({ loadQuery, engineAuth, getApiKey: getCredential, getSettings: () => settings.get(), costs, workDir: join(dataDir(), 'builds') })
   })
 

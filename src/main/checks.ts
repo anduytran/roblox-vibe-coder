@@ -1,13 +1,15 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import type { CheckResult, Project, Review, ReviewChecks } from '@shared/types'
+import { revealHidden } from '@shared/text'
 import { buildAgentEnv } from './agentRunner'
 import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
 import { isProtectedPath } from './pathScope'
 import { shellWords } from './permissions'
-import { resolveCommand } from './testPlace'
+import { resolveCommand, unsafeRojoPaths, uploadPlace, type KeySource } from './testPlace'
+import { cleanLuauTests, CLOUD_CHECK_NAME, hasChecks, LUNE_CHECK_NAME, LUNE_RUNNER, LUNE_RUNNER_FILE, openCloudApi, runOnTestPlace, type CloudApi } from './luauTests'
 import { realTool } from './studioSync'
 import { CREDENTIAL_DIRS } from './sandbox'
 
@@ -170,13 +172,27 @@ export async function checksBlockedReason(project: Project, review: Review): Pro
   return null
 }
 
-export async function runChecks(
-  project: Project,
-  review: Review,
-  opts: { workDir: string; appDataDir: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; home?: string }
-): Promise<ReviewChecks | null> {
+export interface CheckOptions {
+  workDir: string
+  appDataDir: string
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
+  home?: string
+  /** Open Cloud keys for the test-place Luau tests (they stay in this process). */
+  keys?: KeySource
+  /** Settings → Roblox's Rojo command. */
+  rojoCommand?: string
+  /** The Open Cloud calls for a project's test place (tests pass a fake). */
+  cloud?: (place: { universeId: string; placeId: string }, apiKey: string) => CloudApi
+  pollMs?: number
+}
+
+const MAX_PLACE_BYTES = 100 * 1024 * 1024
+
+export async function runChecks(project: Project, review: Review, opts: CheckOptions): Promise<ReviewChecks | null> {
   const checks = project.settings.checks
-  if (!checks.length || review.kind === 'research') return null
+  const luau = cleanLuauTests(project.settings.luauTests)
+  if (!hasChecks(project.settings) || review.kind === 'research') return null
   const platform = opts.platform ?? process.platform
   const blocked = await checksBlockedReason(project, review)
   if (blocked) return { status: 'skipped', reason: blocked, results: [] }
@@ -225,6 +241,9 @@ export async function runChecks(
         ms: Date.now() - started
       })
     }
+    const ctx = { project, tree, work, platform, wantSandbox, opts }
+    if (luau.lune) results.push(await runLuneTests(ctx))
+    if (luau.testPlace) results.push(await runTestPlaceTests(ctx))
     return { status: 'done', reason: null, results, sandboxed: wantSandbox }
   } catch (err) {
     return { status: 'done', reason: `Couldn't prepare a checkout to run checks: ${err instanceof Error ? err.message : String(err)}`, results }
@@ -233,5 +252,86 @@ export async function runChecks(
     rmSync(work, { recursive: true, force: true })
   }
 }
+
+interface LuauContext {
+  project: Project
+  tree: string
+  work: string
+  platform: NodeJS.Platform
+  wantSandbox: boolean
+  opts: CheckOptions
+}
+
+/** Every *.spec.luau (but *.cloud.spec.luau) in the checkout, run by Hangar's own runner with Lune, in the sandbox. */
+async function runLuneTests({ tree, work, platform, wantSandbox, opts }: LuauContext): Promise<CheckResult> {
+  const command = `lune run ${LUNE_RUNNER_FILE}`
+  const error = (output: string): CheckResult => ({ name: LUNE_CHECK_NAME, command, status: 'error', output, ms: 0 })
+  // Tests execute game code (and Lune can reach files, processes and the network), so never without the sandbox.
+  if (!wantSandbox) {
+    return error(
+      platform === 'win32'
+        ? "Lune tests run game code, so they only run inside the OS sandbox, which Windows doesn't have. Use the test place tests instead."
+        : "Lune tests run game code, so they only run with this project's sandbox on."
+    )
+  }
+  const program = realTool('lune', resolveCommand('lune', opts.env ?? process.env, platform), opts.home, platform)
+  if (!program) return error('Couldn\'t find "lune" on your PATH. Install Lune (for example: rokit add --global lune-org/lune), then run the checks again.')
+  const args = ['run', LUNE_RUNNER_FILE]
+  const wrap = sandboxCommand(platform, program, args, { work, appDataDir: opts.appDataDir, home: opts.home, env: opts.env })
+  if (!wrap) return error('The sandbox is not available, so the Lune tests did not run.')
+  const started = Date.now()
+  // The checkout is Hangar's temporary copy (symlinks were refused), so writing the runner here can't reach anywhere else.
+  writeFileSync(join(tree, LUNE_RUNNER_FILE), LUNE_RUNNER, 'utf8')
+  const ran = await runOne(program, args, tree, platform, wrap)
+  return {
+    name: LUNE_CHECK_NAME,
+    command,
+    status: ran.error ? 'error' : ran.code === 0 ? 'passed' : 'failed',
+    output: revealHidden(tidyOutput(ran.error ? `${ran.error}\n${ran.output}` : ran.output)),
+    ms: Date.now() - started
+  }
+}
+
+/** Build the branch with Rojo (sandboxed), upload it as a saved version of the test place and run the smoke test there. */
+async function runTestPlaceTests({ project, tree, work, platform, wantSandbox, opts }: LuauContext): Promise<CheckResult> {
+  const command = 'rojo build, then Open Cloud Luau execution on the test place'
+  const result = (status: CheckResult['status'], output: string, ms = 0): CheckResult => ({ name: CLOUD_CHECK_NAME, command, status, output, ms })
+  const place = project.settings.testPlace
+  if (!place) return result('error', "Set this project's test place (universe and place IDs) in the Project tab first.")
+  const apiKey = opts.keys?.get(project.id) ?? null
+  if (!apiKey) return result('error', 'Add a Roblox Open Cloud API key for this project in the Project tab first.')
+  const rojoCmd = opts.rojoCommand || 'rojo'
+  const rojo = realTool('rojo', resolveCommand(rojoCmd, opts.env ?? process.env, platform), opts.home, platform)
+  if (!rojo) return result('error', `Couldn't find Rojo ("${rojoCmd}"). Install it or set its full path in Settings → Roblox.`)
+  const bad = unsafeRojoPaths(tree)
+  if (bad.length) return result('error', `Rojo project files point outside the project, so this branch wasn't uploaded: ${bad.slice(0, 5).join('; ')}`)
+
+  const started = Date.now()
+  const out = join(work, 'place.rbxl')
+  const args = ['build', tree + sep, '-o', out]
+  const wrap = wantSandbox ? sandboxCommand(platform, rojo, args, { work, appDataDir: opts.appDataDir, home: opts.home, env: opts.env }) : null
+  if (wantSandbox && !wrap) return result('error', 'The sandbox is not available, so the branch was not built.')
+  // Run Rojo from Hangar's folder (not the branch checkout), like publishing does.
+  const built = await runOne(rojo, args, work, platform, wrap)
+  if (built.error || built.code !== 0 || !existsSync(out)) {
+    return result('failed', revealHidden(tidyOutput(`Rojo couldn't build this branch.\n${built.error ?? ''}\n${built.output}`)), Date.now() - started)
+  }
+  if (statSync(out).size > MAX_PLACE_BYTES) return result('error', 'The built place is too large to upload.', Date.now() - started)
+  const api = (opts.cloud ?? defaultCloud)(place, apiKey)
+  try {
+    const ran = await runOnTestPlace(api, readFileSync(out), { pollMs: opts.pollMs })
+    return result(ran.status, tidyOutput(ran.output), Date.now() - started)
+  } catch (err) {
+    return result('error', revealHidden(err instanceof Error ? err.message : String(err)), Date.now() - started)
+  }
+}
+
+const defaultCloud = (place: { universeId: string; placeId: string }, apiKey: string): CloudApi =>
+  openCloudApi({
+    ...place,
+    apiKey,
+    // A saved version: what players of the test place get stays the same until you publish.
+    upload: (body) => uploadPlace({ ...place, apiKey, body, versionType: 'Saved' })
+  })
 
 export { checksFailed } from '@shared/reviewRules'

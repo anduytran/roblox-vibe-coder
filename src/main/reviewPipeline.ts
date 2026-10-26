@@ -1,4 +1,5 @@
 import type { AgentEvent, AiReview, Project, Review, ReviewChecks } from '@shared/types'
+import { hasChecks } from './luauTests'
 import type { ProjectRegistry } from './projects'
 import type { ReviewStore } from './reviews'
 
@@ -39,7 +40,7 @@ export class ReviewPipeline {
     } catch {
       return Promise.resolve()
     }
-    const wantChecks = project.settings.checks.length > 0
+    const wantChecks = hasChecks(project.settings)
     const wantReviewer = (opts.reviewer ?? true) && project.settings.reviewer && this.deps.reviewer !== null
     if (!wantChecks && !wantReviewer) return Promise.resolve()
     this.patch(review.id, {

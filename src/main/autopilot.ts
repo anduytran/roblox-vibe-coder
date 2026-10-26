@@ -60,7 +60,7 @@ export interface AutopilotDeps {
  * Blocked items never stop the build: the Lead writes down what each one waits for and builds the next thing that
  * isn't blocked. (Twenty sprints once stalled on "playtest first" and "needs the product owner".)
  */
-export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
+export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with Luau tests (*.spec.luau files, which Hangar runs without Studio) and the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
 
 /** Tries at resolving one change's clash on its own before it waits for you. */
 export const MAX_CLASH_FIXES = 2
@@ -192,7 +192,7 @@ export class Autopilot {
         ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each (what to build, which files, the acceptance criteria). Do only glue too small to hand off.`
         : 'Build it yourself.',
       test: qa
-        ? 'Then hand "qa-tester" a playtest with the Agent tool: play it in Studio against the acceptance criteria and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
+        ? 'Then hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, play it in Studio when Studio tools are available, and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
         : 'Then playtest it yourself against the acceptance criteria.'
     }
   }

@@ -200,7 +200,8 @@ test('C3/H2: agents get no settings files, CLAUDE.md from Hangar, roles as subag
   // Its limits are tools it may not use, so connected tools (Roblox Studio, for playtests) stay available to it.
   const qa = (o.agents as Record<string, { tools?: string[]; disallowedTools?: string[] }>)['qa-tester']!
   assert.equal(qa.tools, undefined)
-  assert.ok(qa.disallowedTools!.includes('Edit') && qa.disallowedTools!.includes('Bash'))
+  // It writes Luau tests (Edit/Write), but never runs commands.
+  assert.ok(!qa.disallowedTools!.includes('Edit') && qa.disallowedTools!.includes('Bash'))
   assert.ok(!qa.disallowedTools!.some((t) => t.startsWith('mcp__')))
   const env = o.env as Record<string, string>
   assert.equal(env.HANGAR_TEST_SECRET, undefined)

@@ -58,6 +58,14 @@ export interface CheckCommand {
   command: string
 }
 
+/** Luau tests Hangar runs on each finished task without Roblox Studio (see src/main/luauTests.ts). */
+export interface LuauTestSettings {
+  /** Run *.spec.luau files locally with Lune, in the OS sandbox. */
+  lune: boolean
+  /** Build the branch, upload it to the test place as a saved version and run a smoke test there with Open Cloud. */
+  testPlace: boolean
+}
+
 export interface ProjectSettings {
   /** Attach Roblox Studio's built-in MCP server to this project's agents. */
   robloxStudioMcp: boolean
@@ -87,6 +95,8 @@ export interface ProjectSettings {
   testPlace: { universeId: string; placeId: string } | null
   /** Run on each finished autonomous task, in a separate checkout of its branch. */
   checks: CheckCommand[]
+  /** Luau tests that run without Studio (absent = both off). */
+  luauTests?: LuauTestSettings
   /** A read-only reviewer agent reads each finished task's change and reports problems. */
   reviewer: boolean
   /** The Main agent's own instructions, tools, effort, budget, Studio access and knowledge folder. */

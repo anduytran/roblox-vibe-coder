@@ -12,6 +12,7 @@ const PLAIN = /^[A-Za-z0-9._/@+,-]+( [A-Za-z0-9._/@+,-]+)*$/
 /** "Before you merge": check commands run on every finished task, and the reviewer agent. */
 export function ChecksCard({ project, update }: { project: Project; update: (patch: { settings: Partial<ProjectSettings> }, message?: string) => void }) {
   const s = project.settings
+  const luau = s.luauTests ?? { lune: false, testPlace: false }
   const [rows, setRows] = useState<CheckCommand[]>(s.checks)
   // Only a change to the saved checks resets the rows (saving another setting must not drop unsaved ones).
   const savedKey = JSON.stringify(project.settings.checks)
@@ -34,6 +35,19 @@ export function ChecksCard({ project, update }: { project: Project; update: (pat
         onChange={(v) => update({ settings: { reviewer: v } }, v ? 'Reviewer agent on.' : 'Reviewer agent off.')}
         label="Reviewer agent"
         hint="A separate, read-only Claude session reads each change and reports problems: client trust, backdoors, DataStore risks, performance, scope. Costs up to $1 per task (usually far less). It's advice — it can be fooled by the code it reads."
+      />
+      <span className="field-label">Luau tests (no Studio needed)</span>
+      <Toggle
+        checked={luau.lune}
+        onChange={(v) => update({ settings: { luauTests: { ...luau, lune: v } } }, v ? 'Lune tests on.' : 'Lune tests off.')}
+        label="Run tests with Lune"
+        hint="Runs every *.spec.luau file (except *.cloud.spec.luau) on this computer with Lune, inside the sandbox: for game logic that doesn't need the engine. Needs Lune installed and the sandbox on (macOS or Linux)."
+      />
+      <Toggle
+        checked={luau.testPlace}
+        onChange={(v) => update({ settings: { luauTests: { ...luau, testPlace: v } } }, v ? 'Test place tests on.' : 'Test place tests off.')}
+        label="Run tests on the test place"
+        hint="Builds the branch, uploads it to your test place as a saved (not published) version, and runs it in a real Roblox server with Open Cloud: every module must load, then every .spec module's tests run. Needs the test place and an API key with luau-execution-session Write (Publishing section). Takes a minute or two per task."
       />
       <span className="field-label">Check commands</span>
       <div className="check-list">

@@ -33,7 +33,7 @@ export function findRojo(command: string, home = homedir(), platform: NodeJS.Pla
 }
 
 /** Official sources of the Roblox tools Hangar runs itself (checks, sync, publishing), as Rokit/Aftman store them. */
-const OFFICIAL: Record<string, [string, string]> = { rojo: ['rojo-rbx', 'rojo'], selene: ['kampfkarren', 'selene'], stylua: ['johnnymorganz', 'stylua'] }
+const OFFICIAL: Record<string, [string, string]> = { rojo: ['rojo-rbx', 'rojo'], selene: ['kampfkarren', 'selene'], stylua: ['johnnymorganz', 'stylua'], lune: ['lune-org', 'lune'] }
 
 /**
  * The real program for a tool found at `resolved`. A real install is used as is; a Rokit/Aftman launcher (which only

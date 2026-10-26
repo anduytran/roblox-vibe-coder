@@ -36,13 +36,13 @@ function run(cmd: string, args: string[], cwd: string): Promise<void> {
   })
 }
 
-export function uploadPlace(opts: { universeId: string; placeId: string; apiKey: string; body: Buffer; host?: string }): Promise<{ versionNumber: number }> {
+export function uploadPlace(opts: { universeId: string; placeId: string; apiKey: string; body: Buffer; host?: string; versionType?: 'Published' | 'Saved' }): Promise<{ versionNumber: number }> {
   return new Promise((resolveUpload, reject) => {
     const req = request(
       {
         host: opts.host ?? 'apis.roblox.com',
         method: 'POST',
-        path: `/universes/v1/${encodeURIComponent(opts.universeId)}/places/${encodeURIComponent(opts.placeId)}/versions?versionType=Published`,
+        path: `/universes/v1/${encodeURIComponent(opts.universeId)}/places/${encodeURIComponent(opts.placeId)}/versions?versionType=${opts.versionType ?? 'Published'}`,
         headers: { 'x-api-key': opts.apiKey, 'content-type': 'application/octet-stream', 'content-length': opts.body.length },
         timeout: 5 * 60 * 1000
       },

@@ -66,6 +66,12 @@ Project tab → Before you merge. Every finished autonomous task is checked befo
 - **Checks** — commands you list (suggested: `stylua --check src`, `selene src`, `rojo build -o hangar-check.rbxl`) run in a temporary copy of the task's branch, so your project folder isn't touched. On macOS/Linux they run inside the OS sandbox. They're skipped (and Merge asks you to confirm) when a task changes files that decide what runs, like `rokit.toml`, `package.json` or JS tool configs.
 - **Reviewer agent** — a separate, read-only Claude session reads the change with a Roblox checklist (client trust in RemoteEvents, backdoors like `require(id)`/`loadstring`, DataStore safety, performance, scope creep) and returns a verdict with findings. Up to $1 per task.
 
+- **Luau tests (no Studio needed)** — so autopilot can test its work overnight. Tests are `*.spec.luau` files next to the module they test, returning a table of test functions (a test fails when it errors). The QA Tester writes them for each feature's acceptance criteria. Two runners, each a toggle:
+  - **Run tests with Lune**: every `*.spec.luau` (except `*.cloud.spec.luau`) runs on your computer with [Lune](https://github.com/lune-org/lune), inside the sandbox. For plain game logic; Lune has no engine (no `game`, `workspace` or `Instance`). Install Lune first (for example `rokit add --global lune-org/lune`). macOS/Linux only.
+  - **Run tests on the test place**: builds the branch, uploads it to your test place as a saved (unpublished) version and runs it in a real Roblox server with Open Cloud Luau Execution: every ModuleScript must load without errors, then every `.spec` module's tests run (put engine tests in `*.cloud.spec.luau`). Needs the test place IDs and an Open Cloud key with `universe-places` Write **and** `luau-execution-session` Write (see *Test place publishing*). A minute or two per task.
+
+  Turn on at least one before an overnight run: passing tests count like any other check, so auto-merge can land work without a playtest. With Lune on, a project with no tests yet fails the check until the QA Tester writes some. Projects set up before this keep their old read-only QA Tester (`.claude/agents/qa-tester.md`): give it the `Write` and `Edit` tools and the new instructions from `ROLE_TEMPLATES` in `src/main/roles.ts`.
+
 Results show on the review (desktop and phone). Merge turns into **Merge anyway…** when a check failed or didn't run, the reviewer says "don't merge", or something is still running. **Run again** / **Review again** re-run them.
 
 ## Web researcher
@@ -183,6 +189,7 @@ src/
     projects.ts      project registry, MCP config (Roblox Studio + .mcp.json)
     roles.ts         .claude/agents role files + templates
     checks.ts        "before you merge" check commands (temp checkout, OS sandbox)
+    luauTests.ts     Luau tests without Studio: Lune runner, Open Cloud smoke test
     taskReviewer.ts  read-only reviewer agent
     reviewPipeline.ts runs checks then the reviewer on each finished task
     webEgress.ts     the web researcher's filtering proxy

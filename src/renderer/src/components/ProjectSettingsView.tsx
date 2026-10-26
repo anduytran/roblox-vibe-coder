@@ -292,7 +292,7 @@ export function ProjectSettingsView({ project }: { project: Project }) {
               </div>
               <Field
                 label="Roblox Open Cloud API key"
-                hint="Create it on the Creator Dashboard with only the universe-places Write permission, for this one game. Stored encrypted; agents never see it."
+                hint="Create it on the Creator Dashboard for this one game, with only the universe-places Write permission (add luau-execution-session Write too to run Luau tests on the test place). Stored encrypted; agents never see it."
               >
                 <div className="row gap-xs">
                   <input type="password" autoComplete="off" value={cloudKey} onChange={(e) => setCloudKey(e.target.value)} placeholder={hasCloudKey ? 'A key is saved — paste to replace' : 'Paste key'} />

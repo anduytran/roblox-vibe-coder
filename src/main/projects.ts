@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import type { AppSettings, CheckCommand, Project, ProjectSettings } from '@shared/types'
 import { cleanMainAgent } from '@shared/agentConfig'
 import { JsonStore } from './jsonStore'
+import { cleanLuauTests } from './luauTests'
 import { BLENDER_MCP_NAME, shellWords, STUDIO_MCP_NAME } from './permissions'
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -19,6 +20,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autonomous: false,
   testPlace: null,
   checks: [],
+  luauTests: { lune: false, testPlace: false },
   reviewer: true,
   safetyChecker: false
 }
@@ -106,6 +108,7 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
         : null,
     sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d)),
     checks: sanitizeChecks(s.checks),
+    luauTests: cleanLuauTests(s.luauTests),
     reviewer: s.reviewer !== false,
     safetyChecker: s.safetyChecker === true,
     autoPush: s.autoPush !== false,
