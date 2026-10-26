@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { gitCommit, gitStatus, mergeTaskBranch, tidyWorkingFolder } from '../src/main/git'
+import { finishTaskBranch, gitCommit, gitStatus, mergeTaskBranch, prepareTaskBase, startTaskBranch, tidyWorkingFolder } from '../src/main/git'
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), 'hangar-mc-'))
@@ -64,4 +64,18 @@ test('a half-finished merge is never saved as a commit', async () => {
   await assert.rejects(tidyWorkingFolder(r.dir), /half-finished, with conflicts in Gun\.luau/)
   await assert.rejects(gitCommit(r.dir, 'save'), /half-finished/)
   assert.equal(r.g('log', '--format=%s', '-1'), 'ours')
+})
+
+test('a push during a task (GitHub tracking refs moving) is not "put back"', async () => {
+  const r = repo()
+  r.g('update-ref', 'refs/remotes/origin/main', r.g('rev-parse', 'main'))
+  const from = await prepareTaskBase(r.dir)
+  await startTaskBranch(r.dir, 'hangar/lead-x-777777', from)
+  writeFileSync(join(r.dir, 'New.luau'), 'return 1\n')
+  // Meanwhile Hangar pushed a merge and recorded what GitHub has now.
+  r.g('update-ref', 'refs/remotes/origin/main', r.g('rev-parse', 'HEAD'))
+  r.g('update-ref', 'refs/remotes/origin/HEAD', r.g('rev-parse', 'HEAD'))
+  const done = await finishTaskBranch(r.dir, 'hangar/lead-x-777777', from, 'Lead', 'x')
+  assert.doesNotMatch(done.note ?? '', /put them back/)
+  assert.equal(r.g('rev-parse', 'refs/remotes/origin/HEAD'), r.g('rev-parse', 'main'), 'left as it was')
 })

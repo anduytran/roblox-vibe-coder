@@ -492,6 +492,8 @@ export class AgentRunner {
     // This agent's own settings: its role file, or the project's Main agent settings.
     const own = role ?? project.settings.mainAgent ?? {}
     const runBudget = own.budgetUsd ?? settings.perRunBudgetUsd
+    // On a Claude Max plan there's no per-task dollar cap: the plan's usage limits decide (checked before each run).
+    const onPlan = settings.authMode === 'max'
 
     const controller = new AbortController()
     this.controllers.set(key, controller)
@@ -660,7 +662,7 @@ export class AgentRunner {
             })
         ),
         mcpServers: research ? {} : mcpServersFor(project, settings, review.servers, { blender: !!role?.mcp?.includes('blender'), studio: own.studio }),
-        maxBudgetUsd: runBudget,
+        ...(onPlan ? {} : { maxBudgetUsd: runBudget }),
         ...(own.effort && !research ? { effort: own.effort } : {}),
         maxTurns: MAX_TURNS,
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
@@ -749,7 +751,7 @@ export class AgentRunner {
         this.log(s, { kind: 'error', text: s.lastError })
       }
     } finally {
-      if (started && !finished) {
+      if (started && !finished && !onPlan) {
         // A stopped or crashed run never reports its cost. Count the per-task limit as a worst case so
         // daily limits still hold (the real cost is usually lower; the Claude Console has exact billing).
         const estimate = runBudget

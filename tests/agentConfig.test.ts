@@ -83,7 +83,7 @@ test('knowledge: a folder per agent, listed by name, never through a link', () =
   assert.equal(knowledgeUsable(dir, 'afile'), false)
 })
 
-function runnerFor(dir: string) {
+function runnerFor(dir: string, app: AppSettings = settings) {
   const registry = new ProjectRegistry(join(tmp('hangar-ac-reg-'), 'projects.json'))
   const project = registry.add(dir)
   registry.update(project.id, { settings: { sandbox: false, robloxStudioMcp: true } })
@@ -98,7 +98,7 @@ function runnerFor(dir: string) {
   const runner: AgentRunner = new AgentRunner({
     registry,
     costs: new CostTracker(join(tmp('hangar-ac-c-'), 'costs.json')),
-    getSettings: () => settings,
+    getSettings: () => app,
     getApiKey: () => 'sk-ant-test',
     engineAuth: async (k) => ({ env: { ANTHROPIC_API_KEY: k }, release: () => {} }),
     loadQuery: async () => query,
@@ -302,4 +302,17 @@ test('helpers: one running in the background stays working until the engine says
   await until(() => !scripter().helping)
   const lead = () => runner.snapshot(project.id).find((a) => a.agentId === 'lead')!
   await until(() => lead().status !== 'working')
+})
+
+test('max plan: no per-task dollar cap is given to the engine', async () => {
+  const dir = tmp('hangar-max-')
+  saveRole(dir, { id: 'scripter', name: 'Scripter', description: 'code', prompt: 'Scripter here.', budgetUsd: 3 })
+  const t = runnerFor(dir, { ...settings, authMode: 'max' })
+  t.runner.send(t.project.id, 'scripter', 'go')
+  await until(() => t.calls.length === 1)
+  assert.equal(t.calls[0]!.options.maxBudgetUsd, undefined)
+  const api = runnerFor(dir)
+  api.runner.send(api.project.id, 'scripter', 'go')
+  await until(() => api.calls.length === 1)
+  assert.equal(api.calls[0]!.options.maxBudgetUsd, 3, 'with an API key the cap stays')
 })

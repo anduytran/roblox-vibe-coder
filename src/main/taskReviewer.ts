@@ -143,7 +143,7 @@ export class TaskReviewer {
           mcpServers: {},
           // No allowedTools: that would approve reads without asking canUseTool, which keeps them inside the checkout.
           disallowedTools: NOT_ALLOWED,
-          maxBudgetUsd: budget,
+          ...(settings.authMode === 'max' ? {} : { maxBudgetUsd: budget }),
           maxTurns: 30,
           env: buildAgentEnv(auth.env),
           canUseTool

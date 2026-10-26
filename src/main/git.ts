@@ -471,15 +471,18 @@ async function restoreOtherRefs(root: string, from: TaskBase, branch: string): P
   const own = `refs/heads/${branch}`
   const now = await snapshotRefs(root)
   const restored: string[] = []
+  // Remote-tracking refs (refs/remotes/...) only record what GitHub had at the last push or pull, which Hangar
+  // updates itself (a push after a merge) while tasks run; they change nothing in the game, so they're left alone.
+  const kept = (ref: string): boolean => ref === own || ref.startsWith('refs/remotes/')
   for (const [ref, sha] of Object.entries(from.refs)) {
-    if (ref === own) continue
+    if (kept(ref)) continue
     if (now[ref] !== sha) {
       await git(root, ['update-ref', ref, sha])
       restored.push(ref)
     }
   }
   for (const ref of Object.keys(now)) {
-    if (ref === own || ref in from.refs || ref === 'refs/stash') continue
+    if (kept(ref) || ref in from.refs || ref === 'refs/stash') continue
     await git(root, ['update-ref', '-d', ref])
     restored.push(ref)
   }

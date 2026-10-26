@@ -37,6 +37,8 @@ export function AgentSettingsFields(props: {
 }) {
   const { value: f, onChange } = props
   const perRun = useStore((s) => s.settings?.perRunBudgetUsd)
+  // On a Claude Max plan, usage limits decide, not dollars.
+  const onPlan = useStore((s) => s.settings?.authMode === 'max')
   const set = (patch: Partial<AgentFormState>): void => onChange({ ...f, ...patch })
   const toggleGroup = (g: ToolGroup, on: boolean): void => {
     const groups = new Set(f.groups)
@@ -80,9 +82,16 @@ export function AgentSettingsFields(props: {
             ))}
           </select>
         </Field>
-        <Field label="Spending limit per task (USD)" hint={`Empty = the app's limit${perRun ? ` ($${perRun})` : ''}. Up to $20.`}>
-          <input value={f.budget} onChange={(e) => set({ budget: e.target.value })} inputMode="decimal" placeholder={perRun ? String(perRun) : ''} />
-        </Field>
+        {onPlan ? (
+          <div className="field">
+            <span className="field-label">Spending limit per task</span>
+            <span className="small muted">None on your Max plan: work pauses at the plan's usage limits instead.</span>
+          </div>
+        ) : (
+          <Field label="Spending limit per task (USD)" hint={`Empty = the app's limit${perRun ? ` ($${perRun})` : ''}. Up to $20.`}>
+            <input value={f.budget} onChange={(e) => set({ budget: e.target.value })} inputMode="decimal" placeholder={perRun ? String(perRun) : ''} />
+          </Field>
+        )}
       </div>
       <Field label="Knowledge folder" hint="Its own notes inside the project. It searches them before working and adds what it learns. Plain Markdown, reviewed in git like code.">
         <input value={f.knowledge} onChange={(e) => set({ knowledge: e.target.value })} placeholder={`knowledge/${props.agentId || '<name>'}`} />
