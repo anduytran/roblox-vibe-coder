@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { GitFile, GitHubLink, GitStatus } from '@shared/types'
@@ -45,6 +45,21 @@ const FORCED_CONFIG: [string, string][] = [
   ['tag.gpgSign', 'false'],
   ['protocol.ext.allow', 'never']
 ]
+
+/**
+ * Notes merge by keeping both sides' lines (git's built-in union merge): two tasks that each tick off a roadmap item
+ * or add a decision no longer clash, which used to cost an AI run per merge. Code merges as usual, and so do the
+ * files that tell agents what to do (CLAUDE.md, .claude/). Only the built-in drivers can be named here.
+ */
+const NOTE_MERGE_ATTRIBUTES = '*.md merge=union\n*.MD merge=union\nCLAUDE.md merge\n.claude/** merge\n'
+let noteMergeFile: string | null = null
+function noteMergeConfig(): string[] {
+  if (!noteMergeFile || !existsSync(noteMergeFile)) {
+    noteMergeFile = join(mkdtempSync(join(tmpdir(), 'hangar-merge-')), 'attributes')
+    writeFileSync(noteMergeFile, NOTE_MERGE_ATTRIBUTES, 'utf8')
+  }
+  return ['-c', `core.attributesFile=${noteMergeFile}`]
+}
 
 export function gitSafetyEnv(): Record<string, string> {
   const env: Record<string, string> = {
@@ -610,7 +625,7 @@ export async function startClashFix(root: string, branch: string, base: string, 
   await git(root, ['checkout', branch])
   let conflicts: string[] = []
   try {
-    await git(root, ['merge', '--no-ff', '--no-commit', from.baseSha])
+    await git(root, [...noteMergeConfig(), 'merge', '--no-ff', '--no-commit', from.baseSha])
   } catch (e) {
     conflicts = conflictedFiles((await gitStatus(root)).files)
     if (!conflicts.length) {
@@ -636,7 +651,7 @@ export async function startClashFixWorktree(root: string, dir: string, branch: s
   await resumeTaskWorktree(root, dir, branch, headSha)
   let conflicts: string[] = []
   try {
-    await git(dir, ['merge', '--no-ff', '--no-commit', from.baseSha])
+    await git(dir, [...noteMergeConfig(), 'merge', '--no-ff', '--no-commit', from.baseSha])
   } catch (e) {
     conflicts = conflictedFiles((await gitStatus(dir)).files)
     if (!conflicts.length) {
@@ -800,7 +815,7 @@ export async function mergeTaskBranch(root: string, base: string, branch: string
   const branchTip = (await git(root, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
   if (branchTip && branchTip !== headSha) throw new Error('The task branch changed after it was reviewed. Discard it, or look at it in the Changes tab.')
   try {
-    await git(root, ['merge', '--squash', headSha])
+    await git(root, [...noteMergeConfig(), 'merge', '--squash', headSha])
   } catch (e) {
     // The folder was clean before (prepareTaskBase), so putting it back to the last commit loses nothing but the
     // failed merge. Never leave it half-merged: a later save would commit the conflict markers.

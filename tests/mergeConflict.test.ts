@@ -79,3 +79,34 @@ test('a push during a task (GitHub tracking refs moving) is not "put back"', asy
   assert.doesNotMatch(done.note ?? '', /put them back/)
   assert.equal(r.g('rev-parse', 'refs/remotes/origin/HEAD'), r.g('rev-parse', 'main'), 'left as it was')
 })
+
+test('notes merge by keeping both sides; code and CLAUDE.md still clash', async () => {
+  const r = repo()
+  writeFileSync(join(r.dir, 'Roadmap.md'), '# Roadmap\n- [ ] Sprint\n- [ ] Glider\n')
+  writeFileSync(join(r.dir, 'CLAUDE.md'), 'Rules v1\n')
+  r.g('add', '.')
+  r.g('commit', '-qm', 'notes')
+  const branchWith = (name: string, roadmap: string, extra: Record<string, string> = {}): string => {
+    r.g('checkout', '-q', '-b', name, 'main')
+    writeFileSync(join(r.dir, 'Roadmap.md'), roadmap)
+    for (const [f, t] of Object.entries(extra)) writeFileSync(join(r.dir, f), t)
+    r.g('add', '.')
+    r.g('commit', '-qm', name)
+    const sha = r.g('rev-parse', 'HEAD')
+    r.g('checkout', '-q', 'main')
+    return sha
+  }
+  const a = branchWith('hangar/lead-a-aaaaaa', '# Roadmap\n- [x] Sprint\n- [ ] Glider\n')
+  const b = branchWith('hangar/lead-b-bbbbbb', '# Roadmap\n- [ ] Sprint\n- [x] Glider\n')
+  await mergeTaskBranch(r.dir, 'main', 'hangar/lead-a-aaaaaa', a, 'A')
+  await mergeTaskBranch(r.dir, 'main', 'hangar/lead-b-bbbbbb', b, 'B')
+  const roadmap = readFileSync(join(r.dir, 'Roadmap.md'), 'utf8')
+  assert.match(roadmap, /- \[x\] Sprint/)
+  assert.match(roadmap, /- \[x\] Glider/)
+  assert.doesNotMatch(roadmap, /<<<<<<</)
+  // CLAUDE.md (agent instructions) is never merged line by line.
+  const c = branchWith('hangar/lead-c-cccccc', roadmap, { 'CLAUDE.md': 'Rules from c\n' })
+  const d = branchWith('hangar/lead-d-dddddd', roadmap, { 'CLAUDE.md': 'Rules from d\n' })
+  await mergeTaskBranch(r.dir, 'main', 'hangar/lead-c-cccccc', c, 'C')
+  await assert.rejects(mergeTaskBranch(r.dir, 'main', 'hangar/lead-d-dddddd', d, 'D'), /clashes with work already on main \(in CLAUDE\.md\)/)
+})
