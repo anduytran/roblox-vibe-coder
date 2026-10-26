@@ -27,7 +27,7 @@ export interface StreamMessage {
   status?: string
   model?: string
   mcp_servers?: { name?: string; status?: string }[]
-  message?: { content?: ContentBlock[] | string }
+  message?: { content?: ContentBlock[] | string; usage?: Record<string, unknown> }
   total_cost_usd?: number
   num_turns?: number
   is_error?: boolean
@@ -47,6 +47,8 @@ export interface Converted {
   images?: { toolUseId: string; mediaType: string; data: string }[]
   /** The assistant's latest text, for the review summary. */
   text?: string
+  /** How big the conversation is now (tokens the model read for this turn), for the agent's own turns. */
+  contextTokens?: number
 }
 
 const MAX_TEXT = 4000
@@ -93,6 +95,11 @@ export function convertMessage(msg: StreamMessage): Converted {
       break
     }
     case 'assistant': {
+      const usage = msg.message?.usage
+      if (usage && !msg.parent_tool_use_id) {
+        const n = (k: string): number => (typeof usage[k] === 'number' ? (usage[k] as number) : 0)
+        out.contextTokens = n('input_tokens') + n('cache_read_input_tokens') + n('cache_creation_input_tokens')
+      }
       const content = msg.message?.content
       if (!Array.isArray(content)) break
       for (const block of content) {

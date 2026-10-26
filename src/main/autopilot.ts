@@ -45,7 +45,7 @@ export interface AutopilotDeps {
   reviews: ReviewStore
   costs: CostTracker
   emit: (e: AgentEvent) => void
-  send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin'] }) => void
+  send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin']; fresh?: boolean }) => void
   merge: (reviewId: string) => Promise<unknown>
   /**
    * True on a Claude Max plan: dollar budgets don't apply (the plan's usage limits do, through the runner, which
@@ -189,7 +189,7 @@ export class Autopilot {
     if (!builders.length && !qa) return null
     return {
       build: builders.length
-        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each (what to build, which files, the acceptance criteria). Do only glue too small to hand off.`
+        ? `Don't write the feature yourself: hand the building to ${builders.join(' and ')} with the Agent tool, one clear brief each (what to build, which files, the acceptance criteria). Run them in the foreground and wait (not run_in_background); independent briefs go in the same message so they run at the same time. Do only glue too small to hand off.`
         : 'Build it yourself.',
       test: qa
         ? 'Then hand "qa-tester" a playtest with the Agent tool: play it in Studio against the acceptance criteria and report what fails. Have the builders fix what it finds, then have it test again (at most twice). Say in your final message what QA found.'
@@ -260,7 +260,8 @@ export class Autopilot {
         projectId,
         item.agentId,
         `While I was away you wanted to do this, and it needed my OK, so it was set aside:\n\n${item.summary}\n\nI'm here now: do it (you'll get an approval card for me to allow), then finish whatever it was for.`,
-        { origin: undefined }
+        // One action: it doesn't need (or re-read) the agent's whole conversation.
+        { origin: undefined, fresh: true }
       )
     }
     return next
