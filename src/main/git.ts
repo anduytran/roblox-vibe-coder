@@ -91,6 +91,21 @@ export function parsePorcelain(out: string): GitFile[] {
   return files
 }
 
+/** Files git couldn't merge (both sides changed them): status codes DD, AU, UD, UA, DU, AA, UU. */
+export function conflictedFiles(files: GitFile[]): string[] {
+  return files.filter((f) => /^(DD|AU|UD|UA|DU|AA|UU)$/.test(f.status)).map((f) => f.path)
+}
+
+/** Never commit a half-finished merge: its files hold conflict markers (<<<<<<<), which would break the game. */
+function assertNoConflicts(files: GitFile[]): void {
+  const c = conflictedFiles(files)
+  if (c.length) {
+    throw new Error(
+      `A merge was left half-finished, with conflicts in ${c.slice(0, 4).join(', ')}${c.length > 4 ? '…' : ''}. Discard those files in the Changes tab (or fix them by hand) first.`
+    )
+  }
+}
+
 function assertInside(root: string, file: string): void {
   if (!file || !isInsideRoot(root, file)) throw new Error('File is outside the project folder.')
 }
@@ -248,7 +263,7 @@ function devNull(): string {
 export async function gitCommit(root: string, message: string): Promise<void> {
   const msg = message.trim()
   if (!msg) throw new Error('Commit message is empty.')
-  await assertSafeRepo(root)
+  assertNoConflicts((await gitStatus(root)).files) // also refuses dangerous config
   await git(root, ['add', '-A'])
   await git(root, ['commit', '--no-verify', '-m', msg])
 }
@@ -584,9 +599,31 @@ export async function mergeTaskBranch(root: string, base: string, branch: string
   if (ready.base !== base) await git(root, ['checkout', base])
   const branchTip = (await git(root, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]).catch(() => '')).trim()
   if (branchTip && branchTip !== headSha) throw new Error('The task branch changed after it was reviewed. Discard it, or look at it in the Changes tab.')
-  await git(root, ['merge', '--squash', headSha])
-  const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
-  await git(root, [...identity, 'commit', '--no-verify', '-m', message.slice(0, 200)])
+  try {
+    await git(root, ['merge', '--squash', headSha])
+  } catch (e) {
+    // The folder was clean before (prepareTaskBase), so putting it back to the last commit loses nothing but the
+    // failed merge. Never leave it half-merged: a later save would commit the conflict markers.
+    const conflicts = conflictedFiles((await gitStatus(root).catch(() => null))?.files ?? [])
+    await git(root, ['reset', '--hard', '-q', 'HEAD'])
+    if (conflicts.length) {
+      throw new Error(
+        `This change clashes with work already on ${base} (in ${conflicts.slice(0, 4).join(', ')}${conflicts.length > 4 ? '…' : ''}). Nothing was merged. Discard it, or ask the agent to redo it on top of the latest ${base}.`
+      )
+    }
+    throw e
+  }
+  // Already on the base branch exactly (an identical change merged earlier): nothing to commit.
+  const changed = (await git(root, ['diff', '--cached', '--name-only'])).trim() !== ''
+  if (changed) {
+    const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
+    try {
+      await git(root, [...identity, 'commit', '--no-verify', '-m', message.slice(0, 200)])
+    } catch (e) {
+      await git(root, ['reset', '--hard', '-q', 'HEAD'])
+      throw e
+    }
+  }
   await git(root, ['branch', '-D', branch]).catch(() => undefined)
 }
 
@@ -710,6 +747,7 @@ export async function tidyWorkingFolder(root: string): Promise<string[]> {
     return [`The folder was left on ${branch}; Hangar switched it back to ${to}.`]
   }
   if (!status.files.length) return []
+  assertNoConflicts(status.files)
   await git(root, ['add', '-A'])
   const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
   await git(root, [...identity, 'commit', '--no-verify', '-m', 'Changes made outside Hangar'])
