@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ApprovalDecision, ApprovalExplanation, ApprovalRequest, ExplainVerdict } from '@shared/types'
 import { revealHidden } from '@shared/text'
-import { attempt } from '../store'
+import { attempt, useStore } from '../store'
 import { Button } from './ui'
 
 /** Answers already shown, so a card that appears again (Inbox, feed) shows its explanation at once. Main caches them too. */
@@ -14,6 +14,7 @@ const VERDICT: Record<ExplainVerdict, { label: string; mark: string }> = {
 }
 
 export function ApprovalCard({ request, onDecided }: { request: ApprovalRequest; onDecided?: (d: ApprovalDecision) => void }) {
+  const checker = useStore((st) => st.projects.find((p) => p.id === request.projectId)?.settings.safetyChecker === true) && !request.dangerous && request.toolName !== 'Project setup' && !request.truncated
   const [showInput, setShowInput] = useState(false)
   const [busy, setBusy] = useState(false)
   const [explanation, setExplanation] = useState<ApprovalExplanation | null>(() => explained.get(request.id) ?? null)
@@ -47,6 +48,7 @@ export function ApprovalCard({ request, onDecided }: { request: ApprovalRequest;
       <div className="approval-head">
         <strong>{title}</strong>
         <span className="muted small">{request.reason}</span>
+        {checker && <span className="small approval-checker">Hangar's safety checker is looking at this; it approves it if it's plainly safe.</span>}
       </div>
       {/* The full summary is always shown, never clipped, so nothing can hide below the fold. */}
       <pre className="approval-summary">{request.summary}</pre>

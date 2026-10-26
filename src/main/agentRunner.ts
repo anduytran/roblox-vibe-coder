@@ -385,7 +385,7 @@ export class AgentRunner {
     this.deps.emit({ type: 'reset', projectId, agentId })
   }
 
-  respond(id: string, decision: ApprovalDecision): void {
+  respond(id: string, decision: ApprovalDecision, by?: string): void {
     const p = this.pending.get(id)
     if (!p) return
     this.pending.delete(id)
@@ -409,7 +409,7 @@ export class AgentRunner {
       s.status = 'working'
       this.publish(s)
     }
-    this.log(s, { kind: 'system', text: `${allowed ? 'Approved' : 'Declined'}: ${request.summary}` })
+    this.log(s, { kind: 'system', text: `${allowed ? 'Approved' : 'Declined'}${by ? ` by ${by}` : ''}: ${request.summary}` })
   }
 
   private denyPendingFor(projectId: string, agentId: string, message: string): void {

@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 import { normalizeModel } from '@shared/models'
 import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type KeyStatus } from '@shared/ipc'
-import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, QueuedTask, Role } from '@shared/types'
+import type { AgentEvent, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
@@ -20,7 +20,7 @@ import { ReviewActions } from './reviewActions'
 import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
-import { ApprovalExplainer } from './approvalExplainer'
+import { ApprovalExplainer, checkerMayApprove } from './approvalExplainer'
 import { WebEgressProxy } from './webEgress'
 import { Autopilot } from './autopilot'
 import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame, MAX_DOCUMENT } from './scaffold'
@@ -59,6 +59,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 let mainWindow: BrowserWindow | null = null
 /** Set once the Studio sync exists (created after the event plumbing that needs it). */
 let studioSyncRef: import('./studioSync').StudioSync | null = null
+let explainerRef: import('./approvalExplainer').ApprovalExplainer | null = null
 
 /**
  * The one way a link leaves the app: https only, no credentials in the address, and only after you
@@ -270,8 +271,34 @@ app.whenReady().then(() => {
       n.show()
     }
   })
+  // The safety checker (a project setting): may this request be looked at, and if it's plainly safe, approve it.
+  const safetyCheckerFor = (r: ApprovalRequest): boolean => {
+    try {
+      return registry.get(r.projectId).settings.safetyChecker && !r.dangerous && r.toolName !== 'Project setup'
+    } catch {
+      return false
+    }
+  }
+  const safetyCheck = async (r: ApprovalRequest): Promise<boolean> => {
+    const explainer = explainerRef
+    if (!explainer) return false
+    const e = await explainer.explain(r.id).catch(() => null)
+    if (!checkerMayApprove(r, e) || !runner.pendingApprovals().some((x) => x.id === r.id)) return false
+    runner.respond(r.id, 'allow', "Hangar's safety checker")
+    return true
+  }
   const emit = (event: AgentEvent): void => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
+    // With the safety checker on, an approval it clears never pings your phone or desktop; one it doesn't, does.
+    if (event.type === 'approval' && safetyCheckerFor(event.request)) {
+      void safetyCheck(event.request).then((cleared) => {
+        if (!cleared) {
+          notifier.onEvent(event)
+          remote?.onEvent(event)
+        }
+      })
+      return
+    }
     notifier.onEvent(event)
     remote?.onEvent(event)
     if (event.type === 'review') {
@@ -409,6 +436,7 @@ app.whenReady().then(() => {
     getProject: (id) => registry.get(id),
     appDataDir: dataDir()
   })
+  explainerRef = explainer
   // What's already waiting at startup doesn't notify again.
   notifier.seed({
     reviews: reviews.list().filter((r) => r.status === 'pending').map((r) => r.id),

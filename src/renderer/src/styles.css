@@ -4314,3 +4314,6 @@ kbd {
 .error-bar-action {
   margin-left: 10px;
 }
+.approval-checker {
+  color: var(--info);
+}

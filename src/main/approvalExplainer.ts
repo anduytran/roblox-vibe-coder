@@ -498,6 +498,17 @@ export function combineExplanation(
 
 // ---------- the explainer ----------
 
+/**
+ * Whether the safety checker may approve this one by itself (a project setting, off by default). Only the plainest
+ * case: an ordinary (not high-risk) action shown in full, that the AI called "safe" AND Hangar's own code checks found
+ * nothing at all about. Anything else waits for you, with the explanation ready on the card.
+ */
+export function checkerMayApprove(request: ApprovalRequest, e: ApprovalExplanation | null): boolean {
+  if (!e || e.status !== 'done' || e.approvalId !== request.id) return false
+  if (request.dangerous || request.truncated || request.toolName === 'Project setup') return false
+  return e.aiVerdict === 'safe' && e.verdict === 'safe' && e.flags.length === 0 && e.deletes !== true && e.network !== true
+}
+
 export interface ExplainerDeps {
   loadQuery: () => Promise<QueryFn>
   getApiKey: () => string | null

@@ -63,6 +63,11 @@ export interface ProjectSettings {
   checks: CheckCommand[]
   /** A read-only reviewer agent reads each finished task's change and reports problems. */
   reviewer: boolean
+  /**
+   * A second AI looks at each waiting approval (only the action, never the conversation) and approves it when it's
+   * plainly safe and Hangar's own checks found nothing. High-risk actions always wait for you.
+   */
+  safetyChecker: boolean
 }
 
 export interface Project {

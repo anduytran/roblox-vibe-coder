@@ -150,6 +150,12 @@ These can't be tested without the real Agent SDK and are worth checking once:
 - Hangar also runs its own checks in code, without the AI: deleting, the internet (and downloading something then running it), package installs, admin rights, printing secrets, paths outside the project, `.git`, `.claude`/`.mcp.json`, credential folders (`~/.ssh`, `~/.aws`…), `.env` files, Hangar's own data folder, hidden characters, cut details and red cards. They are always listed, and the verdict shown is never milder than they are, whatever the AI says.
 - Answers are kept per approval while it waits, so opening the card again costs nothing. The phone doesn't have Explain.
 
+## Safety checker that can approve (2026-10-26)
+
+- Off by default, per project (Project → Safety → "Let a safety checker approve plainly safe actions"). When on, every waiting approval in that project is sent to the same explainer (it sees only the action, never the conversation), and Hangar approves it only if all of these hold: not high-risk (red), not project setup, shown in full (not cut for length), the AI's own verdict is "safe", the combined verdict is "safe", Hangar's code checks found nothing at all (no deleting, internet, paths outside the project, .git/.claude, credential folders), and the AI didn't say it deletes or uses the network. `checkerMayApprove` in approvalExplainer.ts, with tests.
+- It never chooses "Always allow", never answers high-risk actions, and a "deny"/"careful" just leaves the card for you (with the explanation ready). Each approval it gives is logged in the agent's feed as "Approved by Hangar's safety checker". Approvals it clears don't notify your phone or desktop; ones it doesn't, do.
+- Residual risk: this is an AI judging attacker-influenced text. Prompt injection could talk it into "safe"; the code checks and the high-risk rules are the backstop, and in autonomous mode the OS sandbox still confines whatever runs.
+
 ## Remaining risks (be aware)
 
 - **On Windows there is no OS sandbox.** An approved shell command runs with your full permissions. Read commands before allowing them.

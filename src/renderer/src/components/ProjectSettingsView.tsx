@@ -186,6 +186,12 @@ export function ProjectSettingsView({ project }: { project: Project }) {
               <section className="card">
                 <h3>Permissions</h3>
                 <Toggle
+                  checked={s.safetyChecker}
+                  onChange={(v) => update({ settings: { safetyChecker: v } }, v ? 'Safety checker on.' : 'Safety checker off.')}
+                  label="Let a safety checker approve plainly safe actions"
+                  hint="A second AI looks at each action waiting for you (only the action, never the conversation) and approves it when it only reads or makes ordinary changes inside the game, and Hangar's own checks found nothing. High-risk actions, and anything that deletes, uses the internet or reaches outside the game, still wait for you. Each approval it gives is noted in the agent's feed. It's AI advice, so it can be fooled."
+                />
+                <Toggle
                   checked={s.autoApproveEdits}
                   onChange={(v) => update({ settings: { autoApproveEdits: v } })}
                   label="Auto-approve file edits inside this project"

@@ -18,7 +18,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autonomous: false,
   testPlace: null,
   checks: [],
-  reviewer: true
+  reviewer: true,
+  safetyChecker: false
 }
 
 export class ProjectRegistry {
@@ -104,7 +105,8 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
         : null,
     sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d)),
     checks: sanitizeChecks(s.checks),
-    reviewer: s.reviewer !== false
+    reviewer: s.reviewer !== false,
+    safetyChecker: s.safetyChecker === true
   }
 }
 
