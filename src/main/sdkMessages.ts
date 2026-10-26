@@ -21,6 +21,10 @@ export interface StreamMessage {
   subtype?: string
   session_id?: string
   parent_tool_use_id?: string | null
+  /** task_started / task_notification: the Agent tool call a background helper belongs to. */
+  tool_use_id?: string
+  is_backgrounded?: boolean
+  status?: string
   model?: string
   mcp_servers?: { name?: string; status?: string }[]
   message?: { content?: ContentBlock[] | string }

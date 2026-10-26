@@ -256,3 +256,50 @@ test('helpers: a role the Lead hands work to shows as working for it, with its s
   await until(() => !scripter().helping)
   assert.ok(logs().some((t) => /Handed the work back to Lead/.test(t)))
 })
+
+test('helpers: one running in the background stays working until the engine says it is done', async () => {
+  const dir = tmp('hangar-bg-')
+  const { installTemplates } = await import('../src/main/roles')
+  installTemplates(dir)
+  const registry = new ProjectRegistry(join(tmp('hangar-bg-reg-'), 'projects.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { sandbox: false } })
+  let release: () => void = () => {}
+  const gate = new Promise<void>((r) => (release = r))
+  const query: QueryFn = () =>
+    (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 's', mcp_servers: [] }
+      yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call-1', name: 'Agent', input: { subagent_type: 'scripter', description: 'Build safe ledges', prompt: 'Build it', run_in_background: true } }] } }
+      yield { type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'call-1', description: 'Build safe ledges', is_backgrounded: true }
+      yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'Async agent launched successfully. It is running in the background.' }] } }
+      yield { type: 'assistant', parent_tool_use_id: 'call-1', message: { content: [{ type: 'tool_use', id: 'sub-1', name: 'Read', input: { file_path: join(dir, 'Dash.luau') } }] } }
+      await gate
+      yield { type: 'system', subtype: 'task_notification', task_id: 't1', tool_use_id: 'call-1', status: 'completed', output_file: '', summary: 'done' }
+      await new Promise((r) => setTimeout(r, 20))
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const runner: AgentRunner = new AgentRunner({
+    registry,
+    costs: new CostTracker(join(tmp('hangar-bg-c-'), 'costs.json')),
+    getSettings: () => settings,
+    getApiKey: () => 'sk-ant-test',
+    engineAuth: async (k) => ({ env: { ANTHROPIC_API_KEY: k }, release: () => {} }),
+    loadQuery: async () => query,
+    emit: (e) => {
+      if (e.type === 'approval' && e.request.toolName === 'Project setup') queueMicrotask(() => runner.respond(e.request.id, 'allow'))
+    },
+    persistFile: join(tmp('hangar-bg-p-'), 'agents.json'),
+    trustFile: join(tmp('hangar-bg-t-'), 'trust.json'),
+    appDataDir: tmp('hangar-bg-app-'),
+    platform: 'linux',
+    reviews: new ReviewStore(join(tmp('hangar-bg-rv-'), 'reviews.json'))
+  })
+  const scripter = () => runner.snapshot(project.id).find((a) => a.agentId === 'scripter')!
+  runner.send(project.id, 'lead', 'safe ledges')
+  await until(() => !!scripter().helping?.activity)
+  assert.match(scripter().helping!.activity!, /Dash\.luau/, 'still working after the Agent call answered "launched"')
+  release()
+  await until(() => !scripter().helping)
+  const lead = () => runner.snapshot(project.id).find((a) => a.agentId === 'lead')!
+  await until(() => lead().status !== 'working')
+})

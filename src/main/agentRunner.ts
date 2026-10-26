@@ -500,7 +500,7 @@ export class AgentRunner {
     let releaseAuth: (() => void) | null = null
     let taskBranch: { name: string; from: TaskBase; reviewId?: string } | null = null
     // Helpers this run handed work to (by the id of the Agent tool call), shown as working on their own cards.
-    const helpers = new Map<string, AgentState>()
+    const helpers = new Map<string, Helper>()
     // Resolving a merge clash: the review, where its branch was, and the files in conflict.
     let clash: { review: Review; headSha: string; conflicts: string[] } | null = null
     let lastText = ''
@@ -1024,7 +1024,7 @@ export class AgentRunner {
    * When an agent hands work to another role (the Agent tool), that role shows as working for it, and the helper's
    * steps are copied into the helper's own feed. The work itself still runs inside this agent's run.
    */
-  private trackHelpers(s: AgentState, name: string, roles: Role[], helpers: Map<string, AgentState>, raw: StreamMessage, c: ReturnType<typeof convertMessage>): void {
+  private trackHelpers(s: AgentState, name: string, roles: Role[], helpers: Map<string, Helper>, raw: StreamMessage, c: ReturnType<typeof convertMessage>): void {
     const parent = raw.parent_tool_use_id ?? null
     if (!parent) {
       for (const t of c.toolUses ?? []) {
@@ -1033,16 +1033,28 @@ export class AgentRunner {
         if (id === s.agentId || !roles.some((r) => r.id === id)) continue
         const helper = this.state(s.projectId, id)
         const brief = stripHidden(typeof t.input.description === 'string' ? t.input.description : 'a task').replace(/\s+/g, ' ').slice(0, 120)
-        helpers.set(t.id, helper)
+        helpers.set(t.id, { state: helper, background: t.input.run_in_background === true })
         helper.helping = { for: s.agentId, forName: name, brief, activity: null }
         this.log(helper, { kind: 'system', text: `Working for ${name}: ${brief}` })
         this.publish(helper)
       }
-      // The Agent call's result: the helper handed its work back.
-      for (const e of c.entries) if ((e.kind === 'tool_result' || e.kind === 'error') && e.toolUseId && helpers.has(e.toolUseId)) this.endHelping(helpers, e.toolUseId)
+      // A helper running in the background: its Agent call answers "started" at once, and the engine says when the
+      // helper itself is done (task_notification).
+      if (raw.type === 'system' && raw.tool_use_id && helpers.has(raw.tool_use_id)) {
+        if (raw.subtype === 'task_started' && raw.is_backgrounded) helpers.get(raw.tool_use_id)!.background = true
+        if (raw.subtype === 'task_notification') this.endHelping(helpers, raw.tool_use_id)
+      }
+      // The Agent call's result: a helper in the foreground handed its work back.
+      for (const e of c.entries) {
+        if ((e.kind !== 'tool_result' && e.kind !== 'error') || !e.toolUseId) continue
+        const h = helpers.get(e.toolUseId)
+        if (!h) continue
+        if (e.kind === 'tool_result' && /running in the background|async agent launched/i.test(e.text)) h.background = true
+        if (!h.background || e.kind === 'error') this.endHelping(helpers, e.toolUseId)
+      }
       return
     }
-    const helper = helpers.get(parent)
+    const helper = helpers.get(parent)?.state
     if (!helper) return
     for (const e of c.entries) this.log(helper, { ...e, text: e.text.replace(/^↳ /, '') })
     if (helper.helping && c.activity !== undefined) {
@@ -1051,8 +1063,8 @@ export class AgentRunner {
     }
   }
 
-  private endHelping(helpers: Map<string, AgentState>, id: string): void {
-    const helper = helpers.get(id)
+  private endHelping(helpers: Map<string, Helper>, id: string): void {
+    const helper = helpers.get(id)?.state
     helpers.delete(id)
     if (!helper?.helping) return
     this.log(helper, { kind: 'system', text: `Handed the work back to ${helper.helping.forName}.` })
@@ -1324,4 +1336,11 @@ export function coordinateInstructions(c: Coordinate): string {
   }
 - You edit only your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}); Hangar refuses other file edits${c.qa ? ' and Studio use' : ''} from you. Don't edit files with shell commands either.
 - You can read anything and run checks (builds, linters) to judge the team's work.`
+}
+
+/** A role another agent handed work to, during that agent's run. */
+interface Helper {
+  state: AgentState
+  /** Runs in the background: done when the engine says so, not when the Agent call returns. */
+  background: boolean
 }
