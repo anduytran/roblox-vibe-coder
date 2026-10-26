@@ -108,6 +108,7 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     checks: sanitizeChecks(s.checks),
     reviewer: s.reviewer !== false,
     safetyChecker: s.safetyChecker === true,
+    autoPush: s.autoPush !== false,
     ...(cleanMainAgent(s.mainAgent) ? { mainAgent: cleanMainAgent(s.mainAgent) } : {})
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { GitHubLink, Project } from '@shared/types'
-import { attempt, confirmDialog, toast } from '../store'
-import { Button, Field } from './ui'
+import { attempt, confirmDialog, replaceProject, toast } from '../store'
+import { Button, Field, Toggle } from './ui'
 
 /** Link the project to a GitHub repository, and push or pull its main branch. Only from here; agents never push. */
 export function GitHubCard({ project }: { project: Project }) {
@@ -39,8 +39,8 @@ export function GitHubCard({ project }: { project: Project }) {
     <section className="card">
       <h3>GitHub</h3>
       <p className="small muted">
-        Keep a copy of the game on GitHub. Push sends your committed work on the current branch; Pull brings in commits made elsewhere. Only you push or pull, from
-        here — agents never do, and unreviewed task branches stay on this computer. Git signs in the way it does in your terminal (for example after{' '}
+        Keep a copy of the game on GitHub. Push sends your committed work on the current branch; Pull brings in commits made elsewhere. Agents never push, and
+        unreviewed task branches stay on this computer: only merged work is sent. Git signs in the way it does in your terminal (for example after{' '}
         <code>gh auth login</code>).
       </p>
       {link === null ? (
@@ -134,6 +134,19 @@ export function GitHubCard({ project }: { project: Project }) {
                 {busy === 'pull' ? 'Pulling…' : 'Pull'}
               </Button>
             </div>
+          )}
+          {link.repo && !editing && (
+            <Toggle
+              checked={project.settings.autoPush !== false}
+              onChange={(v) =>
+                void attempt(async () => {
+                  replaceProject(await window.hangar.projects.update(project.id, { settings: { autoPush: v } }))
+                  toast(v ? 'Each merge is pushed to GitHub.' : 'Merges stay on this computer until you push.')
+                })
+              }
+              label="Push to GitHub after each merge"
+              hint="Merged work is sent to the same branch on GitHub right away. If GitHub has commits this copy doesn't, nothing is forced: the review says so and you pull first."
+            />
           )}
         </>
       )}

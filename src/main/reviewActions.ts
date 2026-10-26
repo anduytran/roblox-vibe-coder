@@ -3,7 +3,7 @@ import { relativeInside } from './pathScope'
 import { extname, join } from 'node:path'
 import type { AgentEvent, Review } from '@shared/types'
 import type { AgentRunner } from './agentRunner'
-import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, MergeClashError, mergeTaskBranch, reviewDiff, tidyWorkingFolder } from './git'
+import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, githubLink, MergeClashError, mergeTaskBranch, pushToGitHub, reviewDiff, tidyWorkingFolder } from './git'
 import { checksFailed, mergeWarnings } from '@shared/reviewRules'
 import type { ReviewPipeline } from './reviewPipeline'
 import type { ProjectRegistry } from './projects'
@@ -93,8 +93,34 @@ export class ReviewActions {
         throw err
       }
       if (review.clip) StudioClipRecorder.remove(review.clip.files)
-      return this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
+      const merged = this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
+      void this.pushAfterMerge(merged)
+      return merged
     })
+  }
+
+  /** In the background after a merge: send the branch to the linked GitHub repository, unless that's turned off. */
+  private pushing: Promise<unknown> = Promise.resolve()
+  private pushAfterMerge(review: Review): Promise<unknown> {
+    // One push at a time, in merge order (Merge all merges several in a row).
+    this.pushing = this.pushing.then(async () => {
+      let root: string
+      try {
+        const project = this.deps.registry.get(review.projectId)
+        if (project.settings.autoPush === false) return
+        root = project.path
+        if (!(await githubLink(root)).repo) return
+      } catch {
+        return
+      }
+      try {
+        const r = await pushToGitHub(root, review.base)
+        this.changed(this.deps.reviews.update(review.id, { pushed: { at: Date.now(), repo: r.repo }, pushError: null }))
+      } catch (err) {
+        this.changed(this.deps.reviews.update(review.id, { pushError: (err instanceof Error ? err.message : String(err)).slice(0, 300) }))
+      }
+    })
+    return this.pushing
   }
 
   async discard(id: string): Promise<Review> {

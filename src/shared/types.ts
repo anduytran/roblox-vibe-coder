@@ -95,6 +95,8 @@ export interface ProjectSettings {
    * A second AI looks at each waiting approval (only the action, never the conversation) and approves it when it's
    * plainly safe and Hangar's own checks found nothing. High-risk actions always wait for you.
    */
+  /** Push the main branch to the linked GitHub repository after each merge (on unless turned off). */
+  autoPush?: boolean
   safetyChecker: boolean
 }
 
@@ -251,6 +253,9 @@ export interface Review {
   clash?: ReviewClash | null
   /** How many times an agent has tried to resolve a clash in this change. */
   clashFixes?: number
+  /** After merging: sent to GitHub (or why it couldn't be). */
+  pushed?: { at: number; repo: string } | null
+  pushError?: string | null
 }
 
 export interface ReviewClash {

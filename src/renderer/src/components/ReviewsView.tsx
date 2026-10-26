@@ -268,6 +268,8 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
         {review.note && <div className="error-bar">{review.note}</div>}
         {!isPending && <p className="muted">This task was {review.status}.</p>}
+        {review.status === 'merged' && review.pushed && <p className="muted small">Pushed to GitHub ({review.pushed.repo}) {timeAgo(review.pushed.at)}.</p>}
+        {review.status === 'merged' && review.pushError && <div className="error-bar">Merged, but not pushed to GitHub: {review.pushError} Push from the Project tab.</div>}
         {review.summary && (
           <>
             <span className="side-label">Agent's report</span>

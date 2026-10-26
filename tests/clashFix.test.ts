@@ -71,7 +71,7 @@ function setup(resolve: (text: string) => string) {
   })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null })
   const idle = () => runner.snapshot(project.id).every((a) => a.status !== 'working' && a.status !== 'queued')
-  return { dir, g, project, runner, reviews, actions, prompts, resumed, idle }
+  return { dir, g, project, registry, runner, reviews, actions, prompts, resumed, idle }
 }
 
 /** Two changes made from the same starting point; the first is merged, so the second clashes. */
@@ -213,4 +213,29 @@ test('merge all: a fixed change whose checks fail is left for you', async () => 
   t.actions.onReview(t.reviews.update(b, { checks: failed }))
   await new Promise((r) => setTimeout(r, 50))
   assert.equal(t.reviews.get(b).status, 'pending')
+})
+
+test('push after merge: nothing is sent without a linked repository or with the switch off', async () => {
+  const t = setup((x) => x)
+  t.runner.send(t.project.id, 'main', 'gun A')
+  await until(() => t.reviews.list().length === 1 && t.idle())
+  const a = t.reviews.list()[0]!
+  await t.actions.merge(a.id)
+  await new Promise((r) => setTimeout(r, 100))
+  assert.equal(t.reviews.get(a.id).pushed, undefined, 'not linked: nothing pushed')
+  assert.equal(t.reviews.get(a.id).pushError, undefined, 'and no error either')
+
+  // Linked, switch off: still nothing (no network call is made).
+  t.g('remote', 'add', 'origin', 'https://github.com/example/not-a-real-repo-xyz.git')
+  t.registry.update(t.project.id, { settings: { autoPush: false } })
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'gun B')
+  await until(() => t.reviews.list().length === 2 && t.idle())
+  const b = t.reviews.list().find((r) => r.id !== a.id)!
+  await t.actions.merge(b.id)
+  await new Promise((r) => setTimeout(r, 100))
+  assert.equal(t.reviews.get(b.id).status, 'merged')
+  assert.equal(t.reviews.get(b.id).pushed, undefined)
+  assert.equal(t.reviews.get(b.id).pushError, undefined)
+  assert.equal(t.registry.get(t.project.id).settings.autoPush, false)
 })

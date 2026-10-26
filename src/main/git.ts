@@ -973,11 +973,11 @@ export async function unlinkGitHub(root: string): Promise<GitHubLink> {
 }
 
 /** The linked repository and the branch to sync, or a reason not to. */
-async function syncTarget(root: string, action: string): Promise<{ repo: GitHubRepo; branch: string }> {
+async function syncTarget(root: string, action: string, named?: string): Promise<{ repo: GitHubRepo; branch: string }> {
   await assertSafeRepo(root)
   const { repo } = await originRepo(root)
   if (!repo) throw new Error(`Link a GitHub repository first, then ${action}.`)
-  const branch = await currentBranch(root)
+  const branch = named ?? (await currentBranch(root))
   if (!branch) throw new Error('Make a first commit in the Changes tab first.')
   if (branch.startsWith(BRANCH_PREFIX)) throw new Error(`You're on a task branch (${branch}). Switch back to your main branch first; unreviewed work is never sent to GitHub.`)
   if (!/^[A-Za-z0-9._/-]{1,120}$/.test(branch) || branch.startsWith('-')) throw new Error(`Hangar can't sync a branch named ${branch}.`)
@@ -988,8 +988,8 @@ async function syncTarget(root: string, action: string): Promise<{ repo: GitHubR
  * Send the current branch's commits to the same branch on GitHub. Never forces: if GitHub has commits this
  * copy doesn't, it stops and asks you to pull. Uncommitted changes and task branches stay on this computer.
  */
-export async function pushToGitHub(root: string): Promise<{ repo: string; branch: string }> {
-  const { repo, branch } = await syncTarget(root, 'push')
+export async function pushToGitHub(root: string, named?: string): Promise<{ repo: string; branch: string }> {
+  const { repo, branch } = await syncTarget(root, 'push', named)
   try {
     await git(root, [...NETWORK_CONFIG, 'push', '--no-verify', repo.url, `refs/heads/${branch}:refs/heads/${branch}`], { network: true })
   } catch (e) {
