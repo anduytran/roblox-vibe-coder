@@ -74,6 +74,7 @@ export const IPC = {
   studioSyncStatus: 'studio:syncStatus',
   studioSyncStart: 'studio:syncStart',
   studioSyncStop: 'studio:syncStop',
+  studioSyncReview: 'studio:syncReview',
   studioInstallPlugin: 'studio:installPlugin',
   studioInstallRojo: 'studio:installRojo',
   filesRead: 'files:read',
@@ -262,6 +263,8 @@ export interface HangarApi {
     syncStatus(): Promise<StudioSyncState>
     syncStart(projectId: string): Promise<StudioSyncState>
     syncStop(): Promise<StudioSyncState>
+    /** Show a review's change in Studio, from a separate copy (your game folder isn't switched). */
+    syncReview(reviewId: string): Promise<StudioSyncState>
     /** Put the Rojo plugin into Studio (restart Studio after). */
     installPlugin(): Promise<void>
     /** Install Rojo for every folder with Rokit. */

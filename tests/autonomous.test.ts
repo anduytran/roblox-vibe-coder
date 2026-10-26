@@ -145,19 +145,17 @@ test('autonomous: tasks in one project run one at a time; discard deletes the br
   assert.equal(t.g('branch', '--list', second.branch).trim(), '')
 })
 
-test('autonomous: refuses to start with uncommitted changes, and review actions wait for running agents', async () => {
+test('autonomous: your unsaved edits are saved as a commit before a task starts, and review actions wait for running agents', async () => {
   const t = setup()
   writeFileSync(join(t.dir, 'game.luau'), 'print("my unsaved work")\n')
-  t.runner.send(t.project.id, 'main', 'change x')
-  await until(() => t.status('main') === 'error')
-  assert.match(t.runner.snapshot(t.project.id)[0]!.lastError ?? '', /uncommitted changes/)
-  t.g('checkout', '--', 'game.luau')
-
   t.runner.send(t.project.id, 'main', 'change y')
   await until(() => t.gates.length === 1)
+  assert.match(t.g('log', 'main', '-1', '--format=%s'), /Changes made outside Hangar/, 'kept on main, not mixed into the task')
+  assert.ok(t.runner.snapshot(t.project.id)[0]!.log.some((e) => /Saved 1 change made outside Hangar/.test(e.text)))
   t.gates[0]!()
   await until(() => t.reviews.list().length === 1)
   const r = t.reviews.list()[0]!
+  assert.deepEqual(r.files, ['change_y.luau'], "the review holds only the agent's work")
   t.runner.send(t.project.id, 'main', 'change z')
   await until(() => t.gates.length === 2)
   await assert.rejects(t.actions.merge(r.id), /agent is working/)

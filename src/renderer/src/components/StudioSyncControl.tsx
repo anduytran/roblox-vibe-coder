@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Project } from '@shared/types'
 import { attempt, toast, useStore } from '../store'
+import { revealHidden } from '@shared/text'
 
 /**
  * Live sync of this game into Roblox Studio (Rojo), from the game's header: start or stop it, and the one-time
@@ -29,8 +30,13 @@ export function StudioSyncControl({ project }: { project: Project }) {
     return (
       <span className="studio-sync studio-sync-on" role="status">
         <span className="studio-dot" aria-hidden />
-        {status === 'starting' ? 'Starting sync…' : 'Syncing to Studio'}
+        {status === 'starting' ? 'Starting sync…' : sync.reviewId ? `Studio shows the change “${revealHidden(sync.reviewTitle ?? 'from Reviews')}”` : 'Syncing to Studio'}
         {status === 'running' && <span className="muted"> · in Studio: Plugins → Rojo → Connect</span>}
+        {sync.reviewId && (
+          <button className="link small" disabled={busy} onClick={start}>
+            Show the latest
+          </button>
+        )}
         <button className="link small" disabled={busy} onClick={() => go(() => window.hangar.studio.syncStop())}>
           Stop
         </button>

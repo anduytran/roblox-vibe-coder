@@ -57,6 +57,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 }
 
 let mainWindow: BrowserWindow | null = null
+/** Set once the Studio sync exists (created after the event plumbing that needs it). */
+let studioSyncRef: import('./studioSync').StudioSync | null = null
 
 /**
  * The one way a link leaves the app: https only, no credentials in the address, and only after you
@@ -272,7 +274,18 @@ app.whenReady().then(() => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentEvent, event)
     notifier.onEvent(event)
     remote?.onEvent(event)
-    if (event.type === 'review') autopilot?.onReview(event.review)
+    if (event.type === 'review') {
+      autopilot?.onReview(event.review)
+      // Studio was showing this change and it's merged or discarded: back to the game as it is now.
+      const shown = studioSyncRef?.status()
+      if (shown?.reviewId === event.review.id && event.review.status !== 'pending') {
+        try {
+          studioSyncRef!.start(registry.get(event.review.projectId))
+        } catch {
+          studioSyncRef!.stop()
+        }
+      }
+    }
   }
 
   const engineAuth = (credential: string, opts: { forceHideKey: boolean }): Promise<EngineAuth> => credentials.auth(credential, opts)
@@ -619,10 +632,20 @@ app.whenReady().then(() => {
   handle(IPC.testPlaceKeyClear, (id: unknown) => testPlaceKeys.clear(str(id, 'project')))
 
   // Live sync into Studio (rojo serve), one game at a time.
-  const studioSync = new StudioSync({ rojo: () => findRojo(settings.get().rojoCommand), emit: (state) => emit({ type: 'studioSync', state }) })
+  const studioSync = new StudioSync({
+    rojo: () => findRojo(settings.get().rojoCommand),
+    emit: (state) => emit({ type: 'studioSync', state }),
+    previewDir: (projectId) => join(dataDir(), 'studio-preview', projectId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64))
+  })
+  studioSyncRef = studioSync
   handle(IPC.studioSyncStatus, () => studioSync.status())
   handle(IPC.studioSyncStart, (id: unknown) => studioSync.start(registry.get(str(id, 'project'))))
   handle(IPC.studioSyncStop, () => studioSync.stop())
+  handle(IPC.studioSyncReview, (id: unknown) => {
+    const review = reviews.get(str(id, 'review'))
+    if (review.status !== 'pending' || review.kind === 'research') throw new Error('Only a change waiting for review can be tried in Studio.')
+    return studioSync.startReview(registry.get(review.projectId), review)
+  })
   handle(IPC.studioInstallPlugin, () => studioSync.installPlugin())
   handle(IPC.studioInstallRojo, () => installRojo())
   app.on('before-quit', () => studioSync.stop())

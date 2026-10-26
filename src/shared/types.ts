@@ -289,6 +289,9 @@ export interface StudioSyncState {
   status: 'off' | 'starting' | 'running' | 'error'
   port: number
   message: string | null
+  /** Studio shows this review's change (from a separate copy; your folder isn't switched), or null for the game as it is. */
+  reviewId?: string | null
+  reviewTitle?: string | null
 }
 
 /** One folder of the project, for the Files tab (read-only). */

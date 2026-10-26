@@ -82,8 +82,7 @@ export function UncommittedDialog() {
       </p>
       {onTask && (
         <p className="small warn">
-          The folder is on an agent's task branch ({status!.branch}): committing puts these changes into that task's review. To keep them separate, use Back to main
-          in Reviews first.
+          The folder is on an agent's task branch ({status!.branch}): committing puts these changes into that task's review. 
         </p>
       )}
       {!status ? (

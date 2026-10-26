@@ -130,6 +130,7 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
   const warnings = mergeWarnings(review)
   const totals = useMemo(() => (diff ? diffTotals(splitDiff(diff).files) : null), [diff])
   const [showWarnings, setShowWarnings] = useState(false)
+  const studioShowsThis = useStore((s) => s.studioSync.reviewId === review.id && s.studioSync.status !== 'off')
   // The strip's chips jump to their section ("top" is the start of the body).
   const at = useRef<Record<string, HTMLElement | null>>({})
   const go = (k: string): void => {
@@ -177,11 +178,13 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
               </Button>
             </div>
             <div className="row gap-xs">
-              <Button size="sm" disabled={!!busy} onClick={() => run('checkout', () => window.hangar.reviews.checkout(review.id), 'Switched your project folder to this branch. Try it in Studio, then switch back.')}>
-                Try it in Studio
-              </Button>
-              <Button size="sm" tone="ghost" disabled={!!busy} onClick={() => run('base', () => window.hangar.reviews.checkoutBase(project.id), `Back on ${review.base}.`)}>
-                Back to {review.base}
+              {/* Shown from a separate copy: the game folder never switches branches, so there's nothing to switch back. */}
+              <Button
+                size="sm"
+                disabled={!!busy}
+                onClick={() => run('studio', () => window.hangar.studio.syncReview(review.id), 'Studio now shows this change. In Studio: Plugins → Rojo → Connect, then Play.')}
+              >
+                {studioShowsThis ? 'Showing in Studio' : 'Try it in Studio'}
               </Button>
               {project.settings.testPlace ? (
                 <Button size="sm" disabled={!!busy} onClick={() => run('publish', () => window.hangar.reviews.publish(review.id), 'Published to your test place. Open it in the Roblox app.')}>

@@ -672,6 +672,37 @@ export async function leaveEmptyTaskBranch(root: string): Promise<{ from: string
   return { from: branch, to }
 }
 
+/**
+ * Gets the project folder ready before Hangar starts a task or merges, so you never manage branches yourself:
+ * - left on a task branch with nothing uncommitted (a crash, an old "Try it in Studio"): back to main (or master),
+ *   deleting that task branch if it holds nothing of its own;
+ * - on your own branch with edits made outside Hangar (in Studio, an editor): they're saved as one commit there,
+ *   so they're kept and the task can start from them.
+ * A task branch with uncommitted changes is left alone (that's for you to look at). Returns what it did, for the feed.
+ */
+export async function tidyWorkingFolder(root: string): Promise<string[]> {
+  const status = await gitStatus(root) // refuses dangerous config, before anything else runs
+  if (!status.isRepo) return []
+  const branch = await currentBranch(root)
+  if (!branch) return []
+  if (branch.startsWith(BRANCH_PREFIX)) {
+    if (status.files.length) return []
+    const heads = (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads/main', 'refs/heads/master'])).split('\n').map((l) => l.trim())
+    const to = heads.includes('refs/heads/main') ? 'main' : heads.includes('refs/heads/master') ? 'master' : null
+    if (!to) return []
+    await git(root, ['checkout', to])
+    const own = (await git(root, ['rev-list', '--count', `refs/heads/${to}..refs/heads/${branch}`]).catch(() => '1')).trim()
+    if (own === '0' && SAFE_BRANCH.test(branch)) await git(root, ['branch', '-D', branch]).catch(() => undefined)
+    return [`The folder was left on ${branch}; Hangar switched it back to ${to}.`]
+  }
+  if (!status.files.length) return []
+  await git(root, ['add', '-A'])
+  const identity = await git(root, ['config', 'user.email']).then(() => [] as string[]).catch(() => ['-c', 'user.name=Hangar', '-c', 'user.email=hangar@localhost'])
+  await git(root, [...identity, 'commit', '--no-verify', '-m', 'Changes made outside Hangar'])
+  const n = status.files.length
+  return [`Saved ${n} change${n === 1 ? '' : 's'} made outside Hangar (in Studio or an editor) as a commit on ${branch}, so the task starts from them.`]
+}
+
 export async function deleteTaskBranch(root: string, branch: string): Promise<void> {
   assertTaskBranch(branch)
   await assertSafeRepo(root)

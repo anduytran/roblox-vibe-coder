@@ -2,10 +2,12 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, lstatSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Project, StudioSyncState } from '@shared/types'
+import type { Project, Review, StudioSyncState } from '@shared/types'
 import { minimalEnv } from './env'
 import { linkInPath } from './pathScope'
 import { resolveCommand, unsafeRojoPaths } from './testPlace'
+import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
+import { rmSync } from 'node:fs'
 
 /** The port the Rojo plugin in Studio connects to unless told otherwise. */
 export const SYNC_PORT = 34872
@@ -66,8 +68,10 @@ const OFF: StudioSyncState = { projectId: null, status: 'off', port: SYNC_PORT, 
 export class StudioSync {
   private child: ChildProcess | null = null
   private state: StudioSyncState = OFF
+  /** The separate copy a review is served from, while one is. */
+  private preview: { root: string; dir: string } | null = null
 
-  constructor(private readonly deps: { rojo: () => string | null; emit: (s: StudioSyncState) => void; spawnFn?: typeof spawn }) {}
+  constructor(private readonly deps: { rojo: () => string | null; emit: (s: StudioSyncState) => void; spawnFn?: typeof spawn; previewDir?: (projectId: string) => string }) {}
 
   status(): StudioSyncState {
     return this.state
@@ -79,31 +83,55 @@ export class StudioSync {
     return s
   }
 
+  /** Serve the game as it is in its folder. */
   start(project: Project): StudioSyncState {
     this.stop()
-    const fail = (message: string): StudioSyncState => this.set({ projectId: project.id, status: 'error', port: SYNC_PORT, message })
+    return this.serve(project, project.path, null)
+  }
+
+  /**
+   * Serve a review's change from a separate copy of the game at that commit, so you can try it in Studio without your
+   * folder switching branches. "Show the latest" (start) or a merge/discard goes back to the folder.
+   */
+  async startReview(project: Project, review: Review): Promise<StudioSyncState> {
+    this.stop()
+    if (!this.deps.previewDir) throw new Error('Trying reviews in Studio is not set up.')
+    const dir = this.deps.previewDir(project.id)
+    await removeTempWorktree(project.path, dir)
+    rmSync(dir, { recursive: true, force: true })
+    // Links or submodules in the change could pull in files from elsewhere on your computer.
+    const links = await linksInCommit(project.path, review.headSha)
+    if (links.length) return this.set({ projectId: project.id, status: 'error', port: SYNC_PORT, message: `This change has links or submodules, so Hangar won't show it in Studio: ${links.slice(0, 3).join(', ')}`, reviewId: review.id, reviewTitle: review.title })
+    await addTempWorktree(project.path, review.headSha, dir)
+    this.preview = { root: project.path, dir }
+    return this.serve(project, dir, review)
+  }
+
+  private serve(project: Project, dir: string, review: Review | null): StudioSyncState {
+    const showing = { reviewId: review?.id ?? null, reviewTitle: review?.title ?? null }
+    const fail = (message: string): StudioSyncState => this.set({ projectId: project.id, status: 'error', port: SYNC_PORT, message, ...showing })
     const rojo = this.deps.rojo()
     if (!rojo) return fail("Rojo isn't installed. Use Install Rojo, or set its full path in Settings → Roblox.")
-    const file = projectFile(project.path)
+    const file = projectFile(dir)
     if (!file) return fail('No Rojo project file (default.project.json) in this game.')
-    if (linkInPath(project.path, join(project.path, file))) return fail(`${file} is a link, so Hangar won't serve it.`)
+    if (linkInPath(dir, join(dir, file))) return fail(`${file} is a link, so Hangar won't serve it.`)
     // A "$path" that leaves the project would put files from elsewhere on your computer into Studio.
-    const bad = unsafeRojoPaths(project.path)
+    const bad = unsafeRojoPaths(dir)
     if (bad.length) return fail(`Rojo project files point outside the game, so Hangar won't serve them: ${bad.slice(0, 3).join('; ')}`)
 
     const child = (this.deps.spawnFn ?? spawn)(rojo, ['serve', file, '--address', '127.0.0.1', '--port', String(SYNC_PORT)], {
-      cwd: project.path,
+      cwd: dir,
       env: minimalEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     })
     this.child = child
-    this.set({ projectId: project.id, status: 'starting', port: SYNC_PORT, message: null })
+    this.set({ projectId: project.id, status: 'starting', port: SYNC_PORT, message: null, ...showing })
     let tail = ''
     const read = (chunk: Buffer): void => {
       tail = (tail + chunk.toString('utf8')).slice(-2000)
       if (this.child === child && this.state.status === 'starting' && /listening|Port:\s*\d+/i.test(tail)) {
-        this.set({ projectId: project.id, status: 'running', port: SYNC_PORT, message: null })
+        this.set({ projectId: project.id, status: 'running', port: SYNC_PORT, message: null, ...showing })
       }
     }
     child.stdout?.on('data', read)
@@ -126,6 +154,11 @@ export class StudioSync {
     const child = this.child
     this.child = null
     if (child && child.exitCode === null) child.kill()
+    const preview = this.preview
+    this.preview = null
+    if (preview) {
+      void removeTempWorktree(preview.root, preview.dir).finally(() => rmSync(preview.dir, { recursive: true, force: true }))
+    }
     return this.state.status === 'off' ? this.state : this.set(OFF)
   }
 

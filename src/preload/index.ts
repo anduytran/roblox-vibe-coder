@@ -100,6 +100,7 @@ const api: HangarApi = {
     syncStatus: () => invoke(IPC.studioSyncStatus),
     syncStart: (id) => invoke(IPC.studioSyncStart, id),
     syncStop: () => invoke(IPC.studioSyncStop),
+    syncReview: (id) => invoke(IPC.studioSyncReview, id),
     installPlugin: () => invoke(IPC.studioInstallPlugin),
     installRojo: () => invoke(IPC.studioInstallRojo)
   },

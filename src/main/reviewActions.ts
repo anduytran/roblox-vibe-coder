@@ -3,7 +3,7 @@ import { relativeInside } from './pathScope'
 import { extname, join } from 'node:path'
 import type { AgentEvent, Review } from '@shared/types'
 import type { AgentRunner } from './agentRunner'
-import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, mergeTaskBranch, reviewDiff } from './git'
+import { checkoutBranch, commitFile, currentBranch, deleteTaskBranch, mergeTaskBranch, reviewDiff, tidyWorkingFolder } from './git'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { ReviewPipeline } from './reviewPipeline'
 import type { ProjectRegistry } from './projects'
@@ -83,6 +83,8 @@ export class ReviewActions {
     const unseen = warnings.filter((w) => !(opts.acknowledged ?? []).includes(w))
     if (unseen.length) throw new Error(`Something changed since you looked: ${unseen.join(' ')} Look again before merging.`)
     return this.deps.runner.withProjectLock(review.projectId, async () => {
+      // Edits made outside Hangar are saved first instead of blocking the merge.
+      await tidyWorkingFolder(root)
       await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
       if (review.clip) StudioClipRecorder.remove(review.clip.files)
       return this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))

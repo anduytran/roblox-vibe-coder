@@ -16,7 +16,7 @@ import type {
 } from '@shared/types'
 import { planLimitsFor, type CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
-import { deleteTaskBranch, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
+import { deleteTaskBranch, tidyWorkingFolder, finishTaskBranch, gitSafetyEnv, ignoredChangesNote, leaveEmptyTaskBranch, leftoverTaskBranch, prepareTaskBase, refsChangedSince, refsNote, RewrittenBranchError, safeCurrentBranch, startTaskBranch, uncommittedCount, taskBranchName, type TaskBase } from './git'
 import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, summarizeToolUse } from './permissions'
@@ -523,6 +523,8 @@ export class AgentRunner {
       }
 
       if (project.settings.autonomous && !research) {
+        // No branches to manage by hand: a folder left on a task branch, or edits made outside Hangar, are sorted first.
+        for (const text of await tidyWorkingFolder(project.path)) this.log(s, { kind: 'system', text })
         const from = await prepareTaskBase(project.path)
         const name = taskBranchName(s.agentId, prompt, task.id)
         await startTaskBranch(project.path, name, from)
