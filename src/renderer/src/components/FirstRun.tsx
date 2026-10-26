@@ -33,23 +33,8 @@ export function FirstRun() {
         </Step>
         <Step
           n={2}
-          done={tools ? tools.studio : undefined}
-          optional
-          title="Roblox Studio tools"
-          action={
-            <Button size="sm" tone="ghost" onClick={check}>
-              Check again
-            </Button>
-          }
-        >
-          {tools?.studio
-            ? 'Found. With Studio open, turn on Assistant → … → Manage MCP Servers → Enable Studio as MCP server.'
-            : 'Not found. Install Roblox Studio, then turn on Assistant → … → Manage MCP Servers → Enable Studio as MCP server. If it lives somewhere else, set its command in Settings → Roblox.'}
-        </Step>
-        <Step
-          n={3}
           done={tools ? buildOk : undefined}
-          title="Build tools"
+          title="Tools"
           action={
             <Button size="sm" tone="ghost" onClick={check}>
               Check again
@@ -57,12 +42,16 @@ export function FirstRun() {
           }
         >
           <span className="firstrun-tools">
-            Rojo {mark(tools?.rojo)} · Git {mark(tools?.git)} · Selene {mark(tools?.selene)} · StyLua {mark(tools?.stylua)}
+            Rojo {mark(tools?.rojo)} · Git {mark(tools?.git)} · Selene {mark(tools?.selene)} · StyLua {mark(tools?.stylua)} · Roblox Studio {mark(tools?.studio)}
           </span>
           {tools && !buildOk && ' Rojo builds and publishes your game; Git keeps each task on its own branch. Selene and StyLua are optional checks.'}
+          {tools &&
+            (tools.studio
+              ? ' So agents can playtest: with Studio open, turn on Assistant → … → Manage MCP Servers → Enable Studio as MCP server.'
+              : ' Optional, so agents can playtest: install Roblox Studio, then turn on Assistant → … → Manage MCP Servers → Enable Studio as MCP server. If it lives somewhere else, set its command in Settings → Roblox.')}
         </Step>
         <Step
-          n={4}
+          n={3}
           done={false}
           title="Create your first game"
           action={

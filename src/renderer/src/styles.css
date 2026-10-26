@@ -2140,44 +2140,56 @@ button.file-item {
 }
 
 /* ---------- wizard ---------- */
-.wizard-steps {
+.wizard-next {
+  align-self: center;
+  max-width: 60ch;
+}
+.wizard-setup {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--raised);
+}
+.wizard-setup > summary {
   display: flex;
-  gap: 14px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
   list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: var(--fs-sm);
-  color: var(--muted);
 }
-.wizard-steps li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.wizard-setup > summary::-webkit-details-marker {
+  display: none;
 }
-.wizard-steps li.on {
-  color: var(--text);
+.wizard-setup-title {
   font-weight: 600;
 }
-.wizard-step-n {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 700;
-  background: var(--raised);
-  border: 1px solid var(--line);
+.wizard-setup-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.wizard-steps li.on .wizard-step-n {
-  background: var(--ink);
-  color: var(--ink-text);
-  border-color: var(--ink);
+.wizard-setup-change {
+  color: var(--text-2);
+  text-decoration: underline;
 }
-.wizard-steps li.done .wizard-step-n {
-  background: var(--live-soft);
-  color: var(--live);
-  border-color: transparent;
+.wizard-setup[open] .wizard-setup-line {
+  visibility: hidden;
+}
+.wizard-setup[open] .wizard-setup-change {
+  display: none;
+}
+.wizard-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+.wizard-group h3 {
+  margin: 0;
+  font-size: var(--fs);
 }
 .chip-toggle {
   height: 30px;
@@ -2202,35 +2214,6 @@ button.file-item {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--raised);
-}
-.tool-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.summary-grid {
-  display: grid;
-  grid-template-columns: 110px 1fr;
-  gap: 8px 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--raised);
-}
-.clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.flow-steps {
-  margin: 0;
-  padding-left: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: var(--text-2);
 }
 
 /* ---------- project overview ---------- */

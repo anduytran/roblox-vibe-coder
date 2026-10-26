@@ -13,7 +13,7 @@ import { ReviewActions } from '../src/main/reviewActions'
 import { ReviewPipeline } from '../src/main/reviewPipeline'
 import { ReviewStore } from '../src/main/reviews'
 import { listRoles } from '../src/main/roles'
-import { createGameProject, projectFolderName, sanitizeNewGame } from '../src/main/scaffold'
+import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame } from '../src/main/scaffold'
 import { fetchDiscovery, parseIdeas, robloxGet, scoreGames, scoreGenres, spaceSaturation, Trends, type JsonGet } from '../src/main/trending'
 
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
@@ -68,12 +68,27 @@ test('new game: creates a ready-to-build Rojo project with the brief, roles, vau
   assert.equal(g('symbolic-ref', '--short', 'HEAD'), 'main')
   assert.equal(g('status', '--porcelain'), '', 'everything committed')
   assert.match(g('log', '-1', '--format=%s'), /New game: Sky Courier!/)
-  // A non-empty target folder is refused.
-  await assert.rejects(createGameProject(i), /already exists/)
+  // The same name again gets the next free folder instead of an error, and never writes into the first one.
+  const again = await createGameProject(i)
+  assert.equal(again, `${root}-2`)
+  assert.equal(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: again }).toString().trim(), 'New game: Sky Courier!')
+  assert.equal(g('rev-list', '--count', 'HEAD'), '1', 'the first project is untouched')
   await assert.rejects(createGameProject({ ...i, name: 'Other', idea: '', document: null }), /Describe the game idea/)
   // Code-breaking names can't escape the Luau string.
   const odd = await createGameProject({ ...input(tmp('hangar-new2-')), name: 'Bad"]] os.exit() --' })
   assert.doesNotMatch(readFileSync(join(odd, 'src/shared/Config.luau'), 'utf8'), /"\]\]/)
+})
+
+test('new game: a taken folder name moves on to the next number; an empty folder is reused', () => {
+  const parent = tmp('hangar-free-')
+  assert.equal(freeProjectFolder(parent, 'Sky-Courier'), join(parent, 'Sky-Courier'))
+  mkdirSync(join(parent, 'Sky-Courier'))
+  assert.equal(freeProjectFolder(parent, 'Sky-Courier'), join(parent, 'Sky-Courier'), 'empty folder is fine')
+  writeFileSync(join(parent, 'Sky-Courier', 'notes.txt'), 'mine')
+  writeFileSync(join(parent, 'Sky-Courier-2'), 'a file, not a folder')
+  assert.equal(freeProjectFolder(parent, 'Sky-Courier'), join(parent, 'Sky-Courier-3'))
+  for (let n = 3; n < 100; n++) writeFileSync(join(parent, `Sky-Courier-${n}`), 'x')
+  assert.throws(() => freeProjectFolder(parent, 'Sky-Courier'), /all taken/)
 })
 
 // ---------- trends ----------

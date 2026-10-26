@@ -108,6 +108,18 @@ function files(name: string, slug: string): Record<string, string> {
   }
 }
 
+/**
+ * The folder for a new game: `Sky-Courier`, or `Sky-Courier-2` and so on when that's taken, so a name
+ * used before doesn't stop the wizard. Never a folder that already has something in it.
+ */
+export function freeProjectFolder(parentDir: string, slug: string): string {
+  for (let n = 1; n < 100; n++) {
+    const root = join(parentDir, n === 1 ? slug : `${slug}-${n}`)
+    if (!existsSync(root) || (statSync(root).isDirectory() && readdirSync(root).length === 0)) return root
+  }
+  throw new Error(`${join(parentDir, slug)} and the next 98 numbered folders are all taken. Choose another name or folder.`)
+}
+
 /** Create the project folder and everything in it. Returns the new folder's path. */
 export async function createGameProject(input: NewGameInput): Promise<string> {
   const name = clean(input.name, 80).trim()
@@ -115,8 +127,7 @@ export async function createGameProject(input: NewGameInput): Promise<string> {
   if (!input.idea.trim() && !input.document) throw new Error('Describe the game idea or attach a design document.')
   if (!isAbsolute(input.parentDir) || !existsSync(input.parentDir) || !statSync(input.parentDir).isDirectory()) throw new Error('Choose a folder to create the project in.')
   const slug = projectFolderName(name)
-  const root = join(input.parentDir, slug)
-  if (existsSync(root) && readdirSync(root).length > 0) throw new Error(`${root} already exists and isn't empty. Choose another name or folder.`)
+  const root = freeProjectFolder(input.parentDir, slug)
   mkdirSync(root, { recursive: true })
   for (const [rel, body] of Object.entries(files(name, slug))) {
     const file = join(root, rel)
