@@ -593,6 +593,8 @@ export class ApprovalExplainer {
         options: {
           cwd,
           model: HELPER_MODEL,
+          // A short, focused explanation: little thinking needed.
+          effort: 'low',
           settingSources: [],
           systemPrompt: EXPLAIN_INSTRUCTIONS,
           tools: [],

@@ -129,7 +129,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'scripter',
-    model: 'claude-sonnet-5-5',
+    model: 'claude-opus-5-5',
     name: 'Scripter',
     description: 'Writes and fixes Luau gameplay code: systems, modules, server/client logic.',
     prompt: `You write Luau for a Roblox game that is synced to disk with Rojo.
@@ -142,7 +142,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'ui-builder',
-    model: 'claude-sonnet-5-5',
+    model: 'claude-opus-5-5',
     name: 'UI Builder',
     description: 'Builds and adjusts game UI: ScreenGuis, layouts, UI scripts. Keeps the project\'s UI vault (Obsidian) up to date.',
     vault: 'ui-vault',
@@ -166,7 +166,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'studio-modeler',
-    model: 'claude-sonnet-5-5',
+    model: 'claude-opus-5-5',
     name: '3D Modeler (Studio)',
     description: 'Builds 3D models in Roblox Studio from parts, checks them with screenshots, and saves each as a builder script in git.',
     prompt: `You build 3D models for a Roblox game in Roblox Studio, from parts.
@@ -180,7 +180,7 @@ Finish every task by stating what changed, which acceptance criteria were checke
   },
   {
     id: 'blender-modeler',
-    model: 'claude-sonnet-5-5',
+    model: 'claude-opus-5-5',
     name: '3D Modeler (Blender)',
     description: 'Models real 3D meshes in Blender, exports them for Roblox and renders a preview. Needs the Blender connection in Settings.',
     mcp: ['blender'],
