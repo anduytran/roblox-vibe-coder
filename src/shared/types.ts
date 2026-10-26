@@ -503,6 +503,25 @@ export interface AutopilotConfig {
   unattended?: boolean
   unattendedUntil?: number | null
   unattendedBudgetUsd?: number
+  /**
+   * Build the sprint's pieces at the same time (on unless turned off): the Lead plans independent items, each built
+   * by its agent in its own copy of the game, then wraps up. Off, or with no builder roles: one task after another.
+   */
+  parallel?: boolean
+}
+
+/** One piece of a sprint built in parallel: who builds it, the Lead's brief, and how it went. */
+export interface SprintItem {
+  id: string
+  agentId: string
+  title: string
+  brief: string
+  files: string[]
+  status: 'queued' | 'review' | 'done'
+  /** Handed to its agent (not yet after a restart, when queued tasks are gone). */
+  sent?: boolean
+  reviewId?: string | null
+  outcome?: SprintReport['tasks'][number]['outcome'] | null
 }
 
 /** An action an agent wanted during an unattended run that needed your approval, kept for the morning. */
@@ -541,7 +560,7 @@ export interface SprintReport {
   at: number
   text: string
   /** Tasks finished in this sprint and what happened to them. */
-  tasks: { title: string; outcome: 'merged' | 'waiting' | 'discarded' | 'no-changes' | 'failed' }[]
+  tasks: { title: string; outcome: 'merged' | 'waiting' | 'discarded' | 'no-changes' | 'failed'; wrapup?: boolean }[]
   spentUsd: number
   /** The product owner's answers to this check-in's questions (the decisions trail). */
   answers?: { question: string; answer: string }[]
@@ -566,6 +585,8 @@ export interface AutopilotState {
   sprintTasks: SprintReport['tasks']
   /** The Lead said this sprint's plan is done (when it decides the sprint's length). */
   sprintDoneSaid?: boolean
+  /** A sprint built in parallel: planning (the Lead), building (the items, at once), then the Lead's wrap-up. */
+  parallel?: { phase: 'planning' | 'building' | 'wrapup' | 'single'; items: SprintItem[] } | null
   /** The current (or last) unattended run. */
   away?: AwaySummary | null
   /** Actions agents wanted while you were away that need your OK: do them now (sent back to that agent) or dismiss. */

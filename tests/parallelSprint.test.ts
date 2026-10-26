@@ -1,0 +1,166 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { Autopilot, parseSprintPlan } from '../src/main/autopilot'
+import { CostTracker } from '../src/main/costs'
+import { ProjectRegistry } from '../src/main/projects'
+import { ReviewStore } from '../src/main/reviews'
+import { installTemplates } from '../src/main/roles'
+
+const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
+const plan = (items: unknown[]): string => `Plan: two pieces at once.\n\`\`\`json\n${JSON.stringify({ items })}\n\`\`\``
+
+test('sprint plan: only builder roles, plain relative files, no two pieces sharing a file, at most the limit', () => {
+  const builders = ['scripter', 'ui-builder']
+  const items = parseSprintPlan(
+    plan([
+      { agent: 'scripter', title: 'Bots melee', brief: 'Make bots melee.', files: ['src/server/Bots.luau'] },
+      { agent: 'ui-builder', title: 'Health​ bar', brief: 'A bar.', files: ['src/client/Hud.luau', '/etc/passwd', '../x'] },
+      { agent: 'qa-tester', title: 'Not a builder', brief: 'x', files: [] },
+      { agent: 'scripter', title: 'Shares a file', brief: 'x', files: ['src/server/Bots.luau'] },
+      { agent: 'scripter', title: '', brief: 'no title' }
+    ]),
+    builders
+  )
+  assert.deepEqual(items.map((i) => i.title), ['Bots melee', 'Health bar'])
+  assert.deepEqual(items[1]!.files, ['src/client/Hud.luau'])
+  assert.deepEqual(parseSprintPlan('no plan here', builders), [])
+  assert.deepEqual(parseSprintPlan('```json\n{not json\n```', builders), [])
+  assert.equal(parseSprintPlan(plan([1, 2, 3, 4, 5].map((n) => ({ agent: 'scripter', title: `t${n}`, brief: 'b', files: [`f${n}`] }))), builders, 2).length, 2)
+})
+
+function setup() {
+  const dir = tmp('hangar-par-')
+  installTemplates(dir)
+  const registry = new ProjectRegistry(join(tmp('hangar-par-reg-'), 'p.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-par-r-'), 'r.json'))
+  const sent: { agent: string; prompt: string }[] = []
+  let ap!: Autopilot
+  ap = new Autopilot({
+    file: join(tmp('hangar-par-a-'), 'a.json'),
+    registry,
+    reviews,
+    costs: new CostTracker(join(tmp('hangar-par-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, agent, prompt) => {
+      sent.push({ agent, prompt })
+    },
+    merge: async (id) => {
+      ap.onReview(reviews.update(id, { status: 'merged' }))
+    }
+  })
+  const done = (prompt: string, agent: string, extra: { text?: string; reviewId?: string | null; ok?: boolean; origin?: 'autopilot' | 'autopilot-report' } = {}) =>
+    ap.onTaskDone({ projectId: project.id, agentId: agent, task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: extra.ok ?? true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: extra.reviewId ?? null })
+  // Sprint 1 (the very first) runs one task at a time while the Lead sets the design up; then its check-in.
+  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  done(sent.at(-1)!.prompt, 'lead', { text: 'Set up.\nSprint complete.' })
+  done(sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Setup\n## Next sprint\n- Bots\n- HUD' })
+  return { project, reviews, sent, ap, done }
+}
+
+test('parallel sprint: the Lead plans, pieces go to their agents at once, changes merge as they pass, then a wrap-up and the check-in', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot: plan sprint 2\b/)
+  assert.equal(t.sent.at(-1)!.agent, 'lead')
+  assert.match(t.sent.at(-1)!.prompt, /"scripter"/)
+  t.done(
+    t.sent.at(-1)!.prompt,
+    'lead',
+    {
+      text: plan([
+        { agent: 'scripter', title: 'Bots melee', brief: 'Bots use heavy melee. Criteria: knocks back 20 studs.', files: ['src/server/Bots.luau'] },
+        { agent: 'ui-builder', title: 'Health bar', brief: 'Bottom-left bar.', files: ['src/client/Hud.luau'] }
+      ])
+    }
+  )
+  const items = t.sent.slice(-2)
+  assert.deepEqual(items.map((s) => s.agent).sort(), ['scripter', 'ui-builder'], 'both pieces handed out at once')
+  assert.ok(items.every((s) => /^Autopilot item \w+, sprint 2: /.test(s.prompt)))
+  assert.match(items.find((s) => s.agent === 'scripter')!.prompt, /knocks back 20 studs[\s\S]*Files to work in: src\/server\/Bots\.luau[\s\S]*qa-tester/)
+  const st = t.ap.get(t.project.id)
+  assert.equal(st.parallel?.phase, 'building')
+  // The UI piece builds nothing; the scripter's change passes its checks and merges itself.
+  t.done(items.find((s) => s.agent === 'ui-builder')!.prompt, 'ui-builder', { text: 'Blocked: needs the product owner.' })
+  assert.equal(t.ap.get(t.project.id).parallel?.phase, 'building', 'still waiting for the other piece')
+  const r = t.reviews.add({ projectId: t.project.id, agentId: 'scripter', title: 'Bots melee', branch: 'hangar/scripter-bots-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Bots melee', files: ['src/server/Bots.luau'], incomplete: null, note: null, clip: null })
+  t.reviews.update(r.id, { checks: { status: 'done', reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed', output: '', ms: 1 }] } })
+  t.done(items.find((s) => s.agent === 'scripter')!.prompt, 'scripter', { reviewId: r.id })
+  return new Promise<void>((resolve) =>
+    setTimeout(() => {
+      assert.equal(t.reviews.get(r.id).status, 'merged')
+      // Everything decided: the Lead wraps up, then writes the check-in.
+      const wrap = t.sent.at(-1)!
+      assert.match(wrap.prompt, /^Autopilot: wrap up sprint 2\b[\s\S]*Bots melee \(scripter\): merged[\s\S]*Health bar \(ui-builder\): no-changes/)
+      t.done(wrap.prompt, 'lead', { text: 'Roadmap updated.' })
+      assert.match(t.sent.at(-1)!.prompt, /^Autopilot: sprint 2 is over/)
+      t.done(t.sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Bots melee\n## Next sprint\n- HUD' })
+      const report = t.ap.get(t.project.id).reports.at(-1)!
+      assert.deepEqual(report.tasks.map((x) => [x.title, x.outcome, !!x.wrapup]), [
+        ['Health bar', 'no-changes', false],
+        ['Bots melee', 'merged', false],
+        ['Roadmap updated.', 'no-changes', true]
+      ])
+      resolve()
+    }, 20)
+  )
+})
+
+test('parallel sprint: without a usable plan the sprint goes one task at a time, as before', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: 'I think we should build bots next.' })
+  assert.equal(t.ap.get(t.project.id).parallel?.phase, 'single')
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot, sprint 2, task 1\b/)
+  assert.equal(t.sent.at(-1)!.agent, 'lead')
+})
+
+test('parallel sprint: off in the settings, the sprint goes one task at a time', () => {
+  const t = setup()
+  t.ap.start(t.project.id, { config: { parallel: false } as never })
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot, sprint 2, task 1\b/)
+})
+
+test('parallel sprint: while you are away, a piece that can\'t merge itself waits for you and the sprint carries on', () => {
+  const t = setup()
+  t.ap.configure(t.project.id, { unattended: true, unattendedUntil: null, unattendedBudgetUsd: 20 })
+  // Turning it on at a check-in starts the next sprint on the Lead's own plan.
+  if (t.ap.get(t.project.id).status !== 'running') t.ap.start(t.project.id)
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot: plan sprint 2\b/)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: plan([{ agent: 'scripter', title: 'Bots melee', brief: 'b', files: ['a.luau'] }]) })
+  const item = t.sent.at(-1)!
+  // No checks and no reviewer: nothing approves it, so it's left for the morning.
+  const r = t.reviews.add({ projectId: t.project.id, agentId: 'scripter', title: 'Bots melee', branch: 'hangar/scripter-bots-def456', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'x', files: ['a.luau'], incomplete: null, note: null, clip: null })
+  t.done(item.prompt, 'scripter', { reviewId: r.id })
+  assert.equal(t.reviews.get(r.id).status, 'pending')
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot: wrap up sprint 2[\s\S]*Bots melee \(scripter\): waiting/)
+  assert.equal(t.ap.get(t.project.id).away!.leftForYou, 1)
+})
+
+test('parallel sprint: pieces handed out but not started when Hangar closed are handed out again on Resume', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: plan([{ agent: 'scripter', title: 'Bots melee', brief: 'b', files: ['a.luau'] }]) })
+  const before = t.sent.length
+  // Hangar restarts: a new Autopilot on the same file, which pauses a running sprint.
+  const again = new Autopilot({
+    file: (t.ap as unknown as { deps: { file: string } }).deps.file,
+    registry: (t.ap as unknown as { deps: { registry: ProjectRegistry } }).deps.registry,
+    reviews: t.reviews,
+    costs: new CostTracker(join(tmp('hangar-par-c2-'), 'c.json')),
+    emit: () => {},
+    send: (_p, agent, prompt) => {
+      t.sent.push({ agent, prompt })
+    },
+    merge: async () => undefined
+  })
+  assert.equal(again.get(t.project.id).status, 'paused')
+  assert.equal(again.get(t.project.id).parallel?.items[0]!.sent, false)
+  again.resume(t.project.id)
+  assert.equal(t.sent.length, before + 1)
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot item \w+, sprint 2: Bots melee/)
+})

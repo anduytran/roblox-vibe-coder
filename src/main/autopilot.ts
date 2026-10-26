@@ -1,4 +1,5 @@
-import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintReport } from '@shared/types'
+import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintItem, SprintReport } from '@shared/types'
+import { stripHidden } from '@shared/text'
 import { mergeWarnings } from '@shared/reviewRules'
 import type { CostTracker } from './costs'
 import { JsonStore } from './jsonStore'
@@ -95,8 +96,53 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   unattended: typeof c.unattended === 'boolean' ? c.unattended : (base.unattended ?? false),
   unattendedUntil:
     c.unattendedUntil === null ? null : Number.isFinite(c.unattendedUntil) ? Math.min(Number(c.unattendedUntil), Date.now() + 48 * 3600_000) : (base.unattendedUntil ?? null),
-  unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20)))
+  unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20))),
+  parallel: typeof c.parallel === 'boolean' ? c.parallel : (base.parallel ?? true)
 })
+
+/** Most sprint items built at once (each agent still does its own items one after another). */
+export const MAX_SPRINT_ITEMS = 4
+
+const PLAN_PREFIX = 'Autopilot: plan sprint '
+const ITEM_PREFIX = 'Autopilot item '
+const WRAPUP_PREFIX = 'Autopilot: wrap up sprint '
+
+/**
+ * The Lead's plan for a parallel sprint: the last ```json block of its reply, {"items":[{agent, title, brief, files}]}.
+ * Only builder roles count; files are kept as plain relative paths; anything else is dropped. The Lead's reply is
+ * an agent's text, so it's read as data: bounded, hidden characters removed.
+ */
+export function parseSprintPlan(text: string, builders: string[], max = MAX_SPRINT_ITEMS): Omit<SprintItem, 'id' | 'status'>[] {
+  const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)]
+  const raw = blocks.length ? blocks[blocks.length - 1]![1]! : ''
+  let data: unknown
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  const items = Array.isArray((data as { items?: unknown })?.items) ? ((data as { items: unknown[] }).items) : []
+  const clean = (v: unknown, n: number): string => (typeof v === 'string' ? stripHidden(v).trim().slice(0, n) : '')
+  const out: Omit<SprintItem, 'id' | 'status'>[] = []
+  const taken = new Set<string>()
+  for (const it of items) {
+    const o = it && typeof it === 'object' ? (it as Record<string, unknown>) : {}
+    const agentId = clean(o.agent, 40)
+    const title = clean(o.title, 120).replace(/\s+/g, ' ')
+    const brief = clean(o.brief, 6000)
+    if (!builders.includes(agentId) || !title || !brief) continue
+    const files = (Array.isArray(o.files) ? o.files : [])
+      .map((f) => clean(f, 200))
+      .filter((f) => f && !f.startsWith('/') && !f.split(/[\\/]/).includes('..'))
+      .slice(0, 20)
+    // Parallel pieces must not share files: one that does waits for a later sprint.
+    if (files.some((f) => taken.has(f))) continue
+    files.forEach((f) => taken.add(f))
+    out.push({ agentId, title, brief, files })
+    if (out.length >= max) break
+  }
+  return out
+}
 
 /** How often a run paused by a plan or spending limit tries again while unattended. */
 const UNATTENDED_RETRY_MS = 30 * 60_000
@@ -114,7 +160,11 @@ export class Autopilot {
     // Queued tasks don't survive a restart, so a running autopilot resumes only when you say so.
     // Feedback put into a step that never finished goes back for the next one, whatever the status.
     for (const st of Object.values(this.store.get().states)) {
-      const back = this.giveBack(st)
+      let back = this.giveBack(st)
+      // Items handed to agents but not started are gone with the queue: they're handed out again on Resume.
+      if (back.parallel?.items.some((i) => i.status === 'queued' && i.sent)) {
+        back = { ...back, parallel: { ...back.parallel, items: back.parallel.items.map((i) => (i.status === 'queued' ? { ...i, sent: false } : i)) } }
+      }
       if (st.status === 'running' || st.status === 'waiting') {
         this.put({ ...back, status: 'paused', reason: 'Hangar was closed. Resume to carry on where it left off.' })
       } else if (back !== st) this.put(back)
@@ -341,6 +391,7 @@ export class Autopilot {
       tasksDone: 0,
       sprintTasks: [],
       sprintDoneSaid: false,
+      parallel: null,
       spentAtSprintStart: this.spent(projectId),
       reason: null,
       feedback,
@@ -365,7 +416,12 @@ export class Autopilot {
     const st = this.get(projectId)
     if (st.status !== 'paused') throw new Error('Autopilot is not paused.')
     const next = this.put({ ...st, status: 'running', reason: null, consecutiveFailures: 0 })
-    if (next.awaitingReviewId) this.evaluate(next.awaitingReviewId)
+    if (next.parallel?.phase === 'building') {
+      // Hand out items that never started (after a restart), and look again at the ones waiting in review.
+      this.dispatchItems(next)
+      for (const item of next.parallel.items) if (item.status === 'review' && item.reviewId) this.evaluate(item.reviewId)
+      this.itemsProgress(this.get(projectId))
+    } else if (next.awaitingReviewId) this.evaluate(next.awaitingReviewId)
     else this.nextStep(next)
     return this.get(projectId)
   }
@@ -374,7 +430,7 @@ export class Autopilot {
     clearTimeout(this.retryTimers.get(projectId))
     if (this.get(projectId).away && !this.get(projectId).away!.endedAt) this.endAway(projectId, 'autopilot was stopped')
     const st = this.get(projectId)
-    return this.put({ ...st, status: 'off', reason: null, awaitingReviewId: null })
+    return this.put({ ...st, status: 'off', reason: null, awaitingReviewId: null, parallel: null })
   }
 
   /**
@@ -411,6 +467,12 @@ export class Autopilot {
   // ---------- the loop ----------
 
   private queueBuild(st: AutopilotState): void {
+    // A sprint starts with the Lead planning pieces to build at the same time (unless it's off, there's nobody to
+    // build them, or this sprint already fell back to one task at a time). The very first sprint sets up the
+    // design first, so it runs one task at a time.
+    const firstEver = st.sprint === 1 && st.reports.length === 0
+    if (!st.parallel && !firstEver && this.parallelOn(st)) return this.queuePlan(st)
+    if (st.parallel && st.parallel.phase !== 'single') return
     const first = st.sprint === 1 && st.tasksDone === 0 && st.reports.length === 0
     const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (record it in design-vault/Inbox.md or Decisions.md as you handle it):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const recent = st.sprintTasks.length ? `\n\nEarlier in this sprint:\n${st.sprintTasks.map((t) => `- ${t.title} (${t.outcome})`).join('\n')}` : ''
@@ -469,6 +531,8 @@ Reply with only these sections, short and concrete:
       this.pause(st.projectId, `The unattended run finished: ${over}. See what happened on the Overview.`)
       return
     }
+    if (st.parallel?.phase === 'building') return this.itemsProgress(st)
+    if (st.parallel?.phase === 'wrapup') return this.queueReport(st)
     const spent = this.spent(st.projectId) - st.spentAtSprintStart
     const enough = st.config.sprintTasks === 0 ? st.sprintDoneSaid === true || st.tasksDone >= LEAD_SPRINT_MAX : st.tasksDone >= st.config.sprintTasks
     if (enough || (!this.deps.usesPlan?.() && spent >= st.config.sprintBudgetUsd)) this.queueReport(st)
@@ -477,7 +541,9 @@ Reply with only these sections, short and concrete:
 
   private record(projectId: string, title: string, outcome: SprintReport['tasks'][number]['outcome']): AutopilotState {
     const st = this.get(projectId)
-    const next = this.put({ ...st, tasksDone: st.tasksDone + 1, sprintTasks: [...st.sprintTasks, { title, outcome }].slice(-50) })
+    // The Lead's wrap-up of a parallel sprint (roadmap and notes) isn't building: marked so it doesn't count as such.
+    const wrapup = st.parallel?.phase === 'wrapup'
+    const next = this.put({ ...st, tasksDone: st.tasksDone + 1, sprintTasks: [...st.sprintTasks, { title, outcome, ...(wrapup ? { wrapup } : {}) }].slice(-50) })
     if (outcome !== 'failed') this.bumpAway(projectId, 'tasks')
     return this.get(projectId) ?? next
   }
@@ -485,6 +551,8 @@ Reply with only these sections, short and concrete:
   /** Called by the runner when any task ends. */
   onTaskDone(o: TaskOutcome): void {
     if (o.task.origin !== 'autopilot' && o.task.origin !== 'autopilot-report') return
+    if (o.task.origin === 'autopilot' && o.task.prompt.startsWith(ITEM_PREFIX)) return this.itemDone(o)
+    if (o.task.origin === 'autopilot' && o.task.prompt.startsWith(PLAN_PREFIX)) return this.planDone(o)
     let st = this.get(o.projectId)
     // A step that finished has had its feedback. One that failed or was stopped may never have reached the
     // Lead (a limit, a missing key), so its feedback goes back for the next step: said twice beats lost.
@@ -509,7 +577,7 @@ Reply with only these sections, short and concrete:
       // Unattended, but stuck: two sprints in a row built nothing (each waiting on something only you can do).
       // Starting more would only repeat that, so the run stops here and says why.
       const recent = [...st.reports, report].slice(-STUCK_SPRINTS)
-      const stuck = recent.length === STUCK_SPRINTS && recent.every((r) => r.tasks.every((t) => t.outcome === 'no-changes' || t.outcome === 'failed'))
+      const stuck = recent.length === STUCK_SPRINTS && recent.every((r) => r.tasks.filter((t) => !t.wrapup).every((t) => t.outcome === 'no-changes' || t.outcome === 'failed'))
       if (this.isAway(o.projectId) && stuck) {
         this.endAway(o.projectId, `the last ${STUCK_SPRINTS} sprints built nothing (the Lead is waiting on you: see the latest check-in)`)
         return
@@ -561,8 +629,7 @@ Reply with only these sections, short and concrete:
 
   /** Called for every review event; acts on the review autopilot is waiting for. */
   onReview(review: Review): void {
-    const st = this.get(review.projectId)
-    if (st.awaitingReviewId !== review.id) return
+    if (!this.awaits(this.get(review.projectId), review.id)) return
     this.evaluate(review.id)
   }
 
@@ -574,13 +641,11 @@ Reply with only these sections, short and concrete:
       return
     }
     const st = this.get(review.projectId)
-    if (st.awaitingReviewId !== reviewId) return
+    if (!this.awaits(st, reviewId)) return
     if (review.status !== 'pending') {
       const outcome = review.status === 'merged' ? 'merged' : 'discarded'
-      const after = this.record(review.projectId, review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title, outcome)
       if (outcome === 'merged') this.bumpAway(review.projectId, 'merged')
-      const next = this.put({ ...after, awaitingReviewId: null, status: after.status === 'waiting' ? 'running' : after.status, reason: after.status === 'waiting' ? null : after.reason })
-      this.nextStep(next)
+      this.settle(review, outcome)
       return
     }
     // Checks and the reviewer agent are still working.
@@ -628,11 +693,173 @@ Reply with only these sections, short and concrete:
   /** A change that can't merge itself during an unattended run stays in Reviews; autopilot carries on without it. */
   private leaveForMorning(review: Review): void {
     const st = this.get(review.projectId)
-    if (st.awaitingReviewId !== review.id) return
-    const after = this.record(review.projectId, this.reviewTitle(review), 'waiting')
+    if (!this.awaits(st, review.id)) return
     this.bumpAway(review.projectId, 'leftForYou')
-    const next = this.put({ ...this.get(review.projectId), awaitingReviewId: null, status: after.status === 'waiting' ? 'running' : after.status, reason: null })
+    this.settle(review, 'waiting')
+  }
+
+  /** Whether autopilot is waiting on this review: the sprint's step, or one of its parallel items. */
+  private awaits(st: AutopilotState, reviewId: string): boolean {
+    return st.awaitingReviewId === reviewId || !!st.parallel?.items.some((i) => i.status === 'review' && i.reviewId === reviewId)
+  }
+
+  /** A review autopilot waited on is decided (merged, discarded, or left for you): note it and take the next step. */
+  private settle(review: Review, outcome: SprintReport['tasks'][number]['outcome']): void {
+    const after = this.record(review.projectId, review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title, outcome)
+    const items = after.parallel?.items.map((i) => (i.reviewId === review.id && i.status === 'review' ? { ...i, status: 'done' as const, outcome } : i))
+    const next = this.put({
+      ...after,
+      awaitingReviewId: after.awaitingReviewId === review.id ? null : after.awaitingReviewId,
+      ...(after.parallel && items ? { parallel: { ...after.parallel, items } } : {}),
+      status: after.status === 'waiting' ? 'running' : after.status,
+      reason: after.status === 'waiting' ? null : after.reason
+    })
     this.nextStep(next)
+  }
+
+  // ---------- sprints built in parallel ----------
+
+  /** The roles that build sprint items: ones that can change files, other than the Lead and the QA Tester. */
+  private builders(projectId: string): { id: string; description: string }[] {
+    try {
+      return listRoles(this.deps.registry.get(projectId).path)
+        .filter((r) => r.id !== 'lead' && r.id !== 'qa-tester' && r.mode !== 'research' && !r.mcp?.length)
+        .filter((r) => !r.tools?.length || r.tools.some((t) => t === 'Edit' || t === 'Write'))
+        .map((r) => ({ id: r.id, description: r.description || r.name }))
+    } catch {
+      return []
+    }
+  }
+
+  private parallelOn(st: AutopilotState): boolean {
+    return st.config.parallel !== false && this.leadOf(st.projectId) === 'lead' && this.builders(st.projectId).length > 0
+  }
+
+  private hasQa(projectId: string): boolean {
+    try {
+      return listRoles(this.deps.registry.get(projectId).path).some((r) => r.id === 'qa-tester')
+    } catch {
+      return false
+    }
+  }
+
+  /** The Lead plans the sprint as pieces that can be built at the same time, without changing files itself. */
+  private queuePlan(st: AutopilotState): void {
+    const builders = this.builders(st.projectId)
+    const max = st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS
+    const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
+    const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
+1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
+2. Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
+3. Don't change any files in this step. Skip anything blocked (it needs the product owner, or work that isn't merged): say so in your plan instead.
+Agents you can give pieces to:
+${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
+Reply with a short plan, then one \`\`\`json block like this, and nothing after it:
+\`\`\`json
+{"items":[{"agent":"scripter","title":"Bots use the heavy melee","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/BotService.luau"]}]}
+\`\`\`
+Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria.${feedback}`
+    const cur = this.get(st.projectId)
+    this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
+    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot' })
+  }
+
+  /** The Lead's plan is in: its pieces go to their agents at once, or the sprint runs one task at a time without one. */
+  private planDone(o: TaskOutcome): void {
+    let st = this.get(o.projectId)
+    if (st.status === 'off' || st.parallel?.phase !== 'planning') return
+    st = this.put({ ...st, handedFeedback: o.ok ? [] : (st.handedFeedback ?? []) })
+    if (o.stopped) {
+      this.put({ ...this.giveBack(st), parallel: null })
+      this.pause(o.projectId, 'The Lead was stopped while planning. Resume to carry on.')
+      return
+    }
+    const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS) : []
+    if (!planned.length) {
+      // No usable plan: this sprint goes one task at a time, as before.
+      st = this.put({ ...this.giveBack(st), parallel: { phase: 'single', items: [] } })
+      if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+        this.pause(o.projectId, `${o.error} Resume once there's room again.`)
+        if (this.isAway(o.projectId)) this.retryLater(o.projectId)
+        return
+      }
+      this.queueBuild(st)
+      return
+    }
+    const stamp = Date.now().toString(36)
+    const items: SprintItem[] = planned.map((p, i) => ({ ...p, id: `${stamp}${i}`, status: 'queued', sent: false, reviewId: null, outcome: null }))
+    st = this.put({ ...st, parallel: { phase: 'building', items } })
+    // The plan task changed files after all: its review is the sprint's step to wait on, like any other.
+    if (o.reviewId) st = this.put({ ...st, awaitingReviewId: o.reviewId })
+    this.dispatchItems(st)
+    if (o.reviewId) this.evaluate(o.reviewId)
+  }
+
+  /** Hand each item that isn't with its agent yet to that agent (each agent works through its own in order). */
+  private dispatchItems(st: AutopilotState): void {
+    if (st.status !== 'running' || st.parallel?.phase !== 'building') return
+    const qa = this.hasQa(st.projectId)
+    let items = st.parallel.items
+    for (const item of items) {
+      if (item.status !== 'queued' || item.sent) continue
+      const prompt = `${ITEM_PREFIX}${item.id}, sprint ${st.sprint}: ${item.title}
+The Lead planned this sprint as pieces built at the same time, each in its own copy of the game; this one is yours.
+
+Brief from the Lead (the acceptance criteria are in it):
+${item.brief}
+${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
+
+1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
+2. ${qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix what it finds, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
+3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
+Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
+      this.deps.send(st.projectId, item.agentId, prompt, { origin: 'autopilot' })
+      items = items.map((i) => (i.id === item.id ? { ...i, sent: true } : i))
+    }
+    this.put({ ...this.get(st.projectId), parallel: { ...st.parallel, items } })
+  }
+
+  /** An item's task ended: its change goes to review (and merges itself if approved), or it built nothing. */
+  private itemDone(o: TaskOutcome): void {
+    const st = this.get(o.projectId)
+    const id = /^Autopilot item (\w+)/.exec(o.task.prompt)?.[1]
+    const item = st.parallel?.items.find((i) => i.id === id)
+    if (!st.parallel || !item || item.status !== 'queued') return
+    const title = item.title
+    if (o.reviewId) {
+      this.put({ ...st, consecutiveFailures: 0, parallel: { ...st.parallel, items: st.parallel.items.map((i) => (i.id === item.id ? { ...i, status: 'review', reviewId: o.reviewId } : i)) } })
+      if (st.status !== 'off') this.evaluate(o.reviewId)
+      return
+    }
+    const outcome = o.ok ? 'no-changes' : 'failed'
+    const after = this.record(o.projectId, title, outcome)
+    const next = this.put({ ...after, parallel: { ...after.parallel!, items: after.parallel!.items.map((i) => (i.id === item.id ? { ...i, status: 'done', outcome } : i)) } })
+    if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+      this.pause(o.projectId, `${o.error} Resume once there's room again.`)
+      if (this.isAway(o.projectId)) this.retryLater(o.projectId)
+      return
+    }
+    this.nextStep(next)
+  }
+
+  /** Every item is decided: the Lead wraps the sprint up (roadmap, decisions), then the check-in. */
+  private itemsProgress(st: AutopilotState): void {
+    if (st.status !== 'running' || st.parallel?.phase !== 'building') return
+    if (st.parallel.items.some((i) => i.status !== 'done') || st.awaitingReviewId) return
+    const done = st.parallel.items.map((i) => `- ${i.title} (${i.agentId}): ${i.outcome}`).join('\n')
+    this.put({ ...st, parallel: { ...st.parallel, phase: 'wrapup' } })
+    this.deps.send(
+      st.projectId,
+      this.leadOf(st.projectId),
+      `${WRAPUP_PREFIX}${st.sprint}. Your team built these pieces at the same time:
+${done}
+
+1. Read what landed (git log -n 15 --stat, and the merged files that matter).
+2. Update design-vault/Roadmap.md (mark what's done; anything blocked under "## Blocked", anything not yet played under "## Needs a playtest") and Decisions.md, and the mechanic notes' status.
+3. Change nothing else.
+Finish with a short summary of the sprint.`,
+      { origin: 'autopilot' }
+    )
   }
 
   private reviewTitle(review: Review): string {
