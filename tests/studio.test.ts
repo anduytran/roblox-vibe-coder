@@ -100,3 +100,15 @@ test('studio: refuses project files that reach outside the game, a missing proje
   const none = new StudioSync({ rojo: () => null, emit: () => {} })
   assert.match(none.start(game({ 'default.project.json': '{}' })).message ?? '', /isn't installed/)
 })
+
+test('checks run the official Rojo, Selene and StyLua you installed, not a Rokit launcher', async () => {
+  const { realTool } = await import('../src/main/studioSync')
+  const home = tmp('hangar-home3-')
+  exe(join(home, '.rokit', 'bin', 'selene'))
+  exe(join(home, '.rokit', 'tool-storage', 'Kampfkarren', 'selene', '0.28.0', 'selene'))
+  exe(join(home, '.rokit', 'tool-storage', 'evil', 'selene', '9.9.9', 'selene'))
+  assert.equal(realTool('selene', join(home, '.rokit', 'bin', 'selene'), home, 'darwin'), join(home, '.rokit', 'tool-storage', 'Kampfkarren', 'selene', '0.28.0', 'selene'))
+  assert.equal(realTool('stylua', join(home, '.rokit', 'bin', 'stylua'), home, 'darwin'), null, 'not installed: the caller keeps what it found')
+  assert.equal(realTool('lune', join(home, '.rokit', 'bin', 'lune'), home, 'darwin'), join(home, '.rokit', 'bin', 'lune'), 'tools Hangar does not know stay as found')
+  assert.equal(realTool('rojo', '/opt/homebrew/bin/rojo', home, 'darwin'), '/opt/homebrew/bin/rojo')
+})

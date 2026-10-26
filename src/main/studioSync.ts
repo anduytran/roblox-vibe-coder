@@ -29,11 +29,34 @@ function byVersion(a: string, b: string): number {
  * names. Instead Hangar runs the newest official Rojo (rojo-rbx/rojo) the toolchain has already installed.
  */
 export function findRojo(command: string, home = homedir(), platform: NodeJS.Platform = process.platform): string | null {
-  const resolved = resolveCommand(command)
+  return realTool('rojo', resolveCommand(command), home, platform)
+}
+
+/** Official sources of the Roblox tools Hangar runs itself (checks, sync, publishing), as Rokit/Aftman store them. */
+const OFFICIAL: Record<string, [string, string]> = { rojo: ['rojo-rbx', 'rojo'], selene: ['kampfkarren', 'selene'], stylua: ['johnnymorganz', 'stylua'] }
+
+/**
+ * The real program for a tool found at `resolved`. A real install is used as is; a Rokit/Aftman launcher (which only
+ * works inside a project listing the tool, and runs whatever that project's manifest names) is swapped for the newest
+ * official version already installed. Tools Hangar doesn't know stay as found.
+ */
+export function realTool(name: string, resolved: string | null, home = homedir(), platform: NodeJS.Platform = process.platform): string | null {
   if (resolved && !shimDirs(home).includes(dirname(resolved))) return resolved
-  const exe = platform === 'win32' ? 'rojo.exe' : 'rojo'
+  const source = OFFICIAL[name.toLowerCase().replace(/\.exe$/i, '')]
+  if (!source) return resolved
+  const exe = platform === 'win32' ? `${source[1]}.exe` : source[1]
   for (const tool of ['.rokit', '.aftman']) {
-    const store = join(home, tool, 'tool-storage', 'rojo-rbx', 'rojo')
+    let store: string
+    try {
+      // Stored with the owner's own spelling (Kampfkarren, JohnnyMorganz): matched without case.
+      const base = join(home, tool, 'tool-storage')
+      const owner = readdirSync(base).find((o) => o.toLowerCase() === source[0])
+      const repo = owner ? readdirSync(join(base, owner)).find((r) => r.toLowerCase() === source[1]) : undefined
+      if (!owner || !repo) continue
+      store = join(base, owner, repo)
+    } catch {
+      continue
+    }
     let versions: string[] = []
     try {
       versions = readdirSync(store).filter((v) => /^v?\d+(\.\d+){0,3}([-+][\w.]+)?$/.test(v))

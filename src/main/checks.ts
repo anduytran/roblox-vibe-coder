@@ -8,6 +8,7 @@ import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
 import { isProtectedPath } from './pathScope'
 import { shellWords } from './permissions'
 import { resolveCommand } from './testPlace'
+import { realTool } from './studioSync'
 import { CREDENTIAL_DIRS } from './sandbox'
 
 /**
@@ -180,7 +181,10 @@ export async function runChecks(
     for (const check of checks) {
       const started = Date.now()
       const words = shellWords(check.command)
-      const program = words ? resolveCommand(words[0]!, opts.env ?? process.env, platform) : null
+      // Rojo, Selene and StyLua run as the official version you installed, not through a Rokit launcher (which needs
+      // the branch to list them, and would run whatever its manifest names).
+      const found = words ? resolveCommand(words[0]!, opts.env ?? process.env, platform) : null
+      const program = words ? (realTool(words[0]!, found, opts.home, platform) ?? found) : null
       if (!words || !program) {
         results.push({
           name: check.name,
