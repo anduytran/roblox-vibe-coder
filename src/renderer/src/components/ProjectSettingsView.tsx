@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Project, ProjectSettings } from '@shared/types'
-import { attempt, removeProject, replaceProject, toast, useStore } from '../store'
+import { attempt, confirmDialog, removeProject, replaceProject, toast, useStore } from '../store'
 import { Button, Field, Toggle, usd } from './ui'
 import { VaultsCard } from './VaultsCard'
 import { ChecksCard } from './ChecksCard'
@@ -249,9 +249,16 @@ export function ProjectSettingsView({ project }: { project: Project }) {
         <p className="small muted">Removes it from Hangar only. Your files, roles and git history stay on disk.</p>
         <Button
           tone="danger"
-          onClick={() => {
-            if (confirm(`Remove ${project.name} from Hangar? Files on disk are not touched.`)) void removeProject(project.id)
-          }}
+          onClick={() =>
+            void confirmDialog({
+              title: `Remove ${project.name}?`,
+              body: 'It is removed from Hangar only. Your files, roles and git history stay on disk.',
+              confirmLabel: 'Remove from Hangar',
+              tone: 'danger'
+            }).then((ok) => {
+              if (ok) void removeProject(project.id)
+            })
+          }
         >
           Remove from Hangar
         </Button>

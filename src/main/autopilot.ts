@@ -141,7 +141,7 @@ export class Autopilot {
   /** Start sprint 1 (or the next sprint) with optional extra direction for the Lead. */
   start(projectId: string, opts: { feedback?: string; config?: Partial<AutopilotConfig> } = {}): AutopilotState {
     const project = this.deps.registry.get(projectId)
-    if (!project.settings.autonomous) throw new Error('Turn on Autonomous mode for this project first (Project settings).')
+    if (!project.settings.autonomous) throw new Error('Turn on Autonomous mode for this project first (in its Project tab).')
     let st = this.get(projectId)
     if (st.status === 'running' || st.status === 'waiting') throw new Error('Autopilot is already running.')
     if (opts.config) st = { ...st, config: clampConfig(opts.config, st.config) }

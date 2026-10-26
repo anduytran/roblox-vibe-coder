@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
-import { attempt, replaceProject, setAutopilot, toast, useStore } from '../store'
+import { attempt, confirmDialog, replaceProject, setAutopilot, toast, useStore } from '../store'
 import { AUTOPILOT_LABEL } from './Dashboard'
 import { Button, Toggle, timeAgo, usd } from './ui'
+import { SafeText } from './SafeText'
 
 const OUTCOME: Record<SprintReport['tasks'][number]['outcome'], string> = {
   merged: 'Merged',
@@ -61,7 +62,11 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
               </Button>
             )}
             {status !== 'off' && (
-              <Button tone="ghost" disabled={busy} onClick={() => confirm('Turn autopilot off? Running tasks finish; nothing new starts.') && run(() => window.hangar.autopilot.stop(project.id), 'Autopilot off.')}>
+              <Button tone="ghost" disabled={busy} onClick={() =>
+                  void confirmDialog({ title: 'Turn autopilot off?', body: 'Running tasks finish; nothing new starts. You can start it again any time.', confirmLabel: 'Turn off' }).then(
+                    (ok) => ok && run(() => window.hangar.autopilot.stop(project.id), 'Autopilot off.')
+                  )
+                }>
                 Turn off
               </Button>
             )}
@@ -108,7 +113,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
           <p className="muted small">
             {timeAgo(report.at)} · {usd(report.spentUsd)} spent · {report.tasks.filter((t) => t.outcome === 'merged').length} of {report.tasks.length} tasks merged
           </p>
-          <pre className="summary report-text">{report.text}</pre>
+          <SafeText className="summary report-text" text={report.text} />
           <TaskList tasks={report.tasks} />
           <div className="field">
             <span className="field-label">Your feedback and answers</span>
@@ -149,7 +154,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
                 <summary>
                   Sprint {r.sprint} · {timeAgo(r.at)} · {r.tasks.filter((t) => t.outcome === 'merged').length} merged · {usd(r.spentUsd)}
                 </summary>
-                <pre className="summary report-text">{r.text}</pre>
+                <SafeText className="summary report-text" text={r.text} />
               </details>
             ))}
         </section>

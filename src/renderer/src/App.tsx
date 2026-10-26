@@ -14,6 +14,7 @@ import { Sidebar } from './components/Sidebar'
 import { Avatar, Button, Icon } from './components/ui'
 import { closeIdeaChat, closeIdeaRefine, closeWizard, useStore } from './store'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ConfirmDialog } from './components/ConfirmDialog'
 
 type Tab = 'overview' | 'agents' | 'models' | 'reviews' | 'changes' | 'settings'
 
@@ -64,7 +65,7 @@ export function App() {
                 {(['overview', 'agents', 'models', 'reviews', 'changes', 'settings'] as Tab[]).map((t) => (
                   <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? 'tab-active' : ''}`} onClick={() => setTab(t)}>
                     <Icon name={t === 'overview' ? 'home' : t === 'agents' ? 'agents' : t === 'models' ? 'cube' : t === 'reviews' ? 'review' : t === 'changes' ? 'changes' : 'sliders'} />
-                    {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Settings'}
+                    {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agents' : t === 'models' ? '3D' : t === 'reviews' ? 'Reviews' : t === 'changes' ? 'Changes' : 'Project'}
                     {t === 'reviews' && pendingReviews > 0 && <span className="badge badge-warn tab-badge">{pendingReviews}</span>}
                   </button>
                 ))}
@@ -107,6 +108,7 @@ export function App() {
           <IdeaRefine />
         </ErrorBoundary>
       )}
+      <ConfirmDialog />
       {toast && (
         <div key={toast.id} className={`toast toast-${toast.tone}`} role="status">
           {toast.text}

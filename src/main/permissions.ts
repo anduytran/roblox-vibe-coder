@@ -1,5 +1,6 @@
 import type { ProjectSettings } from '@shared/types'
 import { isProtectedPath, patternEscapes, pathsFromToolInput, relativeInside, linkInPath } from './pathScope'
+import { DECEPTIVE_CHARS } from '@shared/text'
 
 export type PolicyDecision =
   | { action: 'allow' }
@@ -140,14 +141,8 @@ export function mayRevealSecrets(command: string): boolean {
   )
 }
 
-/**
- * Invisible, look-alike-blank or direction-changing characters that can make an approval card lie:
- * control characters (C0, DEL, C1), zero-width and bidi controls, soft hyphen, Arabic letter mark,
- * Hangul fillers, line/paragraph separators, BOM, and Unicode tag characters (\"ASCII smuggling\").
- * Written as escapes on purpose, so this file contains no invisible characters itself.
- */
-export const DECEPTIVE_CHARS =
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\u2800\u3000\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/u
+// Shared with the window, which strips the same characters from agent-written text it renders.
+export { DECEPTIVE_CHARS }
 
 /** Every string inside a tool input (checked raw, before any JSON escaping hides control characters). */
 function allStrings(v: unknown, out: string[] = []): string[] {

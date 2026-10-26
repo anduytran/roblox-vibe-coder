@@ -5,6 +5,7 @@ import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, AppSettings, ApprovalDecision, ProjectSettings, Role } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
 import { probePlanUsage } from './planUsageProbe'
+import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
 import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
 import { gitCommit, gitDiff, gitInit, gitRevertFile, gitStatus, setNoHooksBase } from './git'
@@ -51,6 +52,18 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 let mainWindow: BrowserWindow | null = null
 
+/**
+ * The one way a link leaves the app: https only, no credentials in the address, and only after you
+ * confirm in a dialog that shows the real host and full address (link text in the window can't hide it).
+ */
+async function offerToOpen(win: BrowserWindow, raw: string): Promise<void> {
+  const url = safeExternalUrl(raw)
+  if (!url) return
+  const host = new URL(url).host
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Open in browser', 'Cancel'], defaultId: 1, cancelId: 1, message: `Open ${host} in your browser?`, detail: url.slice(0, 500) })
+  if (r.response === 0) await shell.openExternal(url)
+}
+
 // Credentials in Hangar's own environment (cloud, GitHub, npm tokens…) are removed before anything
 // starts, so no child process can inherit them however it builds its environment.
 scrubProcessEnv()
@@ -96,20 +109,7 @@ function createWindow(): BrowserWindow {
     })
   }
   win.webContents.setWindowOpenHandler(({ url }) => {
-    let host = ''
-    try {
-      const u = new URL(url)
-      if (u.protocol === 'https:' && !u.username && !u.password) host = u.host
-    } catch {
-      // not a URL
-    }
-    if (host) {
-      void dialog
-        .showMessageBox(win, { type: 'question', buttons: ['Open in browser', 'Cancel'], defaultId: 1, cancelId: 1, message: `Open ${host} in your browser?`, detail: url.slice(0, 500) })
-        .then((r) => {
-          if (r.response === 0) void shell.openExternal(url)
-        })
-    }
+    void offerToOpen(win, url)
     return { action: 'deny' }
   })
   // Block navigation and redirects away from the app UI, and never allow embedded webviews.
@@ -538,6 +538,9 @@ app.whenReady().then(() => {
   })
   const defaultParent = (): string => join(app.getPath('documents'), 'Hangar Games')
   handle(IPC.systemTools, () => ({ ...tools(), defaultParent: defaultParent() }))
+  handle(IPC.systemOpenUrl, async (url: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed()) await offerToOpen(mainWindow, str(url, 'link'))
+  })
   handle(IPC.projectsPickFolder, async () => {
     const opts = { title: 'Where should new games go?', defaultPath: defaultParent(), properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
     const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts)

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Project, Role } from '@shared/types'
-import { attempt, setRoles, toast } from '../store'
+import { confirmDialog, attempt, setRoles, toast } from '../store'
 import { Button, Field, Modal } from './ui'
 
 export function RoleEditor(props: { project: Project; role: Role; onClose: () => void; onSaved: (id: string) => void }) {
@@ -41,8 +41,9 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
     })
   }
 
-  const remove = (): void => {
-    if (!confirm(`Delete the ${props.role.name} role? Its file in .claude/agents will be removed.`)) return
+  const remove = async (): Promise<void> => {
+    const ok = await confirmDialog({ title: `Delete the ${props.role.name} role?`, body: 'Its file in .claude/agents is removed, and anything it is working on now stops.', confirmLabel: 'Delete role', tone: 'danger' })
+    if (!ok) return
     void attempt(async () => {
       setRoles(project.id, await window.hangar.roles.delete(project.id, props.role.id))
       props.onClose()
@@ -57,7 +58,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
       footer={
         <>
           {!isNew && (
-            <Button tone="danger" onClick={remove}>
+            <Button tone="danger" onClick={() => void remove()}>
               Delete role
             </Button>
           )}

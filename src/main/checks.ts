@@ -11,7 +11,7 @@ import { resolveCommand } from './testPlace'
 import { CREDENTIAL_DIRS } from './sandbox'
 
 /**
- * "Definition of done": the commands you list in Project settings (lint, format check, build, tests)
+ * "Definition of done": the commands you list in the Project tab (lint, format check, build, tests)
  * run on every finished autonomous task before you merge it.
  *
  * Where and how they run:

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ModelFile, ModelRequest, Project } from '@shared/types'
 import { attempt, setRoles, toast, useStore } from '../store'
 import { AgentPanel } from './AgentsView'
-import { Button, Field, timeAgo } from './ui'
+import { Button, Field, Skeleton, timeAgo } from './ui'
+import { EmptyState } from './EmptyState'
 
 const METHODS: { id: ModelRequest['method']; label: string; hint: string }[] = [
   { id: 'studio', label: 'Studio (parts)', hint: 'Built from parts in Roblox Studio. Needs Studio open. Saved as a builder script in git.' },
@@ -19,7 +20,7 @@ export function ModelsView({ project }: { project: Project }) {
   const [description, setDescription] = useState('')
   const [style, setStyle] = useState<ModelRequest['style']>('low-poly')
   const [size, setSize] = useState<ModelRequest['size']>('prop')
-  const [models, setModels] = useState<ModelFile[]>([])
+  const [models, setModels] = useState<ModelFile[] | null>(null)
 
   const roleId = method === 'studio' ? 'studio-modeler' : 'blender-modeler'
   const role = roles?.find((r) => r.id === roleId)
@@ -27,7 +28,14 @@ export function ModelsView({ project }: { project: Project }) {
   const busy = state?.status === 'working' || state?.status === 'queued' || state?.status === 'awaiting_approval'
   const blenderReady = !!settings?.blenderMcpCommand?.trim()
 
-  const reload = useCallback(() => void attempt(async () => setModels(await window.hangar.models.list(project.id))), [project.id])
+  const [listError, setListError] = useState(false)
+  const reload = useCallback(() => {
+    setListError(false)
+    void attempt(() => window.hangar.models.list(project.id)).then((list) => {
+      if (list === undefined) setListError(true)
+      else setModels(list)
+    })
+  }, [project.id])
   useEffect(() => {
     reload()
   }, [reload])
@@ -107,8 +115,14 @@ export function ModelsView({ project }: { project: Project }) {
             </Button>
           </div>
         </div>
-        {models.length === 0 ? (
-          <p className="small muted">No models yet. Studio models are saved in src/shared/Models; Blender meshes in assets/models.</p>
+        {listError && models === null ? (
+          <EmptyState compact icon="cube" title="Couldn't list the models" action={<Button size="sm" onClick={reload}>Try again</Button>} />
+        ) : models === null ? (
+          <Skeleton lines={3} label="Loading models" />
+        ) : models.length === 0 ? (
+          <EmptyState compact icon="cube" title="No models yet">
+            Studio models are saved in src/shared/Models; Blender meshes in assets/models.
+          </EmptyState>
         ) : (
           <div className="model-grid">
             {models.map((m) => (

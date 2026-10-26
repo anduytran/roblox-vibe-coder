@@ -145,11 +145,11 @@ export class TestPlacePublisher implements Publisher {
   async publish(review: Review): Promise<{ versionNumber: number }> {
     const project = this.deps.registry.get(review.projectId)
     const place = project.settings.testPlace
-    if (!place) throw new Error('Set this project\'s test place (universe and place IDs) in Project settings first.')
+    if (!place) throw new Error('Set this project\'s test place (universe and place IDs) in the Project tab first.')
     const apiKey = this.deps.keys.get(project.id)
-    if (!apiKey) throw new Error('Add a Roblox Open Cloud API key for this project in Project settings first.')
+    if (!apiKey) throw new Error('Add a Roblox Open Cloud API key for this project in the Project tab first.')
     const rojo = resolveCommand(this.deps.rojoCommand())
-    if (!rojo) throw new Error(`Couldn't find Rojo ("${this.deps.rojoCommand()}"). Install it or set its full path in Settings → Tools.`)
+    if (!rojo) throw new Error(`Couldn't find Rojo ("${this.deps.rojoCommand()}"). Install it or set its full path in Settings → Roblox.`)
 
     // Symlinks and submodules could pull in files from outside the project; refuse them.
     const links = await linksInCommit(project.path, review.headSha)

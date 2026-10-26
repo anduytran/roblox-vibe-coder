@@ -3,6 +3,7 @@ import type { AgentState, LogEntry, Project, Role } from '@shared/types'
 import { attempt, EMPTY_AGENTS, EMPTY_ROLES, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { RoleEditor } from './RoleEditor'
+import { EmptyState } from './EmptyState'
 import { Button, Icon, StatusPill, timeAgo, usd } from './ui'
 
 const MAIN_AGENT: Role = {
@@ -108,7 +109,7 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
   useEffect(() => {
     const el = feedRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [log.length, approvals.length])
+  }, [log[log.length - 1]?.id, log.length, approvals.length])
 
   const send = (): void => {
     const text = draft.trim()
@@ -162,14 +163,14 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         }}
       >
         {log.length === 0 && approvals.length === 0 && (
-          <div className="feed-empty">
-            <p>Give {role.name} a task. Small, specific requests work best, for example:</p>
-            <code>
+          <EmptyState icon="agents" title={`Give ${role.name} a task`}>
+            <p>Small, specific requests work best, for example:</p>
+            <code className="empty-example">
               {role.mode === 'research'
                 ? 'What are the current DataStore limits and best practices for saving player inventories?'
                 : 'Add a 3-second cooldown to the dash augment and playtest it.'}
             </code>
-          </div>
+          </EmptyState>
         )}
         {log.map((e) => (
           <FeedEntry key={e.id} entry={e} />

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiReview, Project, Review, ReviewChecks } from '@shared/types'
 import { mergeWarnings } from '@shared/reviewRules'
-import { attempt, EMPTY_REVIEWS, replaceReview, toast, useStore } from '../store'
-import { Button, timeAgo } from './ui'
+import { attempt, confirmDialog, EMPTY_REVIEWS, replaceReview, toast, useStore } from '../store'
+import { Button, Skeleton, timeAgo } from './ui'
+import { DiffView } from './DiffView'
+import { EmptyState } from './EmptyState'
+import { SafeText } from './SafeText'
+import { revealHidden } from '@shared/text'
 
 export function ReviewsView({ project }: { project: Project }) {
   const reviews = useStore((s) => s.reviews[project.id] ?? EMPTY_REVIEWS)
@@ -15,13 +19,10 @@ export function ReviewsView({ project }: { project: Project }) {
 
   if (!project.settings.autonomous && reviews.length === 0) {
     return (
-      <div className="empty">
-        <h2>No reviews yet</h2>
-        <p>
-          Turn on Autonomous mode in Project settings. Each task then runs on its own branch and ends up here as one change to review, merge or discard. Reports from
-          the web Researcher also wait here until you approve them.
-        </p>
-      </div>
+      <EmptyState icon="review" title="No reviews yet">
+        Turn on Autonomous mode in the Project tab. Each task then runs on its own branch and ends up here as one change to review, merge or discard. Reports from
+        the web Researcher also wait here until you approve them.
+      </EmptyState>
     )
   }
 
@@ -29,7 +30,11 @@ export function ReviewsView({ project }: { project: Project }) {
     <div className="changes">
       <div className="changes-list">
         <span className="side-label">Waiting for review ({pending.length})</span>
-        {pending.length === 0 && <p className="muted small pad-x">Nothing waiting. Finished autonomous tasks appear here.</p>}
+        {pending.length === 0 && (
+          <EmptyState compact title="Nothing waiting">
+            Finished autonomous tasks appear here.
+          </EmptyState>
+        )}
         {pending.map((r) => (
           <button key={r.id} className={`review-item ${current?.id === r.id ? 'file-item-active' : ''}`} onClick={() => setSelected(r.id)}>
             <span className="review-title">{r.title}</span>
@@ -60,7 +65,7 @@ export function ReviewsView({ project }: { project: Project }) {
           <ReviewDetail key={current.id} project={project} review={current} agent={agentName(current.agentId)} />
         )
       ) : (
-        <div className="muted small pad">Select a task.</div>
+        <EmptyState icon="review" title="Select a task" />
       )}
     </div>
   )
@@ -72,13 +77,40 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
   const [busy, setBusy] = useState<string | null>(null)
   const isPending = review.status === 'pending'
 
+  const [diffError, setDiffError] = useState(false)
+  const [diffTry, setDiffTry] = useState(0)
+  // The diff loads once per review (this component is keyed by review id). Updates to the review (checks,
+  // reviewer, publish) don't reload it, so what you opened, closed and scrolled stays put.
   useEffect(() => {
     if (!isPending) return
-    void attempt(() => window.hangar.reviews.diff(review.id)).then((d) => setDiff(d ?? ''))
-    if (review.clip) {
-      void Promise.all(review.clip.files.map((_, i) => window.hangar.reviews.clipFile(review.id, i))).then(setClip).catch(() => setClip([]))
+    let stale = false
+    setDiffError(false)
+    void attempt(() => window.hangar.reviews.diff(review.id)).then((d) => {
+      if (stale) return
+      if (d === undefined) setDiffError(true)
+      else setDiff(d)
+    })
+    return () => {
+      stale = true
     }
-  }, [review.id, isPending, review.clip])
+  }, [review.id, isPending, diffTry])
+  // The clip loads when its files change, not on every review update.
+  const clipKey = review.clip ? `${review.clip.kind}\n${review.clip.files.join('\n')}` : ''
+  useEffect(() => {
+    if (!isPending || !review.clip) {
+      // Merged or discarded: the clip's files are deleted, so stop showing it.
+      setClip([])
+      return
+    }
+    let stale = false
+    void Promise.all(review.clip.files.map((_, i) => window.hangar.reviews.clipFile(review.id, i)))
+      .then((c) => !stale && setClip(c))
+      .catch(() => !stale && setClip([]))
+    return () => {
+      stale = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [review.id, isPending, clipKey])
 
   const run = (label: string, fn: () => Promise<unknown>, ok: string): void => {
     setBusy(label)
@@ -105,8 +137,9 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
               disabled={!!busy}
               onClick={() => {
                 const warnings = mergeWarnings(review)
-                if (warnings.length && !confirm(`${warnings.join('\n')}\n\nMerge anyway?`)) return
-                run('merge', () => window.hangar.reviews.merge(review.id, { force: warnings.length > 0, acknowledged: warnings }), `Merged into ${review.base}.`)
+                const merge = (): void => run('merge', () => window.hangar.reviews.merge(review.id, { force: warnings.length > 0, acknowledged: warnings }), `Merged into ${review.base}.`)
+                if (!warnings.length) return merge()
+                void confirmDialog({ title: 'Merge anyway?', body: 'This change needs a second look before it goes into your game:', lines: warnings, confirmLabel: 'Merge anyway', tone: 'danger' }).then((ok) => ok && merge())
               }}
             >
               {mergeWarnings(review).length ? 'Merge anyway…' : 'Merge'}
@@ -114,7 +147,11 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
             <Button
               tone="danger"
               disabled={!!busy}
-              onClick={() => confirm('Discard this work? The branch will be deleted.') && run('discard', () => window.hangar.reviews.discard(review.id), 'Discarded.')}
+              onClick={() =>
+                void confirmDialog({ title: 'Discard this work?', body: `The branch ${review.branch} and everything on it will be deleted.`, confirmLabel: 'Discard', tone: 'danger' }).then(
+                  (ok) => ok && run('discard', () => window.hangar.reviews.discard(review.id), 'Discarded.')
+                )
+              }
             >
               Discard
             </Button>
@@ -125,8 +162,8 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
         {review.note && <div className="error-bar">{review.note}</div>}
         {!isPending && <p className="muted">This task was {review.status}.</p>}
-        {clip.length > 0 &&
-          (review.clip?.kind === 'video' ? (
+        {isPending && review.clip && clip.length > 0 &&
+          (review.clip.kind === 'video' ? (
             <video className="clip" src={clip[0]} controls preload="metadata" />
           ) : (
             <div className="frames">
@@ -152,7 +189,7 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         {review.summary && (
           <>
             <span className="side-label">Agent's report</span>
-            <pre className="summary">{review.summary}</pre>
+            <SafeText className="summary" text={review.summary} />
           </>
         )}
         {isPending && (
@@ -168,29 +205,38 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
                 {busy === 'publish' ? 'Building and publishing…' : 'Publish to test place'}
               </Button>
             ) : (
-              <span className="muted small">Set a test place in Project settings to play builds on your phone.</span>
+              <span className="muted small">Set a test place in the Project tab to play builds on your phone.</span>
             )}
           </div>
         )}
         {review.published && <p className="small">Published to the test place as version {review.published.versionNumber} ({timeAgo(review.published.at)}).</p>}
-        {isPending && (
-          <div className="diff review-diff">
-            {diff === null ? (
-              <div className="muted small pad">Loading changes…</div>
-            ) : (
-              diff.split('\n').map((l, i) => (
-                <div
-                  key={i}
-                  className={
-                    /^(\+\+\+|---|diff |index )/.test(l) ? 'd-meta' : l.startsWith('@@') ? 'd-hunk' : l.startsWith('+') ? 'd-add' : l.startsWith('-') ? 'd-del' : 'd-ctx'
-                  }
+        {isPending &&
+          (diffError ? (
+            <EmptyState
+              compact
+              icon="changes"
+              title="Couldn't load the changes"
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setDiff(null)
+                    setDiffTry((n) => n + 1)
+                  }}
                 >
-                  {l || ' '}
-                </div>
-              ))
-            )}
-          </div>
-        )}
+                  Try again
+                </Button>
+              }
+            >
+              {review.files.length > 0 && `Files in this task: ${review.files.map(revealHidden).join(', ')}`}
+            </EmptyState>
+          ) : diff === null ? (
+            <Skeleton lines={6} label="Loading changes" />
+          ) : diff ? (
+            <DiffView key={review.id} diff={diff} className="review-diff" />
+          ) : (
+            <EmptyState compact title="No file changes" />
+          ))}
       </div>
     </div>
   )
@@ -329,7 +375,11 @@ function ResearchDetail({ review, agent }: { review: Review; agent: string }) {
             <Button tone="primary" disabled={busy} onClick={() => act(() => window.hangar.reviews.merge(review.id), 'Saved to research/. Agents can read it now.')}>
               Approve & save
             </Button>
-            <Button tone="danger" disabled={busy} onClick={() => confirm('Discard this research?') && act(() => window.hangar.reviews.discard(review.id), 'Discarded.')}>
+            <Button tone="danger" disabled={busy} onClick={() =>
+                void confirmDialog({ title: 'Discard this research?', body: 'The report is thrown away and no agent will see it.', confirmLabel: 'Discard', tone: 'danger' }).then(
+                  (ok) => ok && act(() => window.hangar.reviews.discard(review.id), 'Discarded.')
+                )
+              }>
               Discard
             </Button>
           </div>

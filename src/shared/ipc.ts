@@ -79,6 +79,7 @@ export const IPC = {
   projectsPickFolder: 'projects:pickFolder',
   projectsReadDocument: 'projects:readDocument',
   systemTools: 'system:tools',
+  systemOpenUrl: 'system:openUrl',
   autopilotList: 'autopilot:list',
   autopilotStart: 'autopilot:start',
   autopilotPause: 'autopilot:pause',
@@ -153,6 +154,8 @@ export interface HangarApi {
   system: {
     /** Which build tools are installed (used to pick the checks for new projects). */
     tools(): Promise<{ rojo: boolean; selene: boolean; stylua: boolean; git: boolean; defaultParent: string }>
+    /** Offer to open an https link in the browser (Hangar asks first, showing the full address). */
+    openUrl(url: string): Promise<void>
   }
   autopilot: {
     list(): Promise<AutopilotState[]>

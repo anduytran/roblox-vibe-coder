@@ -181,7 +181,7 @@ export async function gitStatus(root: string): Promise<GitStatus> {
   await assertSafeRepo(root)
   const [branchOut, statusOut] = await Promise.all([
     git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => ''),
-    git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none'])
   ])
   return { isRepo: true, branch: branchOut.trim() || null, files: parsePorcelain(statusOut) }
 }
@@ -189,23 +189,51 @@ export async function gitStatus(root: string): Promise<GitStatus> {
 export async function gitDiff(root: string, file?: string): Promise<string> {
   if (file) assertInside(root, file)
   await assertSafeRepo(root)
-  const pathArgs = file ? ['--', file] : []
-  const safe = ['--no-color', '--no-ext-diff', '--no-textconv']
-  let tracked = await git(root, ['diff', 'HEAD', ...safe, ...pathArgs]).catch(() =>
-    // A repo with no commits yet has no HEAD; diff against the empty index instead.
-    git(root, ['diff', ...safe, ...pathArgs])
+  const safe = DIFF_FLAGS
+  // Against the last commit (staged and unstaged together). A repo with no commits yet is compared with the
+  // empty tree. "--" always separates revisions from paths, so a file named HEAD can't change what's compared.
+  const hasHead = await git(root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']).then(
+    () => true,
+    () => false
   )
+  const base = hasHead ? 'HEAD' : await emptyTree(root)
+  let tracked = await git(root, [...DIFF_CONFIG, 'diff', ...safe, base, '--', ...(file ? [file] : [])])
   // Show untracked files as additions so new files are reviewable too.
   const status = await gitStatus(root)
   const untracked = status.files.filter((f) => f.status === '??' && (!file || f.path === file))
-  for (const f of untracked.slice(0, 50)) {
+  for (const f of untracked.slice(0, MAX_UNTRACKED_DIFFS)) {
     // `--no-index` exits with 1 when the files differ, which is always the case here.
-    const add = await git(root, ['diff', ...safe, '--no-index', '--', devNull(), f.path], { okExitCodes: [1] }).catch(
+    let add = await git(root, [...DIFF_CONFIG, 'diff', ...safe, '--no-index', '--', devNull(), f.path], { okExitCodes: [1] }).catch(
       (e: Error) => `(could not diff ${f.path}: ${e.message})`
     )
+    // A real diff against nothing always prints a header; empty output means git couldn't (a nested repository, say).
+    if (!add.trim()) add = `(could not diff ${f.path}: ${f.path.endsWith('/') ? 'it is a separate git repository' : 'git printed nothing'})\n`
     tracked += add.endsWith('\n') ? add : add + '\n'
   }
+  if (untracked.length > MAX_UNTRACKED_DIFFS) {
+    tracked += `(${untracked.length - MAX_UNTRACKED_DIFFS} more new files not shown here; pick one from the list to see it)\n`
+  }
   return tracked
+}
+
+/**
+ * Pinned so the window's diff reader always gets the same shape, whatever the user's git config says:
+ * a/ b/ prefixes (diff.mnemonicPrefix, noprefix), plain rename detection (diff.renames=copies would show new
+ * files as copies), and submodules as one line (diff.submodule=log would print them as loose text).
+ */
+const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '-M', '--submodule=short', '--ignore-submodules=none']
+/**
+ * Unusual characters in paths always come escaped and quoted (core.quotePath=false would pass them raw), and
+ * file names are taken literally: a file called "*.lua" is that file, not a pattern for every .lua file.
+ */
+const DIFF_CONFIG = ['--literal-pathspecs', '-c', 'core.quotePath=true']
+/** New files are diffed one by one; past this many, the rest are listed as a note. */
+const MAX_UNTRACKED_DIFFS = 50
+
+/** The empty tree's id for this repo's hash format (to diff a repo that has no commits yet). */
+async function emptyTree(root: string): Promise<string> {
+  const format = (await git(root, ['rev-parse', '--show-object-format']).catch(() => 'sha1')).trim()
+  return format === 'sha256' ? '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321' : '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 }
 
 function devNull(): string {
@@ -465,14 +493,15 @@ export async function finishTaskBranch(
   if (!descends) throw new Error(`The task branch no longer builds on ${from.base}'s starting point (its history was rewritten). It was kept for you to inspect: ${branch}.`)
 
   await git(root, ['add', '-A'])
-  const staged = (await git(root, ['diff', '--cached', '--name-only', '-z'])).split('\0').filter(Boolean)
+  // --ignore-submodules=none: a task that only bumps a submodule (with ignore=all configured) still gets committed and reviewed.
+  const staged = (await git(root, ['diff', '--cached', '--name-only', '-z', '--ignore-submodules=none'])).split('\0').filter(Boolean)
   if (staged.length > 0) {
     const who = agentName.replace(/[<>\n]/g, '').slice(0, 40)
     await git(root, ['-c', `user.name=Hangar (${who})`, '-c', 'user.email=hangar@localhost', 'commit', '--no-verify', '-m', message.slice(0, 200)])
   }
   const headSha = (await git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
   await git(root, ['checkout', from.base])
-  const files = (await git(root, ['diff', '--name-only', '-z', from.baseSha, headSha])).split('\0').filter(Boolean)
+  const files = (await git(root, ['diff', '--name-only', '-z', '--ignore-submodules=none', from.baseSha, headSha, '--'])).split('\0').filter(Boolean)
   if (files.length === 0) await git(root, ['branch', '-D', branch]).catch(() => undefined)
   if (files.some((f) => /(^|\/)\.gitignore$/.test(f))) notes.push('This change edits .gitignore — check it doesn\'t hide or expose files you care about.')
   if (quarantineDir) {
@@ -498,7 +527,7 @@ const SHA = /^[0-9a-f]{40,64}$/
 export async function reviewDiff(root: string, baseSha: string, headSha: string): Promise<string> {
   if (!SHA.test(baseSha) || !SHA.test(headSha)) throw new Error('Invalid review.')
   await assertSafeRepo(root)
-  return git(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', baseSha, headSha])
+  return git(root, [...DIFF_CONFIG, 'diff', ...DIFF_FLAGS, baseSha, headSha, '--'])
 }
 
 /**

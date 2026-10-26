@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GitStatus, Project } from '@shared/types'
-import { attempt, toast, useStore } from '../store'
-import { Button } from './ui'
+import { attempt, confirmDialog, toast, useStore } from '../store'
+import { Button, Skeleton } from './ui'
+import { DiffView } from './DiffView'
+import { EmptyState } from './EmptyState'
+import { revealHidden } from '@shared/text'
 
 const STATUS_NAME: Record<string, string> = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', '?': 'New', U: 'Conflict' }
 
@@ -13,48 +16,100 @@ function statusLabel(code: string): string {
 export function ChangesView({ project }: { project: Project }) {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [file, setFile] = useState<string | null>(null)
-  const [diff, setDiff] = useState('')
+  /** The last diff that arrived, and which view it belongs to (project + file). */
+  const [diff, setDiff] = useState<{ key: string; text: string } | null>(null)
+  /** The view whose diff failed to load, if any. */
+  const [diffErrorKey, setDiffErrorKey] = useState<string | null>(null)
+  const [diffTry, setDiffTry] = useState(0)
   const [message, setMessage] = useState('')
-  const [loading, setLoading] = useState(false)
-  // Refresh whenever any agent in this project finishes a step.
-  const logTick = useStore((s) => Object.values(s.agents[project.id] ?? {}).reduce((n, a) => n + a.log.length, 0))
+  // Starts true: until the first status arrives this is "loading", not "couldn't read".
+  const [loading, setLoading] = useState(true)
+  // Refresh whenever any agent in this project logs a step. Watches the newest entry, not the count: logs are
+  // capped, so a long-running agent's count stops changing.
+  const logTick = useStore((s) =>
+    Object.values(s.agents[project.id] ?? {})
+      .map((a) => a.log[a.log.length - 1]?.id ?? '')
+      .join('|')
+  )
 
+  // Status replies can overlap (a debounced refresh and the one after a commit); only the newest counts.
+  const statusSeq = useRef(0)
   const refresh = useCallback(async () => {
+    const mine = ++statusSeq.current
     setLoading(true)
     const st = await attempt(() => window.hangar.git.status(project.id))
+    if (mine !== statusSeq.current) return
     setLoading(false)
     if (!st) return
     setStatus(st)
-    if (file && !st.files.some((f) => f.path === file)) setFile(null)
-  }, [project.id, file])
+    // Drop the selection if that file has no changes any more. (Not a dependency: clicking a file
+    // mustn't re-run git status and fetch its diff a second time.)
+    setFile((f) => (f && !st.files.some((x) => x.path === f) ? null : f))
+  }, [project.id])
 
+  // The first look is immediate; later ones are debounced so a busy agent doesn't trigger a git call per log line.
+  // The flag flips only when the timer actually fires (React's development double-run cancels the first one).
+  const first = useRef(true)
   useEffect(() => {
-    // Debounced so a busy agent doesn't trigger a git call per log line.
-    const t = setTimeout(() => void refresh(), 600)
+    const t = setTimeout(
+      () => {
+        first.current = false
+        void refresh()
+      },
+      first.current ? 0 : 600
+    )
     return () => clearTimeout(t)
   }, [refresh, logTick])
 
+  // What the diff pane shows (project + file), and request numbers so a slow reply for the same target still
+  // lands unless a newer one already did, while replies for another file or project are dropped.
+  const target = useRef('')
+  const seq = useRef(0)
+  const applied = useRef(0)
+  const hasChanges = !!status?.isRepo && status.files.length > 0
+  const viewKey = hasChanges ? `${project.id}\u0000${file ?? ''}` : ''
   useEffect(() => {
-    if (!status?.isRepo || status.files.length === 0) {
-      setDiff('')
-      return
-    }
-    void attempt(() => window.hangar.git.diff(project.id, file ?? undefined)).then((d) => setDiff(d ?? ''))
-  }, [project.id, file, status])
+    // Nothing to show: a diff still on its way is for changes that are gone now.
+    target.current = viewKey
+    if (!viewKey) return
+    const mine = ++seq.current
+    void attempt(() => window.hangar.git.diff(project.id, file ?? undefined)).then((d) => {
+      if (target.current !== viewKey || mine < applied.current) return
+      applied.current = mine
+      if (d === undefined) setDiffErrorKey(viewKey)
+      else {
+        setDiff({ key: viewKey, text: d })
+        setDiffErrorKey((k) => (k === viewKey ? null : k))
+      }
+    })
+    // status is a dependency on purpose: file contents can change without the list changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey, status, diffTry])
+  // Decided while rendering, so another file's diff (or one from before a commit) is never shown, even for a frame.
+  const shown = diff && diff.key === viewKey ? diff.text : null
 
-  const lines = useMemo(() => diff.split('\n'), [diff])
-
-  if (!status) return <div className="empty small">{loading ? 'Loading changes…' : 'Could not read git status.'}</div>
+  if (!status)
+    return loading ? (
+      <div className="pad">
+        <Skeleton lines={5} label="Loading changes" />
+      </div>
+    ) : (
+      <EmptyState icon="changes" title="Couldn't read git status" action={<Button onClick={() => void refresh()}>Try again</Button>} />
+    )
 
   if (!status.isRepo) {
     return (
-      <div className="empty">
-        <h2>This folder is not a git repository</h2>
-        <p>Git lets you review every change an agent makes and undo anything. Hangar strongly recommends it.</p>
-        <Button tone="primary" onClick={() => void attempt(() => window.hangar.git.init(project.id)).then(refresh)}>
-          Initialize git here
-        </Button>
-      </div>
+      <EmptyState
+        icon="changes"
+        title="This folder is not a git repository"
+        action={
+          <Button tone="primary" onClick={() => void attempt(() => window.hangar.git.init(project.id)).then(refresh)}>
+            Initialize git here
+          </Button>
+        }
+      >
+        Git lets you review every change an agent makes and undo anything. Hangar strongly recommends it.
+      </EmptyState>
     )
   }
 
@@ -67,12 +122,14 @@ export function ChangesView({ project }: { project: Project }) {
     })
   }
 
-  const revert = (path: string): void => {
+  const revert = async (path: string): Promise<void> => {
     const isNew = status.files.find((f) => f.path === path)?.status === '??'
-    const msg = isNew
-      ? `Move the new file "${path}" to the trash?`
-      : `Discard all changes to "${path}" and restore the last committed version?`
-    if (!confirm(msg)) return
+    const ok = await confirmDialog(
+      isNew
+        ? { title: 'Move this new file to the trash?', body: revealHidden(path), confirmLabel: 'Move to trash', tone: 'danger' }
+        : { title: 'Discard the changes to this file?', body: `${revealHidden(path)} goes back to its last committed version.`, confirmLabel: 'Discard changes', tone: 'danger' }
+    )
+    if (!ok) return
     void attempt(async () => {
       await window.hangar.git.revertFile(project.id, path)
       toast(isNew ? 'File moved to trash.' : 'Changes discarded.')
@@ -93,7 +150,9 @@ export function ChangesView({ project }: { project: Project }) {
           </button>
         </div>
         {status.files.length === 0 ? (
-          <p className="muted small">No uncommitted changes. Everything agents did has been committed.</p>
+          <EmptyState compact title="No uncommitted changes">
+            Everything agents did has been committed.
+          </EmptyState>
         ) : (
           <>
             <button className={`file-item ${file === null ? 'file-item-active' : ''}`} onClick={() => setFile(null)}>
@@ -101,11 +160,11 @@ export function ChangesView({ project }: { project: Project }) {
             </button>
             {status.files.map((f) => (
               <div key={f.path} className={`file-item ${file === f.path ? 'file-item-active' : ''}`}>
-                <button className="file-name" onClick={() => setFile(f.path)} title={f.path}>
+                <button className="file-name" onClick={() => setFile(f.path)} title={revealHidden(f.path)}>
                   <span className={`file-status file-status-${(f.status.trim()[0] ?? 'q').replace('?', 'q')}`}>{statusLabel(f.status)}</span>
-                  {f.path}
+                  {revealHidden(f.path)}
                 </button>
-                <button className="icon-btn" title="Discard changes to this file" onClick={() => revert(f.path)}>
+                <button className="icon-btn" title="Discard changes to this file" onClick={() => void revert(f.path)}>
                   ↺
                 </button>
               </div>
@@ -119,28 +178,32 @@ export function ChangesView({ project }: { project: Project }) {
           </>
         )}
       </div>
-      <div className="diff" aria-label="Diff">
-        {diff ? (
-          lines.map((l, i) => (
-            <div
-              key={i}
-              className={
-                l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ')
-                  ? 'd-meta'
-                  : l.startsWith('@@')
-                    ? 'd-hunk'
-                    : l.startsWith('+')
-                      ? 'd-add'
-                      : l.startsWith('-')
-                        ? 'd-del'
-                        : 'd-ctx'
-              }
-            >
-              {l || ' '}
-            </div>
-          ))
+      <div className="diff-pane" aria-label="Diff">
+        {!hasChanges ? (
+          <EmptyState icon="changes" title="Nothing to show" />
+        ) : diffErrorKey === viewKey && shown === null ? (
+          <EmptyState
+            icon="changes"
+            title="Couldn't load the changes"
+            action={
+              <Button
+                onClick={() => {
+                  setDiffErrorKey(null)
+                  setDiffTry((n) => n + 1)
+                }}
+              >
+                Try again
+              </Button>
+            }
+          />
+        ) : shown === null ? (
+          <div className="pad">
+            <Skeleton lines={8} label="Loading the changes" />
+          </div>
+        ) : shown.trim() ? (
+          <DiffView key={viewKey} diff={shown} />
         ) : (
-          <div className="muted small pad">Select a file to see what changed.</div>
+          <EmptyState icon="changes" title="No differences to show" />
         )}
       </div>
     </div>

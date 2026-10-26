@@ -39,7 +39,7 @@ Saturation is measured among charting games, so it reflects competition among su
 - **Agent board** — every agent's status (idle, queued, working, needs approval, error), current activity, queue and session cost.
 - **Live feed and chat** — messages, tool calls, results and errors as they happen. Sending while an agent is busy queues the task.
 - **Roles as files** — roles are `.claude/agents/<id>.md` in the project, the same format Claude Code uses, so they're versioned with your game. "Add starter roles" creates four templates.
-- **Approvals** — anything that changes things asks first (see *Safety model*). "Always allow" is saved per project and can be removed in Project settings.
+- **Approvals** — anything that changes things asks first (see *Safety model*). "Always allow" is saved per project and can be removed in the Project tab.
 - **Changes tab** — git diff of everything agents changed, commit all, or revert a single file (new files go to the OS trash, never hard-deleted).
 - **Spending controls** — per-task limit, daily limit across projects, optional daily limit per project, and a **Stop all agents** button.
 - **Light and dark themes** — follows your OS, or pick one in Settings → Appearance.
@@ -47,7 +47,7 @@ Saturation is measured among charting games, so it reflects competition among su
 
 ## Autonomous mode
 
-Turn it on per project (Project settings → Autonomous mode). Agents then work without asking inside the fence — edits in the project, sandboxed shell commands, and Studio's playtest tools (start/stop play, simulated input, running test code) — and you review results instead of approving steps:
+Turn it on per project (Project tab → Autonomous mode). Agents then work without asking inside the fence — edits in the project, sandboxed shell commands, and Studio's playtest tools (start/stop play, simulated input, running test code) — and you review results instead of approving steps:
 
 - Each task runs on its own git branch (`hangar/<agent>-<task>-<id>`) created from your current branch. When it finishes, Hangar commits the work to that branch (as "Hangar (<agent>)"), switches back, and the task appears in the **Reviews** tab with the agent's report, the diff, and a playtest clip if you asked for one.
 - **Merge** squashes it into your branch as one commit; **Discard** deletes the branch; **Try it in Studio** switches your project folder to the branch so Rojo syncs it into Studio.
@@ -56,7 +56,7 @@ Turn it on per project (Project settings → Autonomous mode). Agents then work 
 
 ## Before you merge: checks and the reviewer agent
 
-Project settings → Before you merge. Every finished autonomous task is checked before it reaches you:
+Project tab → Before you merge. Every finished autonomous task is checked before it reaches you:
 
 - **Checks** — commands you list (suggested: `stylua --check src`, `selene src`, `rojo build -o hangar-check.rbxl`) run in a temporary copy of the task's branch, so your project folder isn't touched. On macOS/Linux they run inside the OS sandbox. They're skipped (and Merge asks you to confirm) when a task changes files that decide what runs, like `rokit.toml`, `package.json` or JS tool configs.
 - **Reviewer agent** — a separate, read-only Claude session reads the change with a Roblox checklist (client trust in RemoteEvents, backdoors like `require(id)`/`loadstring`, DataStore safety, performance, scope creep) and returns a verdict with findings. Up to $1 per task.
@@ -74,7 +74,7 @@ Two roles keep an Obsidian vault in the project by default (any role can have on
 - **Lead → `design-vault/`** (game design): Game Overview (pitch, core loop, pillars), Mechanics with **acceptance criteria**, Content lists, Balance numbers, Roadmap, Decisions and an Inbox for feature ideas. The Lead plans to it, hands acceptance criteria to whoever builds a feature, checks them when it's done, and keeps the numbers in sync with the code.
 - **UI Builder → `ui-vault/`**: Home, Style Guide, Screens, Components, Decisions and an Inbox for UI requests. It reads it before UI work and updates the notes after, so the vault stays a living spec of your game's interface.
 
-Vaults are created from templates on first use (or Project settings → Obsidian vaults). Open it with Obsidian → "Open folder as vault", or from Project settings → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
+Vaults are created from templates on first use (or Project tab → Obsidian vaults). Open it with Obsidian → "Open folder as vault", or from Project tab → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
 
 ## Phone remote
 
@@ -98,7 +98,7 @@ Recording captures the Studio window's area of your screen, so anything overlapp
 
 ## Test place publishing
 
-Project settings → Test place: enter the universe and place ID of a **private test place** (not your live game) and a Roblox Open Cloud API key created with only the `universe-places` Write permission for that game. On a review, **Publish to test place** builds that branch with Rojo in a temporary folder and uploads it; then open the place in the Roblox app on your phone. Agents can never publish — only your tap does.
+Project tab → Test place: enter the universe and place ID of a **private test place** (not your live game) and a Roblox Open Cloud API key created with only the `universe-places` Write permission for that game. On a review, **Publish to test place** builds that branch with Rojo in a temporary folder and uploads it; then open the place in the Roblox app on your phone. Agents can never publish — only your tap does.
 
 ## Requirements
 
@@ -153,7 +153,7 @@ Every tool call that isn't clearly safe goes through Hangar's policy (`src/main/
 | Web access | Asks every time (no "always allow"). The Researcher role searches and reads public pages freely, but has no other tools and its findings wait for your approval |
 | Other MCP tools (e.g. `execute_luau`, `insert_asset`) | Ask |
 
-**OS sandbox (macOS and Linux):** on by default, shell commands run inside the operating system's sandbox. They and anything they start can only write to the project folder and a temp folder, can't read your credential folders or Hangar's data, and have no network unless you list domains in Project settings. If the sandbox can't start, nothing runs — there is no fallback to unsandboxed commands. Native Windows has no sandbox, so there approved commands run with your full permissions (the app says so).
+**OS sandbox (macOS and Linux):** on by default, shell commands run inside the operating system's sandbox. They and anything they start can only write to the project folder and a temp folder, can't read your credential folders or Hangar's data, and have no network unless you list domains in the Project tab. If the sandbox can't start, nothing runs — there is no fallback to unsandboxed commands. Native Windows has no sandbox, so there approved commands run with your full permissions (the app says so).
 
 Before any agent starts in a project, programs the folder would launch — MCP servers in `.mcp.json`, or repository git config that runs commands — are shown for approval. Any change to them asks again.
 

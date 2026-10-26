@@ -25,6 +25,19 @@ export interface StoreState {
   ideaChat: { draft: string; category: IdeaCategory } | null
   /** The dashboard idea open on the refine screen. */
   refineIdeaId: string | null
+  /** The in-app confirmation dialog, if one is open. */
+  confirm: ConfirmRequest | null
+}
+
+export interface ConfirmRequest {
+  id: number
+  title: string
+  /** One short paragraph. */
+  body?: string
+  /** Warnings shown as a list (for example why a merge needs a second look). */
+  lines?: string[]
+  confirmLabel: string
+  tone: 'primary' | 'danger'
 }
 
 let state: StoreState = {
@@ -43,7 +56,8 @@ let state: StoreState = {
   trends: null,
   wizard: null,
   ideaChat: null,
-  refineIdeaId: null
+  refineIdeaId: null,
+  confirm: null
 }
 
 /** Stable empty values so selectors never return a fresh object (which would re-render forever). */
@@ -276,4 +290,36 @@ export function setKey(key: KeyStatus): void {
 
 export function replaceReview(r: Review): void {
   set((s) => ({ reviews: { ...s.reviews, [r.projectId]: (s.reviews[r.projectId] ?? []).map((x) => (x.id === r.id ? r : x)) } }))
+}
+
+// ---------- confirmation dialog ----------
+
+let confirmSeq = 0
+let confirmResolve: ((ok: boolean) => void) | null = null
+/** What had keyboard focus before the dialog opened; it gets focus back afterwards. */
+let confirmOpener: HTMLElement | null = null
+
+/**
+ * Ask the user to confirm, in Hangar's own dialog (not the system one). Resolves true on confirm,
+ * false on cancel, Esc or clicking outside. Opening a second one cancels the first.
+ */
+export function confirmDialog(opts: { title: string; body?: string; lines?: string[]; confirmLabel?: string; tone?: 'primary' | 'danger' }): Promise<boolean> {
+  // Remember the opener before the dialog's own button takes focus (and keep the first one if a dialog is already up).
+  if (!confirmResolve) confirmOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  confirmResolve?.(false)
+  return new Promise((resolve) => {
+    confirmResolve = resolve
+    set({ confirm: { id: ++confirmSeq, title: opts.title, body: opts.body, lines: opts.lines, confirmLabel: opts.confirmLabel ?? 'OK', tone: opts.tone ?? 'primary' } })
+  })
+}
+
+export function answerConfirm(ok: boolean): void {
+  const resolve = confirmResolve
+  confirmResolve = null
+  set({ confirm: null })
+  const opener = confirmOpener
+  confirmOpener = null
+  // Back to where you were, if that control is still on screen.
+  if (opener?.isConnected) requestAnimationFrame(() => opener.focus())
+  resolve?.(ok)
 }

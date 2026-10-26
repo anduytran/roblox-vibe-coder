@@ -30,7 +30,8 @@ const api: HangarApi = {
     readDocument: () => invoke(IPC.projectsReadDocument)
   },
   system: {
-    tools: () => invoke(IPC.systemTools)
+    tools: () => invoke(IPC.systemTools),
+    openUrl: (url) => invoke(IPC.systemOpenUrl, url)
   },
   autopilot: {
     list: () => invoke(IPC.autopilotList),

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AutopilotState, GameIdea, IdeaCategory, Project, TrendingGame } from '@shared/types'
 import { IDEA_CATEGORIES, ideaCategory } from '@shared/ideas'
 import { attempt, openIdeaChat, openIdeaRefine, openWizard, selectProject, setTrends, toast, useStore } from '../store'
-import { Avatar, Button, Icon, planLine, timeAgo, usd } from './ui'
+import { Avatar, Button, Icon, planLine, Skeleton, timeAgo, usd } from './ui'
+import { EmptyState } from './EmptyState'
 
 const STALE_MS = 6 * 3600 * 1000
 
@@ -151,12 +152,16 @@ export function Dashboard() {
               trends?.saved.length ? (
                 trends.saved.map((idea) => <IdeaCard key={idea.id} idea={idea} />)
               ) : (
-                <p className="small muted">Star an idea to keep it here. Saved ideas stay when you get new ones.</p>
+                <EmptyState compact icon="review" title="No saved ideas">
+                  Star an idea to keep it here. Saved ideas stay when you get new ones.
+                </EmptyState>
               )
             ) : trends?.ideas.length ? (
               trends.ideas.map((idea, i) => <IdeaCard key={idea.id} idea={idea} rank={i + 1} />)
             ) : (
-              <p className="small muted">Pick a kind of idea and Claude suggests six short concepts. Open one to fill in the details.</p>
+              <EmptyState compact icon="plus" title="No ideas yet">
+                Pick a kind of idea and Claude suggests six short concepts. Open one to fill in the details.
+              </EmptyState>
             )}
             {trends && trends.genres.length > 0 && (
               <>
@@ -195,7 +200,11 @@ export function Dashboard() {
                 </tbody>
               </table>
             ) : (
-              <p className="small muted">{loading === 'refresh' ? 'Loading the charts…' : 'No data yet. Refresh to load the charts.'}</p>
+              loading === 'refresh' ? (
+                <Skeleton lines={6} label="Loading the charts" />
+              ) : (
+                <EmptyState compact icon="globe" title="No chart data yet" action={<Button size="sm" onClick={() => refresh()}>Load the charts</Button>} />
+              )
             )}
           </div>
         </div>

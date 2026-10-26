@@ -29,6 +29,7 @@ import { mcpServersFor } from './projects'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
 import { convertMessage, type StreamMessage } from './sdkMessages'
+import { revealHidden } from '@shared/text'
 
 /** The always-present general agent for each project. Role agents come from .claude/agents/. */
 export const MAIN_AGENT_ID = 'main'
@@ -53,9 +54,7 @@ export function buildAgentEnv(auth: Record<string, string>, source: NodeJS.Proce
 }
 
 /** Make hidden characters visible so an approval card shows what will really run. */
-function reveal(text: string): string {
-  return text.replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), (c) => `⟦U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}⟧`)
-}
+const reveal = revealHidden
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']
 
 type PermissionResult = { behavior: 'allow'; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message: string; interrupt?: boolean }
@@ -849,7 +848,7 @@ function friendlyError(message: string): string {
   if (/invalid x-api-key|authentication_error|401/i.test(message)) return 'Your API key was rejected. Check it in Settings (or try turning off "Hide API key from agents").'
   if (/credit balance|billing/i.test(message)) return 'Your Anthropic account is out of credits.'
   if (/sandbox/i.test(message) && /(unavailable|bubblewrap|bwrap|socat|not supported|failed to start)/i.test(message)) {
-    return `The sandbox could not start, so nothing ran: ${message}. On Linux install bubblewrap and socat; or turn off the sandbox for this project in Project settings.`
+    return `The sandbox could not start, so nothing ran: ${message}. On Linux install bubblewrap and socat; or turn off the sandbox for this project in its Project tab.`
   }
   if (/Cannot find module|ERR_MODULE_NOT_FOUND/i.test(message)) return 'The Claude Agent SDK is not installed. Run "npm install" in the Hangar folder.'
   if (/ENOENT/i.test(message) && /claude/i.test(message)) return `Could not start the Claude Code engine: ${message}`

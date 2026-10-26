@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { AgentStatus, PlanUsage } from '@shared/types'
 
 export function Button(props: {
@@ -10,6 +10,7 @@ export function Button(props: {
   title?: string
   type?: 'button' | 'submit'
   ariaLabel?: string
+  autoFocus?: boolean
 }) {
   const { tone = 'default', size = 'md' } = props
   return (
@@ -20,6 +21,7 @@ export function Button(props: {
       onClick={props.onClick}
       disabled={props.disabled}
       title={props.title}
+      autoFocus={props.autoFocus}
     >
       {props.children}
     </button>
@@ -57,17 +59,32 @@ export function StatusPill({ status }: { status: AgentStatus }) {
   )
 }
 
+/** Open dialogs, innermost last: only the top one answers Esc (a confirm over the role editor closes alone). */
+const openModals: number[] = []
+let modalSeq = 0
+
 export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+  const onClose = useRef(props.onClose)
+  onClose.current = props.onClose
   useEffect(() => {
+    const id = ++modalSeq
+    openModals.push(id)
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') props.onClose()
+      if (e.key === 'Escape' && openModals[openModals.length - 1] === id) {
+        e.stopPropagation()
+        onClose.current()
+      }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [props])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      const at = openModals.indexOf(id)
+      if (at >= 0) openModals.splice(at, 1)
+    }
+  }, [])
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-      <div className={`modal ${props.wide ? 'modal-wide' : ''}`} role="dialog" aria-label={props.title}>
+      <div className={`modal ${props.wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={props.title}>
         <header className="modal-head">
           <h2>{props.title}</h2>
           <button className="icon-btn" onClick={props.onClose} aria-label="Close">
@@ -163,4 +180,15 @@ export function timeAgo(ts: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return new Date(ts).toLocaleDateString()
+}
+
+/** Placeholder bars while something loads. */
+export function Skeleton({ lines = 3, label = 'Loading…' }: { lines?: number; label?: string }) {
+  return (
+    <div className="skeleton" role="status" aria-label={label}>
+      {Array.from({ length: lines }, (_, i) => (
+        <span key={i} className="skeleton-bar" style={{ width: `${[92, 76, 84, 60, 70][i % 5]}%` }} />
+      ))}
+    </div>
+  )
 }

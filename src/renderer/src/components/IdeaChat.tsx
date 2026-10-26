@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { IdeaCategory, IdeaChatMessage } from '@shared/types'
 import { IDEA_CATEGORIES } from '@shared/ideas'
-import { attempt, closeIdeaChat, useStore } from '../store'
+import { attempt, closeIdeaChat, confirmDialog, useStore } from '../store'
 import { IdeaCard } from './Dashboard'
 import { Button, Modal } from './ui'
+import { SafeText } from './SafeText'
 
 const STARTERS = [
   'What could I build quickly in a space that isn’t crowded yet?',
@@ -46,8 +47,9 @@ export function IdeaChat() {
       })
       .finally(() => setBusy(false))
   }
-  const startOver = (): void => {
-    void attempt(async () => setMessages(await window.hangar.ideaChat.clear()))
+  const startOver = async (): Promise<void> => {
+    const ok = await confirmDialog({ title: 'Start over?', body: 'This conversation is cleared. Starred briefs stay in Saved.', confirmLabel: 'Start over', tone: 'danger' })
+    if (ok) void attempt(async () => setMessages(await window.hangar.ideaChat.clear()))
   }
 
   return (
@@ -60,7 +62,7 @@ export function IdeaChat() {
           <span className="small muted">Claude sees the current Roblox trends. It can't use tools or touch your projects. Star a brief to save it.</span>
           <span className="spacer" />
           {messages.length > 0 && (
-            <Button tone="ghost" disabled={busy} onClick={startOver}>
+            <Button tone="ghost" disabled={busy} onClick={() => void startOver()}>
               Start over
             </Button>
           )}
@@ -89,7 +91,7 @@ export function IdeaChat() {
         )}
         {messages.map((m) => (
           <div key={m.id} className={`chat-msg chat-${m.role}`}>
-            <div className="chat-bubble">{m.text}</div>
+            {m.role === 'assistant' ? <SafeText className="chat-bubble" text={m.text} /> : <div className="chat-bubble">{m.text}</div>}
             {m.idea && <IdeaCard idea={m.idea} />}
           </div>
         ))}

@@ -40,7 +40,7 @@ export function ApprovalCard({ request, onDecided }: { request: ApprovalRequest;
           Allow once
         </Button>
         {request.canAlwaysAllow && (
-          <Button size="sm" disabled={busy} onClick={() => decide('always')} title="Saved in this project's settings; you can remove it there">
+          <Button size="sm" disabled={busy} onClick={() => decide('always')} title="Saved for this project; you can remove it in the Project tab under Permissions">
             {alwaysLabel}
           </Button>
         )}

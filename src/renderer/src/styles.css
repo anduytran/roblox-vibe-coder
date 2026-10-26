@@ -2798,3 +2798,335 @@ button.file-item {
   margin: 0 auto;
   gap: 8px;
 }
+
+/* ---------- shared building blocks ---------- */
+
+/* Confirmation dialog */
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-2);
+}
+.confirm-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.confirm-lines {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--amber-text);
+  font-size: var(--fs-sm);
+}
+
+/* Empty states */
+.empty-state {
+  max-width: 460px;
+  margin: 12vh auto;
+  padding: 0 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  animation: rise 0.28s var(--ease-out);
+}
+.empty-state h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.empty-state-body {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.empty-state-body p {
+  margin: 0;
+}
+.empty-state-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--text-2);
+}
+.empty-state-action {
+  margin-top: 4px;
+}
+.empty-state-compact {
+  margin: 0;
+  padding: 14px 12px;
+  max-width: none;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-lg);
+  align-items: flex-start;
+  text-align: left;
+}
+.empty-state-compact .empty-state-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+.empty-example {
+  display: block;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  color: var(--text-2);
+  font-family: var(--sans);
+  text-align: left;
+}
+
+/* Loading placeholders */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 6px 0;
+}
+.skeleton-bar {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--raised) 0%, var(--line) 50%, var(--raised) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Agent-written text, lightly formatted */
+.safe-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.safe-text > * {
+  margin: 0;
+}
+.safe-text h3,
+.safe-text h4,
+.safe-text h5 {
+  color: var(--text);
+  font-size: var(--fs-md);
+  margin-top: 6px;
+}
+.safe-text h4,
+.safe-text h5 {
+  font-size: var(--fs);
+}
+.safe-text > :first-child {
+  margin-top: 0;
+}
+.safe-text ul,
+.safe-text ol {
+  padding-left: 20px;
+}
+.safe-text li + li {
+  margin-top: 3px;
+}
+.safe-text blockquote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 10px;
+  color: var(--muted);
+}
+.safe-text pre {
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--raised);
+  font: var(--fs-sm) / 1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.safe-text code {
+  font: 0.92em var(--mono);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--raised);
+}
+.safe-text hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.safe-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.summary.safe-text,
+.chat-bubble.safe-text {
+  white-space: normal;
+}
+
+/* File-by-file diff */
+.diff-pane {
+  overflow: auto;
+  background: var(--surface);
+  min-width: 0;
+}
+.dv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.dv-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 4px;
+}
+.dv-count {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.dv-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dv-chip {
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font: var(--fs-xs) var(--mono);
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-chip:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+.dv-file {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+  scroll-margin-top: 8px;
+}
+.dv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.dv-head:hover {
+  background: color-mix(in srgb, var(--raised) 70%, var(--line));
+}
+.dv-caret {
+  color: var(--muted);
+  width: 10px;
+}
+.dv-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-stat {
+  font: var(--fs-xs) var(--mono);
+  white-space: nowrap;
+}
+.dv-added {
+  color: var(--live);
+  background: var(--live-soft);
+}
+.dv-deleted {
+  color: var(--err);
+  background: var(--err-soft);
+}
+.dv-renamed,
+.dv-binary {
+  color: var(--info);
+  background: var(--info-soft);
+}
+.dv-lines {
+  overflow-x: auto;
+  font: 12px/1.6 var(--mono);
+  padding: 4px 0;
+  background: var(--surface);
+}
+.dv-lines > div {
+  padding: 0 12px;
+  white-space: pre;
+  min-width: max-content;
+}
+.dv-notes {
+  padding: 0 4px;
+}
+
+/* Review fixes: line breaks, links, focus, code in chat */
+.safe-text p,
+.safe-text li,
+.safe-text blockquote {
+  white-space: pre-line;
+}
+.safe-link-wrap {
+  white-space: normal;
+}
+.safe-host,
+.safe-url {
+  color: var(--muted);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+.safe-url {
+  font-family: var(--mono);
+}
+.safe-link {
+  text-decoration: none;
+  font-size: 0.85em;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.safe-link:hover {
+  background: var(--info-soft);
+}
+.safe-link:focus-visible,
+.dv-head:focus-visible,
+.dv-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.chat-bubble.safe-text code,
+.chat-bubble.safe-text pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.dv-none {
+  padding: 16px;
+}

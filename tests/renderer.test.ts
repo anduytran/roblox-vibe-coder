@@ -21,3 +21,16 @@ test('window code: effects have block bodies, so they never return a value React
   )
   assert.deepEqual(bad, [])
 })
+
+test('window code: no system confirm() dialogs and no raw HTML injection', () => {
+  const offenders = sources(join(__dirname, '..', 'src', 'renderer', 'src')).flatMap((file) => {
+    const src = readFileSync(file, 'utf8')
+    const rel = file.split('/src/renderer/src/')[1]
+    const found: string[] = []
+    // window.confirm / bare confirm( — Hangar's own dialog is confirmDialog().
+    if (/(^|[^\w.])confirm\(|window\.confirm\(/m.test(src)) found.push(`${rel}: confirm()`)
+    if (/dangerouslySetInnerHTML|\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/.test(src)) found.push(`${rel}: raw HTML`)
+    return found
+  })
+  assert.deepEqual(offenders, [])
+})
