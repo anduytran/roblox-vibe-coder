@@ -429,8 +429,36 @@ export class AgentRunner {
 
   // ---------- scheduling ----------
 
+  /** Work waiting for a project's folder to be free (queued merges), run before that project's next task starts. */
+  private readonly idleWork = new Map<string, () => Promise<void>>()
+
+  /**
+   * Run `fn` with the project folder reserved as soon as no agent is working there: at once if it's free, or between
+   * tasks (before the next one starts, so a busy autopilot can't keep it waiting forever). One job per project;
+   * a newer one replaces a waiting one.
+   */
+  whenIdle(projectId: string, fn: () => Promise<void>): void {
+    this.idleWork.set(projectId, fn)
+    this.schedule()
+  }
+
+  private runIdleWork(): void {
+    for (const [projectId, fn] of [...this.idleWork]) {
+      if (this.projectBusy(projectId)) continue
+      this.idleWork.delete(projectId)
+      this.locked.add(projectId)
+      void fn()
+        .catch(() => undefined)
+        .finally(() => {
+          this.locked.delete(projectId)
+          this.schedule()
+        })
+    }
+  }
+
   private schedule(): void {
     if (this.recovering) return
+    this.runIdleWork()
     const max = Math.max(1, this.deps.getSettings().maxConcurrentRuns)
     while (this.runningCount() < max) {
       const next = [...this.states.values()]

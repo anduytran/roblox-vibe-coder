@@ -706,6 +706,7 @@ app.whenReady().then(() => {
     }
     return reviewActions.mergeAll(str(id, 'project'), ack)
   })
+  handle(IPC.reviewsCancelMergeAll, (id: unknown) => reviewActions.cancelMergeAll(str(id, 'project')))
   handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))

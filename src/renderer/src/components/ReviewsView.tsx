@@ -23,6 +23,7 @@ export function ReviewsView({ project }: { project: Project }) {
   const current = reviews.find((r) => r.id === selected) ?? pending[0] ?? null
   const agentName = (id: string): string => (id === 'main' ? 'Main' : (roles?.find((r) => r.id === id)?.name ?? id))
   const [mergingAll, setMergingAll] = useState(false)
+  const queuedCount = pending.filter((r) => r.mergeQueued).length
   /** Merge every waiting change, oldest first; clashes go to Fix with AI and merge once fixed. */
   const mergeAll = (): void => {
     const changes = pending.filter((r) => r.kind !== 'research')
@@ -30,7 +31,7 @@ export function ReviewsView({ project }: { project: Project }) {
     const warned = changes.filter((r) => acknowledged[r.id]!.length > 0)
     void confirmDialog({
       title: `Merge all ${changes.length} changes?`,
-      body: `Oldest first, into ${changes[0]?.base ?? 'main'}. A change that clashes with one merged before it goes to Fix with AI, and merges itself once the fixed version passes its checks again.${warned.length ? ' These need a second look:' : ''}`,
+      body: `Oldest first, into ${changes[0]?.base ?? 'main'}. If an agent is working or a change is still being checked, it waits and merges as soon as it can. A change that clashes with one merged before it goes to Fix with AI, and merges itself once the fixed version passes its checks again.${warned.length ? ' These need a second look:' : ''}`,
       lines: warned.flatMap((r) => acknowledged[r.id]!.map((w) => `${revealHidden(r.title).slice(0, 60)}: ${revealHidden(w)}`)),
       confirmLabel: 'Merge all',
       tone: warned.length ? 'danger' : 'primary'
@@ -43,6 +44,7 @@ export function ReviewsView({ project }: { project: Project }) {
         const parts = [
           r.merged.length ? `${r.merged.length} merged` : null,
           r.fixing.length ? `${r.fixing.length} being fixed by AI (they merge themselves once checked)` : null,
+          r.queued.length ? `${r.queued.length} queued: they merge as soon as the agent finishes its task and their checks are done` : null,
           r.skipped.length ? `${r.skipped.length} left for you: ${r.skipped.map((x) => `${x.title.slice(0, 40)} (${x.reason})`).join('; ')}` : null
         ].filter(Boolean)
         toast(parts.join(' · ') || 'Nothing to merge.', r.skipped.length ? 'error' : 'info')
@@ -64,10 +66,24 @@ export function ReviewsView({ project }: { project: Project }) {
       <div className="changes-list">
         <div className="row between">
           <span className="side-label">Waiting for review ({pending.length})</span>
-          {pending.filter((r) => r.kind !== 'research').length > 1 && (
-            <Button size="sm" disabled={mergingAll} onClick={mergeAll}>
-              {mergingAll ? 'Merging…' : 'Merge all'}
+          {queuedCount > 0 ? (
+            <Button
+              size="sm"
+              tone="ghost"
+              title="Merge all is waiting to merge these. Stop it, and they stay in Reviews."
+              onClick={() => void attempt(async () => {
+                await window.hangar.reviews.cancelMergeAll(project.id)
+                toast('Stopped Merge all. The changes stay in Reviews.')
+              })}
+            >
+              Stop merging ({queuedCount})
             </Button>
+          ) : (
+            pending.filter((r) => r.kind !== 'research').length > 1 && (
+              <Button size="sm" disabled={mergingAll} onClick={mergeAll}>
+                {mergingAll ? 'Merging…' : 'Merge all'}
+              </Button>
+            )
           )}
         </div>
         {pending.length === 0 && (
@@ -444,9 +460,10 @@ function ReviewStrip(props: {
 export function ReviewBadges({ review }: { review: Review }) {
   const c = review.checks
   const ai = review.aiReview
-  if (!c && !ai) return null
+  if (!c && !ai && !review.mergeQueued) return null
   return (
     <span className="badges">
+      {review.mergeQueued && review.status === 'pending' && <span className="tag">merge queued</span>}
       {c &&
         (c.status === 'running' ? (
           <span className="tag">checks…</span>

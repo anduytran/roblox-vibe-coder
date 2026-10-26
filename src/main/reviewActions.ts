@@ -39,7 +39,10 @@ export class ReviewActions {
       publisher: Publisher | null
       pipeline?: ReviewPipeline | null
     }
-  ) {}
+  ) {
+    // Merge all's queue lives only while Hangar runs: a flag left from before a restart is cleared.
+    for (const r of deps.reviews.list()) if (r.mergeQueued) deps.reviews.update(r.id, { mergeQueued: false })
+  }
 
   mergeWarnings(review: Review): string[] {
     return mergeWarnings(review)
@@ -82,21 +85,25 @@ export class ReviewActions {
     if (warnings.length && !opts.force) throw new Error(`${warnings.join(' ')} Choose "Merge anyway" to merge regardless.`)
     const unseen = warnings.filter((w) => !(opts.acknowledged ?? []).includes(w))
     if (unseen.length) throw new Error(`Something changed since you looked: ${unseen.join(' ')} Look again before merging.`)
-    return this.deps.runner.withProjectLock(review.projectId, async () => {
-      // Edits made outside Hangar are saved first instead of blocking the merge.
-      await tidyWorkingFolder(root)
-      try {
-        await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
-      } catch (err) {
-        // Remembered on the review, so it can offer Fix with AI (and autopilot can use it while you're away).
-        if (err instanceof MergeClashError) this.changed(this.deps.reviews.update(id, { clash: { files: err.files, at: Date.now(), fixing: false, failed: null } }))
-        throw err
-      }
-      if (review.clip) StudioClipRecorder.remove(review.clip.files)
-      const merged = this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null }))
-      void this.pushAfterMerge(merged)
-      return merged
-    })
+    return this.deps.runner.withProjectLock(review.projectId, () => this.mergeHeld(review, root))
+  }
+
+  /** The merge itself, with the project folder already reserved. */
+  private async mergeHeld(review: Review, root: string): Promise<Review> {
+    const id = review.id
+    // Edits made outside Hangar are saved first instead of blocking the merge.
+    await tidyWorkingFolder(root)
+    try {
+      await mergeTaskBranch(root, review.base, review.branch, review.headSha, review.title)
+    } catch (err) {
+      // Remembered on the review, so it can offer Fix with AI (and autopilot can use it while you're away).
+      if (err instanceof MergeClashError) this.changed(this.deps.reviews.update(id, { clash: { files: err.files, at: Date.now(), fixing: false, failed: null } }))
+      throw err
+    }
+    if (review.clip) StudioClipRecorder.remove(review.clip.files)
+    const merged = this.changed(this.deps.reviews.update(id, { status: 'merged', clip: null, mergeQueued: false }))
+    void this.pushAfterMerge(merged)
+    return merged
   }
 
   /** In the background after a merge: send the branch to the linked GitHub repository, unless that's turned off. */
@@ -150,80 +157,160 @@ export class ReviewActions {
     return this.changed(this.deps.reviews.update(id, { clash: { ...review.clash, fixing: true, failed: null } }))
   }
 
-  /** Changes Merge all handed to Fix with AI, to merge once the fixed version has been checked again. */
-  private readonly mergeWhenFixed = new Map<string, { tries: number }>()
+  /**
+   * Merge all: each project's queue of changes to merge, oldest first, with the warnings you confirmed for each.
+   * It's worked through whenever the folder is free (between an agent's tasks) and the next change has been checked.
+   */
+  private readonly queues = new Map<string, { ids: string[]; acknowledged: Record<string, string[]>; merged: string[]; fixing: string[]; skipped: { id: string; title: string; reason: string }[] }>()
 
   /**
-   * Merge every waiting change in a project, oldest first. A change that clashes with what was merged before it goes
-   * to Fix with AI and merges itself once the fixed version has passed its checks again. You confirm the warnings
-   * first (`acknowledged`, per change); one with a warning you weren't shown, or still being checked, is skipped.
+   * Merge every waiting change in a project, oldest first. What can't merge right now (an agent is working, or it's
+   * still being checked) is queued and merges as soon as it can. A change that clashes with one merged before it goes
+   * to Fix with AI and is queued again once the fixed version has been checked. A change whose warnings differ from
+   * the ones you confirmed (`acknowledged`) is left for you.
    */
-  async mergeAll(projectId: string, acknowledged: Record<string, string[]> = {}): Promise<{ merged: string[]; fixing: string[]; skipped: { id: string; title: string; reason: string }[] }> {
-    const result = { merged: [] as string[], fixing: [] as string[], skipped: [] as { id: string; title: string; reason: string }[] }
-    const waiting = this.deps.reviews
+  async mergeAll(projectId: string, acknowledged: Record<string, string[]> = {}): Promise<{ merged: string[]; fixing: string[]; queued: string[]; skipped: { id: string; title: string; reason: string }[] }> {
+    const ids = this.deps.reviews
       .list(projectId)
       .filter((r) => r.status === 'pending' && r.kind !== 'research')
       .sort((a, b) => a.createdAt - b.createdAt)
-    for (const r of waiting) {
-      const skip = (reason: string): void => void result.skipped.push({ id: r.id, title: r.title, reason })
-      const now = this.deps.reviews.get(r.id)
-      if (now.clash?.fixing) {
-        this.mergeWhenFixed.set(r.id, { tries: 0 })
-        result.fixing.push(r.id)
+      .map((r) => r.id)
+    const q = { ids, acknowledged, merged: [] as string[], fixing: [] as string[], skipped: [] as { id: string; title: string; reason: string }[] }
+    this.queues.set(projectId, q)
+    for (const id of ids) this.changed(this.deps.reviews.update(id, { mergeQueued: true }))
+    // Work through what can merge now and say what happened; if an agent is working, it's all queued for later.
+    const busy = this.deps.runner.projectBusy(projectId)
+    await new Promise<void>((done) => {
+      this.kick(projectId, done)
+      if (busy) done()
+      else setTimeout(done, 20_000).unref?.()
+    })
+    const left = this.queues.get(projectId) === q ? q.ids : []
+    return { merged: q.merged, fixing: q.fixing, queued: [...left], skipped: q.skipped }
+  }
+
+  /** Changes still queued to merge in a project (oldest first). */
+  queued(projectId: string): string[] {
+    return [...(this.queues.get(projectId)?.ids ?? [])]
+  }
+
+  /** Stop Merge all for a project: nothing more is merged by it (anything already being fixed stays a normal review). */
+  cancelMergeAll(projectId: string): void {
+    const q = this.queues.get(projectId)
+    this.queues.delete(projectId)
+    for (const id of q?.ids ?? []) this.changed(this.deps.reviews.update(id, { mergeQueued: false }))
+    for (const id of [...this.mergeWhenFixed.keys()]) if (this.deps.reviews.get(id).projectId === projectId) this.mergeWhenFixed.delete(id)
+  }
+
+  /** Projects with a queue pass waiting for the folder, and who to tell when it ran. */
+  private readonly waiting = new Map<string, (() => void)[]>()
+
+  /** Ask for the folder as soon as it's free, to work through the queue (one waiting pass per project). */
+  private kick(projectId: string, done?: () => void): void {
+    if (!this.queues.get(projectId)?.ids.length) return void done?.()
+    const listeners = this.waiting.get(projectId)
+    if (listeners) return void (done && listeners.push(done))
+    this.waiting.set(projectId, done ? [done] : [])
+    this.deps.runner.whenIdle(projectId, async () => {
+      const told = this.waiting.get(projectId) ?? []
+      this.waiting.delete(projectId)
+      try {
+        await this.drain(projectId)
+      } finally {
+        for (const f of told) f()
+      }
+    })
+  }
+
+  /** With the folder reserved: merge queued changes in order until one has to wait. */
+  private async drain(projectId: string): Promise<void> {
+    const q = this.queues.get(projectId)
+    if (!q) return
+    const root = this.deps.registry.get(projectId).path
+    while (q.ids.length) {
+      const id = q.ids[0]!
+      let r: Review
+      try {
+        r = this.deps.reviews.get(id)
+      } catch {
+        q.ids.shift()
         continue
       }
-      if (now.checks?.status === 'running' || now.aiReview?.status === 'running') {
-        skip('It is still being checked.')
+      const drop = (): void => {
+        q.ids.shift()
+        if (r.status === 'pending') this.changed(this.deps.reviews.update(id, { mergeQueued: false }))
+      }
+      if (r.status !== 'pending') {
+        q.ids.shift()
+        continue
+      }
+      // Being fixed: it comes back to the queue once fixed and checked.
+      if (r.clash?.fixing) {
+        q.ids.shift()
+        this.mergeWhenFixed.set(id, { tries: 0 })
+        continue
+      }
+      // Still being checked: wait for it (the next review update tries again), keeping the order.
+      if (r.checks?.status === 'running' || r.aiReview?.status === 'running') return
+      const warnings = mergeWarnings(r)
+      const unseen = warnings.filter((w) => !(q.acknowledged[id] ?? []).includes(w))
+      if (unseen.length) {
+        q.skipped.push({ id, title: r.title, reason: unseen.join(' ') })
+        drop()
         continue
       }
       try {
-        await this.merge(r.id, { force: true, acknowledged: acknowledged[r.id] ?? [] })
-        result.merged.push(r.id)
+        await this.mergeHeld(r, root)
+        q.merged.push(id)
+        q.ids.shift()
       } catch (err) {
-        const after = this.deps.reviews.get(r.id)
+        const after = this.deps.reviews.get(id)
         if (after.status === 'pending' && after.clash && (after.clashFixes ?? 0) < 2) {
           try {
-            this.fixClash(r.id)
-            this.mergeWhenFixed.set(r.id, { tries: 0 })
-            result.fixing.push(r.id)
+            this.fixClash(id)
+            q.fixing.push(id)
+            this.mergeWhenFixed.set(id, { tries: 0 })
+            q.ids.shift()
             continue
           } catch (e) {
-            skip(e instanceof Error ? e.message : String(e))
+            q.skipped.push({ id, title: r.title, reason: e instanceof Error ? e.message : String(e) })
+            drop()
             continue
           }
         }
-        skip(err instanceof Error ? err.message : String(err))
+        q.skipped.push({ id, title: r.title, reason: err instanceof Error ? err.message : String(err) })
+        drop()
       }
     }
-    return result
   }
 
-  /**
-   * Every review update: a change Merge all sent to Fix with AI merges once it's fixed and checked again, unless the
-   * checks failed or the reviewer says not to merge (then it waits for you, with the reason on it).
-   */
+  /** Changes Merge all handed to Fix with AI: queued again once the fixed version has been checked. */
+  private readonly mergeWhenFixed = new Map<string, { tries: number }>()
+
+  /** Every review update: keeps Merge all going (a check finished, a clash was fixed). */
   onReview(review: Review): void {
-    const follow = this.mergeWhenFixed.get(review.id)
-    if (!follow) return
-    if (review.status !== 'pending') return void this.mergeWhenFixed.delete(review.id)
-    if (review.clash?.fixing || review.checks?.status === 'running' || review.aiReview?.status === 'running') return
-    // The fix didn't work (it's on the review), or it wasn't checked yet (the pipeline starts it): wait or stop.
-    if (review.clash) return void this.mergeWhenFixed.delete(review.id)
-    if (!review.checks && !review.aiReview) return
-    if (checksFailed(review.checks) || (review.aiReview?.status === 'done' && review.aiReview.verdict === 'block')) {
-      this.mergeWhenFixed.delete(review.id)
-      return
+    if (this.mergeWhenFixed.has(review.id)) {
+      if (review.status !== 'pending' || (review.clash && !review.clash.fixing)) {
+        // Merged or discarded by hand, or the fix didn't work: it stays a normal review.
+        this.mergeWhenFixed.delete(review.id)
+        if (review.status === 'pending' && review.mergeQueued) this.changed(this.deps.reviews.update(review.id, { mergeQueued: false }))
+      } else if (!review.clash && (review.checks || review.aiReview) && review.checks?.status !== 'running' && review.aiReview?.status !== 'running') {
+        this.mergeWhenFixed.delete(review.id)
+        if (checksFailed(review.checks) || (review.aiReview?.status === 'done' && review.aiReview.verdict === 'block')) {
+          this.changed(this.deps.reviews.update(review.id, { mergeQueued: false }))
+        } else {
+          let q = this.queues.get(review.projectId)
+          if (!q) {
+            q = { ids: [], acknowledged: {}, merged: [], fixing: [], skipped: [] }
+            this.queues.set(review.projectId, q)
+          }
+          // The fixed version's own warnings (none that block) count as seen: you asked for it to be merged.
+          q.acknowledged[review.id] = mergeWarnings(review)
+          if (!q.ids.includes(review.id)) q.ids.unshift(review.id)
+        }
+      }
     }
-    void this.merge(review.id, { force: true, acknowledged: mergeWarnings(review) })
-      .then(() => this.mergeWhenFixed.delete(review.id))
-      .catch(() => {
-        const after = this.deps.reviews.get(review.id)
-        // Another agent is working: try again a little later (a few times).
-        if (after.status === 'pending' && !after.clash && follow.tries < 20) {
-          follow.tries++
-          setTimeout(() => this.onReview(this.deps.reviews.get(review.id)), 30_000).unref?.()
-        } else this.mergeWhenFixed.delete(review.id)
-      })
+    if (this.queues.get(review.projectId)?.ids.length) this.kick(review.projectId)
   }
 
   /** Run a task's checks (and, if asked, the reviewer agent) again. */

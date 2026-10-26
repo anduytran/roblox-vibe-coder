@@ -253,6 +253,8 @@ export interface Review {
   clash?: ReviewClash | null
   /** How many times an agent has tried to resolve a clash in this change. */
   clashFixes?: number
+  /** Merge all will merge it as soon as it can (an agent finishes, its checks finish, or its clash is fixed). */
+  mergeQueued?: boolean
   /** After merging: sent to GitHub (or why it couldn't be). */
   pushed?: { at: number; repo: string } | null
   pushError?: string | null

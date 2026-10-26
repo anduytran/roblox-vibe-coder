@@ -127,7 +127,8 @@ const api: HangarApi = {
     publish: (id) => invoke(IPC.reviewsPublish, id),
     recheck: (id, opts) => invoke(IPC.reviewsRecheck, id, opts),
     fixClash: (id) => invoke(IPC.reviewsFixClash, id),
-    mergeAll: (id, acknowledged) => invoke(IPC.reviewsMergeAll, id, acknowledged)
+    mergeAll: (id, acknowledged) => invoke(IPC.reviewsMergeAll, id, acknowledged),
+    cancelMergeAll: (id) => invoke(IPC.reviewsCancelMergeAll, id)
   },
   vault: {
     status: (id, folder) => invoke(IPC.vaultStatus, id, folder),

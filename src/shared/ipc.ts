@@ -91,6 +91,7 @@ export const IPC = {
   reviewsRecheck: 'reviews:recheck',
   reviewsFixClash: 'reviews:fixClash',
   reviewsMergeAll: 'reviews:mergeAll',
+  reviewsCancelMergeAll: 'reviews:cancelMergeAll',
   testPlaceKeyStatus: 'testPlaceKey:status',
   testPlaceKeySet: 'testPlaceKey:set',
   testPlaceKeyClear: 'testPlaceKey:clear',
@@ -308,8 +309,13 @@ export interface HangarApi {
     recheck(reviewId: string, opts?: { reviewer?: boolean }): Promise<Review>
     /** Hand a merge clash to the agent that made the change; the fixed change is checked and reviewed again. */
     fixClash(reviewId: string): Promise<Review>
-    /** Merge every waiting change, oldest first; clashes go to Fix with AI and merge once fixed and checked. */
-    mergeAll(projectId: string, acknowledged: Record<string, string[]>): Promise<{ merged: string[]; fixing: string[]; skipped: { id: string; title: string; reason: string }[] }>
+    /**
+     * Merge every waiting change, oldest first. What can't merge yet (an agent working, checks running) is queued and
+     * merges as soon as it can; clashes go to Fix with AI and are queued again once fixed and checked.
+     */
+    mergeAll(projectId: string, acknowledged: Record<string, string[]>): Promise<{ merged: string[]; fixing: string[]; queued: string[]; skipped: { id: string; title: string; reason: string }[] }>
+    /** Stop a Merge all that's still waiting to merge changes. */
+    cancelMergeAll(projectId: string): Promise<void>
   }
   vault: {
     status(projectId: string, folder: string): Promise<{ folder: string; exists: boolean; notes: number }>

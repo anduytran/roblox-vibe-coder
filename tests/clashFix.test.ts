@@ -24,7 +24,7 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 /** An autonomous git project whose fake agent writes Gun.luau, and resolves clashes the way `resolve` says. */
-function setup(resolve: (text: string) => string) {
+function setup(resolve: (text: string) => string, hold: Promise<void> = Promise.resolve()) {
   const dir = tmp('hangar-cf-')
   const g = (...a: string[]) => execFileSync('git', a, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
   g('init', '-q', '-b', 'main')
@@ -45,6 +45,7 @@ function setup(resolve: (text: string) => string) {
     return (async function* () {
       yield { type: 'system', subtype: 'init', session_id: `s${prompts.length}`, mcp_servers: [] }
       const file = join(options.cwd as string, 'Gun.luau')
+      if (prompt.includes('slow')) await hold
       if (prompt.includes('Hangar has merged the latest')) writeFileSync(file, resolve(readFileSync(file, 'utf8')))
       else writeFileSync(file, `return { gun = "${prompt}" }\n`)
       yield { type: 'assistant', message: { content: [{ type: 'text', text: `Did: ${prompt.slice(0, 40)}` }] } }
@@ -238,4 +239,47 @@ test('push after merge: nothing is sent without a linked repository or with the 
   assert.equal(t.reviews.get(b.id).pushed, undefined)
   assert.equal(t.reviews.get(b.id).pushError, undefined)
   assert.equal(t.registry.get(t.project.id).settings.autoPush, false)
+})
+
+test('merge all: while an agent is working, changes are queued and merge as soon as its task ends', async () => {
+  let release: () => void = () => {}
+  const hold = new Promise<void>((r) => (release = r))
+  const t = setup((x) => x, hold)
+  t.runner.send(t.project.id, 'main', 'gun A')
+  await until(() => t.reviews.list().length === 1 && t.idle())
+  const a = t.reviews.list()[0]!
+  t.reviews.update(a.id, { checks: { status: 'done', reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed', output: '', ms: 1 }] } })
+  // The agent starts another (slow) task: the folder is busy.
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'slow work')
+  await until(() => t.runner.projectBusy(t.project.id))
+  const res = await t.actions.mergeAll(t.project.id, {})
+  assert.deepEqual(res.merged, [])
+  assert.deepEqual(res.queued, [a.id])
+  assert.equal(t.reviews.get(a.id).mergeQueued, true)
+  assert.equal(t.reviews.get(a.id).status, 'pending')
+  // The task ends: the queued change merges before anything else starts.
+  release()
+  await until(() => t.reviews.get(a.id).status === 'merged')
+  assert.equal(t.reviews.get(a.id).mergeQueued, false)
+  assert.deepEqual(t.actions.queued(t.project.id), [])
+})
+
+test('merge all: stopping it leaves the changes in Reviews', async () => {
+  let release: () => void = () => {}
+  const hold = new Promise<void>((r) => (release = r))
+  const t = setup((x) => x, hold)
+  t.runner.send(t.project.id, 'main', 'gun A')
+  await until(() => t.reviews.list().length === 1 && t.idle())
+  const a = t.reviews.list()[0]!
+  t.runner.resetSession(t.project.id, 'main')
+  t.runner.send(t.project.id, 'main', 'slow work')
+  await until(() => t.runner.projectBusy(t.project.id))
+  await t.actions.mergeAll(t.project.id, {})
+  t.actions.cancelMergeAll(t.project.id)
+  assert.equal(t.reviews.get(a.id).mergeQueued, false)
+  release()
+  await until(() => t.idle())
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(t.reviews.get(a.id).status, 'pending')
 })
