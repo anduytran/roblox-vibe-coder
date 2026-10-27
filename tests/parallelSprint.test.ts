@@ -38,7 +38,7 @@ function setup() {
   const project = registry.add(dir)
   registry.update(project.id, { settings: { autonomous: true } })
   const reviews = new ReviewStore(join(tmp('hangar-par-r-'), 'r.json'))
-  const sent: { agent: string; prompt: string }[] = []
+  const sent: { agent: string; prompt: string; model?: string }[] = []
   let ap!: Autopilot
   ap = new Autopilot({
     file: join(tmp('hangar-par-a-'), 'a.json'),
@@ -46,8 +46,8 @@ function setup() {
     reviews,
     costs: new CostTracker(join(tmp('hangar-par-c-'), 'c.json')),
     emit: () => {},
-    send: (_p, agent, prompt) => {
-      sent.push({ agent, prompt })
+    send: (_p, agent, prompt, opts) => {
+      sent.push({ agent, prompt, model: opts.model })
     },
     merge: async (id) => {
       ap.onReview(reviews.update(id, { status: 'merged' }))
@@ -56,7 +56,7 @@ function setup() {
   const done = (prompt: string, agent: string, extra: { text?: string; reviewId?: string | null; ok?: boolean; origin?: 'autopilot' | 'autopilot-report' } = {}) =>
     ap.onTaskDone({ projectId: project.id, agentId: agent, task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: extra.ok ?? true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: extra.reviewId ?? null })
   // Sprint 1 (the very first) runs one task at a time while the Lead sets the design up; then its check-in.
-  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  ap.start(project.id, { config: { sprintTasks: 0, fastStart: false } as never })
   done(sent.at(-1)!.prompt, 'lead', { text: 'Set up.\nSprint complete.' })
   done(sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Setup\n## Next sprint\n- Bots\n- HUD' })
   return { project, reviews, sent, ap, done }
@@ -215,4 +215,38 @@ test('auto-merge: low and medium concerns merge once the checks pass, and become
   const st = t.ap.get(t.project.id)
   const followUp = [...st.feedback, ...(st.handedFeedback ?? [])].find((f) => /Follow-up from the reviewer agent/.test(f))
   assert.match(followUp ?? '', /"Ledge grab works".*Ground probe hits other players \(src\/client\/Ledge\.luau:57, medium\)/)
+})
+
+test('fast MVP start: Fable plans the first sprint, the team builds its pieces at once with a quick QA check', () => {
+  const dir = tmp('hangar-mvp-')
+  installTemplates(dir)
+  const registry = new ProjectRegistry(join(tmp('hangar-mvp-reg-'), 'p.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-mvp-r-'), 'r.json'))
+  const sent: { agent: string; prompt: string; model?: string }[] = []
+  const ap = new Autopilot({ file: join(tmp('hangar-mvp-a-'), 'a.json'), registry, reviews, costs: new CostTracker(join(tmp('hangar-mvp-c-'), 'c.json')), emit: () => {}, send: (_p, agent, prompt, opts) => void sent.push({ agent, prompt, model: opts.model }), merge: async () => undefined })
+  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  const first = sent.at(-1)!
+  assert.equal(first.agent, 'lead')
+  assert.match(first.prompt, /^Autopilot: plan sprint 1 \(fast MVP start\)/)
+  assert.match(first.prompt, /Game Overview\.md/)
+  assert.equal(first.model, 'claude-fable-5-1', 'planned with Fable')
+  const items = [1, 2, 3, 4, 5].map((n) => ({ agent: n % 2 ? 'scripter' : 'ui-builder', title: `Piece ${n}`, brief: `Build piece ${n}.`, files: [`src/p${n}.luau`] }))
+  ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: 't1', prompt: first.prompt, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: plan(items), error: null, reviewId: null })
+  const built = sent.filter((s) => s.prompt.startsWith('Autopilot item '))
+  assert.equal(built.length, 5, 'more than the usual 4 pieces')
+  assert.deepEqual([...new Set(built.map((b) => b.agent))].sort(), ['scripter', 'scripter~2', 'scripter~3', 'ui-builder', 'ui-builder~2'])
+  assert.match(built[0]!.prompt, /fast MVP: speed matters/)
+  assert.equal(built[0]!.model, undefined, 'builders keep their own models')
+  assert.equal(ap.get(project.id).parallel?.mvp, true)
+})
+
+test('fast MVP start off: the Lead sets the design up first, one task at a time; a chosen planning model plans later sprints', () => {
+  const t = setup()
+  assert.doesNotMatch(t.sent[0]!.prompt, /fast MVP/)
+  t.ap.configure(t.project.id, { plannerModel: 'claude-sonnet-5-5' })
+  t.ap.start(t.project.id)
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot: plan sprint 2\b/)
+  assert.equal(t.sent.at(-1)!.model, 'claude-sonnet-5-5')
 })

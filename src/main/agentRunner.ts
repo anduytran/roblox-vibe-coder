@@ -29,6 +29,7 @@ import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
 import { knowledgeUsable, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
 import { contextTokensFor, disallowedFor, maxTurnsFor } from '@shared/agentConfig'
+import { normalizeModel } from '@shared/models'
 import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
@@ -377,7 +378,7 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean; model?: string } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
@@ -390,7 +391,8 @@ export class AgentRunner {
       ...(opts.record ? { record: true } : {}),
       ...(opts.origin ? { origin: opts.origin } : {}),
       ...(opts.fixClash ? { fixClash: opts.fixClash } : {}),
-      ...(opts.fresh ? { fresh: true } : {})
+      ...(opts.fresh ? { fresh: true } : {}),
+      ...(normalizeModel(opts.model) ? { model: normalizeModel(opts.model)! } : {})
     }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
@@ -763,7 +765,7 @@ export class AgentRunner {
       if (coordinate) append += `\n${coordinateInstructions(coordinate)}`
       const options: Record<string, unknown> = {
         cwd: work.path,
-        model: role?.model ?? project.settings.model ?? settings.defaultModel,
+        model: task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel,
         abortController: controller,
         // No settings files are loaded at all: not the user's global ones, and not the project's
         // .claude/settings.json, whose hooks and allow-rules a repository could use to run commands

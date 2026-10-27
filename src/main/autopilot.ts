@@ -1,3 +1,4 @@
+import { normalizeModel } from '@shared/models'
 import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintItem, SprintReport } from '@shared/types'
 import { stripHidden } from '@shared/text'
 import { mergeWarnings } from '@shared/reviewRules'
@@ -47,7 +48,7 @@ export interface AutopilotDeps {
   reviews: ReviewStore
   costs: CostTracker
   emit: (e: AgentEvent) => void
-  send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin']; fresh?: boolean }) => void
+  send: (projectId: string, agentId: string, prompt: string, opts: { origin: QueuedTask['origin']; fresh?: boolean; model?: string }) => void
   merge: (reviewId: string) => Promise<unknown>
   /**
    * True on a Claude Max plan: dollar budgets don't apply (the plan's usage limits do, through the runner, which
@@ -110,8 +111,15 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   unattendedUntil:
     c.unattendedUntil === null ? null : Number.isFinite(c.unattendedUntil) ? Math.min(Number(c.unattendedUntil), Date.now() + 48 * 3600_000) : (base.unattendedUntil ?? null),
   unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20))),
-  parallel: typeof c.parallel === 'boolean' ? c.parallel : (base.parallel ?? true)
+  parallel: typeof c.parallel === 'boolean' ? c.parallel : (base.parallel ?? true),
+  fastStart: typeof c.fastStart === 'boolean' ? c.fastStart : (base.fastStart ?? true),
+  plannerModel: c.plannerModel === null ? null : (normalizeModel(c.plannerModel) ?? base.plannerModel ?? null)
 })
+
+/** Pieces a fast MVP start may plan (built at the same time, as many as "agents at once" allows). */
+export const MVP_ITEMS = 6
+/** The model a fast MVP start plans with, unless you chose another planning model. */
+export const MVP_PLANNER = 'claude-fable-5-1'
 
 /** Most sprint items built at once (each agent still does its own items one after another). */
 export const MAX_SPRINT_ITEMS = 4
@@ -509,6 +517,8 @@ export class Autopilot {
     // build them, or this sprint already fell back to one task at a time). The very first sprint sets up the
     // design first, so it runs one task at a time.
     const firstEver = st.sprint === 1 && st.reports.length === 0
+    // A fast MVP start: the very first sprint is planned straight into pieces the team builds at the same time.
+    if (!st.parallel && firstEver && st.config.fastStart !== false && this.parallelOn(st)) return this.queuePlan(st, true)
     if (!st.parallel && !firstEver && this.parallelOn(st)) return this.queuePlan(st)
     if (st.parallel && st.parallel.phase !== 'single') return
     const first = st.sprint === 1 && st.tasksDone === 0 && st.reports.length === 0
@@ -798,9 +808,10 @@ Reply with only these sections, short and concrete:
   }
 
   /** The Lead plans the sprint as pieces that can be built at the same time, without changing files itself. */
-  private queuePlan(st: AutopilotState): void {
+  private queuePlan(st: AutopilotState, mvp = false): void {
     const builders = this.builders(st.projectId)
-    const max = st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS
+    const max = mvp ? MVP_ITEMS : st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS
+    if (mvp) return this.queueMvpPlan(st, builders, max)
     const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
@@ -815,7 +826,29 @@ Reply with a short plan, then one \`\`\`json block like this, and nothing after 
 Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria.${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
-    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot' })
+    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.plannerModel ? { model: st.config.plannerModel } : {}) })
+  }
+
+  /**
+   * A new game's first sprint, as fast as possible: the planner (Fable unless you chose another) writes a short
+   * overview and roadmap, then splits a playable MVP into pieces the team builds at the same time.
+   */
+  private queueMvpPlan(st: AutopilotState, builders: { id: string; description: string }[], max: number): void {
+    const feedback = st.feedback.length ? `\n\nProduct owner notes to act on:\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
+    const prompt = `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
+1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md. Nothing else is needed yet.
+2. Write, briefly (speed beats polish; they can grow later): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
+3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
+Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
+${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
+Reply with a short plan, then one \`\`\`json block like this, and nothing after it:
+\`\`\`json
+{"items":[{"agent":"scripter","title":"Core loop: collect and deliver","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/DeliveryService.luau"]}]}
+\`\`\`
+Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria.${feedback}`
+    const cur = this.get(st.projectId)
+    this.put({ ...cur, parallel: { phase: 'planning', items: [], mvp: true }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
+    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', model: st.config.plannerModel ?? MVP_PLANNER })
   }
 
   /** The Lead's plan is in: its pieces go to their agents at once, or the sprint runs one task at a time without one. */
@@ -828,7 +861,8 @@ Each brief is all its agent gets: say what to build, which files to read and cha
       this.pause(o.projectId, 'The Lead was stopped while planning. Resume to carry on.')
       return
     }
-    const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS) : []
+    const mvp = st.parallel?.mvp === true
+    const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), mvp ? MVP_ITEMS : st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS) : []
     if (!planned.length) {
       // No usable plan: this sprint goes one task at a time, as before.
       st = this.put({ ...this.giveBack(st), parallel: { phase: 'single', items: [] } })
@@ -842,7 +876,7 @@ Each brief is all its agent gets: say what to build, which files to read and cha
     }
     const stamp = Date.now().toString(36)
     const items: SprintItem[] = planned.map((p, i) => ({ ...p, id: `${stamp}${i}`, status: 'queued', sent: false, reviewId: null, outcome: null }))
-    st = this.put({ ...st, parallel: { phase: 'building', items } })
+    st = this.put({ ...st, parallel: { phase: 'building', items, ...(mvp ? { mvp: true } : {}) } })
     // The plan task changed files after all: its review is the sprint's step to wait on, like any other.
     if (o.reviewId) st = this.put({ ...st, awaitingReviewId: o.reviewId })
     this.dispatchItems(st)
@@ -873,7 +907,7 @@ ${item.brief}
 ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 
 1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
-2. ${qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix what it finds, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
+2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix only what breaks the acceptance criteria; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix what it finds, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
       const lane = laneFor.get(item.id) ?? item.agentId

@@ -175,6 +175,8 @@ export interface QueuedTask {
   fixClash?: string
   /** Run in a new conversation, leaving the agent's own conversation where it was (a set-aside action done later). */
   fresh?: boolean
+  /** Run on this model instead of the agent's own (autopilot's planning model). */
+  model?: string
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
@@ -514,6 +516,13 @@ export interface AutopilotConfig {
    * by its agent in its own copy of the game, then wraps up. Off, or with no builder roles: one task after another.
    */
   parallel?: boolean
+  /**
+   * Fast MVP start (on unless turned off): a new game's first sprint is planned by the planning model as pieces the
+   * team builds at the same time, with one quick QA pass each, to get a playable MVP up fast.
+   */
+  fastStart?: boolean
+  /** The model the Lead plans sprints with (a fast MVP start uses Fable unless this says otherwise). Missing: the Lead's own. */
+  plannerModel?: string | null
 }
 
 /** One piece of a sprint built in parallel: who builds it, the Lead's brief, and how it went. */
@@ -596,7 +605,7 @@ export interface AutopilotState {
   /** The Lead said this sprint's plan is done (when it decides the sprint's length). */
   sprintDoneSaid?: boolean
   /** A sprint built in parallel: planning (the Lead), building (the items, at once), then the Lead's wrap-up. */
-  parallel?: { phase: 'planning' | 'building' | 'wrapup' | 'single'; items: SprintItem[] } | null
+  parallel?: { phase: 'planning' | 'building' | 'wrapup' | 'single'; items: SprintItem[]; /** A fast MVP sprint. */ mvp?: boolean } | null
   /** The current (or last) unattended run. */
   away?: AwaySummary | null
   /** Actions agents wanted while you were away that need your OK: do them now (sent back to that agent) or dismiss. */

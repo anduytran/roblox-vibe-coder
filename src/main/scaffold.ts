@@ -220,7 +220,9 @@ export function sanitizeNewGame(raw: unknown): NewGameInput {
     autopilot: {
       sprintTasks: Math.round(n(ap.sprintTasks, 1, 20, 5)),
       sprintBudgetUsd: n(ap.sprintBudgetUsd, 0.5, 500, 10),
-      autoMerge: ap.autoMerge !== false
+      autoMerge: ap.autoMerge !== false,
+      fastStart: ap.fastStart !== false,
+      plannerModel: typeof ap.plannerModel === 'string' && /^[a-z0-9.-]{3,60}$/i.test(ap.plannerModel) ? ap.plannerModel : null
     },
     startNow: r.startNow !== false
   }

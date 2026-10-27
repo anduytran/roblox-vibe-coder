@@ -526,7 +526,7 @@ test('autopilot end to end: tasks run on branches, approved work lands on main, 
   actions = new ReviewActions({ registry, reviews, runner, emit, publisher: null, pipeline })
   autopilot = new Autopilot({ file: join(tmp('hangar-e2e-a-'), 'ap.json'), registry, reviews, costs, emit, send: (p, a, prompt, o) => runner.send(p, a, prompt, o), merge: (id) => actions.merge(id) })
   autopilot.configure(project.id, { sprintTasks: 2, sprintBudgetUsd: 50, autoMerge: true })
-  autopilot.start(project.id)
+  autopilot.start(project.id, { config: { fastStart: false } as never })
   await until(() => autopilot.get(project.id).status === 'checkin', 15000)
   const g = (...a: string[]) => execFileSync('git', a, { cwd: root }).toString().trim()
   assert.equal(g('symbolic-ref', '--short', 'HEAD'), 'main')

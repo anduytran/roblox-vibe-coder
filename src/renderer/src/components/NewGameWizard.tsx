@@ -1,5 +1,5 @@
 import { ModelSelect } from './ModelSelect'
-import { DEFAULT_MODEL } from '@shared/models'
+import { DEFAULT_MODEL, MODELS } from '@shared/models'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NewGameInput } from '@shared/types'
 import { checksFor, suggestGameName } from '@shared/newGame'
@@ -14,6 +14,8 @@ const PLATFORMS: { id: NewGameInput['platforms'][number]; label: string }[] = [
 ]
 
 type Tools = Awaited<ReturnType<typeof window.hangar.system.tools>>
+
+const modelShort = (id: string): string => MODELS.find((m) => m.id === id)?.label ?? id
 
 /** The last two folders of a path, which is all the summary needs: ".../Documents/Hangar Games". */
 const shortPath = (p: string): string => {
@@ -45,6 +47,8 @@ export function NewGameWizard() {
   const [sprintTasks, setSprintTasks] = useState(0)
   const [sprintBudget, setSprintBudget] = useState('10')
   const [autoMerge, setAutoMerge] = useState(true)
+  const [fastStart, setFastStart] = useState(true)
+  const [plannerModel, setPlannerModel] = useState('claude-fable-5-1')
   const [startNow, setStartNow] = useState(true)
   const [tools, setTools] = useState<Tools | null>(null)
   const [busy, setBusy] = useState(false)
@@ -89,7 +93,7 @@ export function NewGameWizard() {
         model,
         dailyBudgetUsd: Number.isFinite(d) && d > 0 ? d : null,
         studioTools: studio,
-        autopilot: { sprintTasks, sprintBudgetUsd: parseFloat(sprintBudget) || 10, autoMerge },
+        autopilot: { sprintTasks, sprintBudgetUsd: parseFloat(sprintBudget) || 10, autoMerge, fastStart, plannerModel: plannerModel || null },
         startNow
       })
       await addCreatedProject(res.project)
@@ -110,7 +114,8 @@ export function NewGameWizard() {
     ...(onPlan ? [] : [daily.trim() ? `$${daily.trim()} a day` : 'no daily limit for this game']),
     sprintTasks ? `${sprintTasks} tasks per sprint` : 'the Lead decides when a sprint is done',
     ...(onPlan ? ['pauses at your Max plan limits'] : []),
-    autoMerge ? 'approved work merges itself' : 'you merge everything'
+    autoMerge ? 'approved work merges itself' : 'you merge everything',
+    fastStart ? `fast MVP start (${plannerModel ? modelShort(plannerModel) : 'the Lead'} plans, the team builds at once)` : 'the Lead sets up the design first'
   ].join(' · ')
 
   return (
@@ -260,6 +265,15 @@ export function NewGameWizard() {
               </Field>
             )}
           </div>
+          <Toggle
+            checked={fastStart}
+            onChange={setFastStart}
+            label="Fast MVP start"
+            hint="The planning model splits a playable MVP into pieces, and the Scripter, UI Builder and modelers build them at the same time, each with one quick QA check. Off: the Lead writes the full design first and builds one piece at a time."
+          />
+          <Field label="Planning model" hint="Plans the sprints. Fable is quick at turning an idea into a plan; the builders keep their own models.">
+            <ModelSelect value={plannerModel} onChange={setPlannerModel} inheritLabel="Same as the Lead" />
+          </Field>
           <Toggle
             checked={autoMerge}
             onChange={setAutoMerge}

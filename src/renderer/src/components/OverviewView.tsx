@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel } from '@shared/lanes'
 import { Explanation } from './ApprovalCard'
 import { BriefCard } from './BriefCard'
+import { ModelSelect } from './ModelSelect'
 import { ShipCard } from './ShipCard'
 import type { AutopilotState, Project, SprintReport } from '@shared/types'
 import { attempt, confirmDialog, openUncommitted, replaceProject, setAutopilot, setProjectTab, toast, useStore } from '../store'
@@ -435,6 +436,11 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         )}
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
+      <label className="field">
+        <span className="field-label">Planning model</span>
+        <ModelSelect value={ap.config.plannerModel ?? ''} onChange={(m) => save({ plannerModel: m || null })} inheritLabel="Same as the Lead" />
+        <span className="field-hint">Plans each sprint's pieces. The builders keep their own models.</span>
+      </label>
       <Toggle
         checked={ap.config.parallel !== false}
         onChange={(v) => save({ parallel: v })}

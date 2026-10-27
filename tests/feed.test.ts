@@ -270,7 +270,7 @@ test("autopilot: the Lead hands building to the Scripter/UI Builder and ends eac
         throw new Error('no')
       }
     })
-    ap.start(project.id)
+    ap.start(project.id, { config: { fastStart: false } as never })
     return sent[0]!
   }
   const team = make(true)
