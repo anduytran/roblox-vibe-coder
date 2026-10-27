@@ -97,7 +97,7 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
 
 test('agents list the main agent plus role files', () => {
   const { runner, project } = setup()
-  assert.deepEqual(runner.snapshot(project.id).map((a) => a.agentId).sort(), ['blender-modeler', 'lead', 'main', 'planner', 'qa-tester', 'researcher', 'scripter', 'studio-modeler', 'ui-builder'])
+  assert.deepEqual(runner.snapshot(project.id).map((a) => a.agentId).sort(), ['blender-modeler', 'bookworm', 'lead', 'main', 'planner', 'qa-tester', 'researcher', 'scripter', 'studio-modeler', 'ui-builder'])
 })
 
 test('queues respect the concurrency limit and resume sessions', async () => {
@@ -191,7 +191,7 @@ test('C3/H2: agents get no settings files, CLAUDE.md from Hangar, roles as subag
   const o = calls[0]!.options
   assert.deepEqual(o.settingSources, [])
   assert.match(String((o.systemPrompt as { append: string }).append), /Use strict Luau\.[\s\S]*Your role: Scripter/)
-  assert.deepEqual(Object.keys(o.agents as object).sort(), ['lead', 'planner', 'qa-tester', 'studio-modeler', 'ui-builder'], 'researcher and Blender modeler are never subagents')
+  assert.deepEqual(Object.keys(o.agents as object).sort(), ['bookworm', 'lead', 'planner', 'qa-tester', 'studio-modeler', 'ui-builder'], 'researcher and Blender modeler are never subagents')
   // A role with no model of its own runs on the project's model when another agent hands it work.
   assert.equal((o.agents as Record<string, { model?: string }>).lead!.model, 'claude-sonnet-5-5', "the Lead has no model of its own: the project's")
   assert.equal(o.model, 'claude-opus-5-5', 'the Scripter runs on its own model')

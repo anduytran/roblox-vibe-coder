@@ -26,7 +26,7 @@ test('templates install once and roles save/list', () => {
   const dir = tmp('hangar-roles-')
   installTemplates(dir)
   installTemplates(dir)
-  assert.deepEqual(listRoles(dir).map((r) => r.id).sort(), ['blender-modeler', 'lead', 'planner', 'qa-tester', 'researcher', 'scripter', 'studio-modeler', 'ui-builder'])
+  assert.deepEqual(listRoles(dir).map((r) => r.id).sort(), ['blender-modeler', 'bookworm', 'lead', 'planner', 'qa-tester', 'researcher', 'scripter', 'studio-modeler', 'ui-builder'])
   saveRole(dir, { id: '', name: 'Level Designer!', description: 'd', prompt: 'p' })
   assert.ok(listRoles(dir).some((r) => r.id === 'level-designer'))
   assert.throws(() => saveRole(dir, { id: '', name: '', description: '', prompt: '' }))

@@ -6,7 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, se
 import { IPC, type KeyStatus } from '@shared/ipc'
 import type { AgentEvent, ApprovalExplanation, AppSettings, ApprovalDecision, ApprovalRequest, ProjectSettings, QueuedTask, Role, ShipStatus } from '@shared/types'
 import { AgentRunner, buildAgentEnv, type QueryFn } from './agentRunner'
-import { probePlanUsage } from './planUsageProbe'
+import { installedClaude, probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
 import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
@@ -32,6 +32,7 @@ import { SUGGESTED_CHECKS } from './checks'
 import { resolveCommand } from './testPlace'
 import { readFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
 import { basename, isAbsolute } from 'node:path'
+import { homedir } from 'node:os'
 import { ReviewStore } from './reviews'
 import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
@@ -395,13 +396,15 @@ app.whenReady().then(() => {
         // A `claude setup-token` token can only run models, not read usage. The owner's own Claude Code
         // login (`claude auth login`) can; the engine reads that login itself, so Hangar never sees it.
         const { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: _quiet, CLAUDE_CODE_OAUTH_TOKEN: _token, ...ownLogin } = buildAgentEnv(auth.env)
-        const attempts: [string, Record<string, string>][] = [
-          ['your Claude Code login', ownLogin],
-          ['the Max token', buildAgentEnv(auth.env)]
+        const mine = installedClaude(homedir(), (c) => resolveCommand(c))
+        const attempts: [string, Record<string, string>, string | undefined][] = [
+          ...(mine ? ([['your installed Claude Code', ownLogin, mine]] as [string, Record<string, string>, string][]) : []),
+          ['your Claude Code login', ownLogin, undefined],
+          ['the Max token', buildAgentEnv(auth.env), undefined]
         ]
         const failures: string[] = []
-        for (const [label, env] of attempts) {
-          const { answer, reason } = await probePlanUsage(sdk.query, env)
+        for (const [label, env, executable] of attempts) {
+          const { answer, reason } = await probePlanUsage(sdk.query, env, 20_000, executable)
           if (!answer?.rate_limits) {
             failures.push(`${label}: ${reason}`)
             continue
@@ -409,7 +412,10 @@ app.whenReady().then(() => {
           if (costs.recordPlanAnswer(answer.rate_limits)) emit({ type: 'cost', summary: costs.summary() })
           return
         }
-        console.log(`[plan usage] couldn't read plan usage. Sign in with \`claude auth login\` to show it. (${failures.join('; ')})`)
+        // Said once per reason, not every ten minutes.
+        const why = failures.join('; ')
+        if (why !== lastPlanFailure) console.log(`[plan usage] couldn't read plan usage. Sign in with \`claude auth login\` in Terminal to show it. (${why})`)
+        lastPlanFailure = why
       } finally {
         auth.release()
       }
@@ -417,6 +423,7 @@ app.whenReady().then(() => {
     return planRefreshing
   }
   // After a run ends, check again shortly (several runs ending together share one check).
+  let lastPlanFailure = ''
   const schedulePlanRefresh = (): void => {
     if (planRefreshTimer || !credentials.usingMax()) return
     planRefreshTimer = setTimeout(() => {
@@ -534,12 +541,13 @@ app.whenReady().then(() => {
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot, trends, emit })
   // A task that was running when Hangar last closed is wrapped up now: back on the main branch, its work in Reviews.
   void runner.recoverInterrupted().catch(() => undefined)
-  // Games made before a starter role existed (the Planner) get it, as one commit of its role file.
+  // Games made before a starter role existed (the Planner, the Bookworm) get it, as one commit of its role files.
   for (const project of registry.list()) {
     void runner
       .withProjectLock(project.id, async () => {
         const written = addLaterStarters(project.path)
-        if (written.length) await commitFiles(project.path, written, 'Add the Planner agent (plans fast, hands pieces to the team)').catch(() => undefined)
+        const names = written.map((f) => f.replace(/^\.claude\/agents\/|\.md$/g, '')).join(', ')
+        if (written.length) await commitFiles(project.path, written, `Add new starter agents: ${names}`).catch(() => undefined)
       })
       .catch(() => undefined)
   }

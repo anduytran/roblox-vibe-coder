@@ -257,6 +257,7 @@ test('planner: without a Planner role, the Lead plans the MVP on Fable; games wi
   const dir = tmp('hangar-noplan-')
   installTemplates(dir)
   deleteRole(dir, 'planner')
+  deleteRole(dir, 'bookworm')
   const registry = new ProjectRegistry(join(tmp('hangar-noplan-reg-'), 'p.json'))
   const project = registry.add(dir)
   registry.update(project.id, { settings: { autonomous: true } })
@@ -265,7 +266,7 @@ test('planner: without a Planner role, the Lead plans the MVP on Fable; games wi
   ap.start(project.id, { config: { sprintTasks: 0 } as never })
   assert.deepEqual(sent.at(-1), { agent: 'lead', model: 'claude-fable-5-1' })
   // An existing game with a Lead gets the Planner; one without the starter set doesn't.
-  assert.deepEqual(addLaterStarters(dir), ['.claude/agents/planner.md'])
+  assert.deepEqual(addLaterStarters(dir), ['.claude/agents/planner.md', '.claude/agents/bookworm.md'])
   assert.ok(listRoles(dir).some((r) => r.id === 'planner'))
   assert.deepEqual(addLaterStarters(dir), [], 'only once')
   assert.deepEqual(addLaterStarters(tmp('hangar-bare-')), [])

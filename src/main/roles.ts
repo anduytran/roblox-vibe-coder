@@ -152,6 +152,21 @@ Finish every task by stating what changed, which acceptance criteria were checke
 Finish with what was built, how it was checked, and what's next.`
   },
   {
+    id: 'bookworm',
+    name: 'Bookworm',
+    model: 'claude-haiku-5-5',
+    description: 'Cheap, fast reader. Give it files or a question about the code or notes; it reads them and returns a short, clean summary. Use it instead of reading several files yourself when you only need to understand them.',
+    tools: ['Read', 'Glob', 'Grep'],
+    studio: false,
+    contextTokens: 100_000,
+    prompt: `You read code and design notes for other agents and report back briefly. You never change anything.
+- Read only what the question needs: the files named, then what they directly use. Use Grep and Glob to find things.
+- Answer the question first. Then, per file: its purpose in one line, the key functions or values (name, inputs,
+  what it returns or changes), how it connects to the rest, and anything surprising. Give file:line for each.
+- At most about 300 words. Never paste whole files; quote a line only when the exact text matters.
+- If something isn't there, say so plainly instead of guessing.`
+  },
+  {
     id: 'scripter',
     model: 'claude-opus-5-5',
     name: 'Scripter',
@@ -248,7 +263,7 @@ Finish with what was built, how it was checked, and what's next.`
  * Starter roles added after a game was created: a game with the starter set (it has a Lead) gets each one it's
  * missing. Returns the role files written (relative paths), for the caller to commit.
  */
-export const LATER_STARTERS = ['planner']
+export const LATER_STARTERS = ['planner', 'bookworm']
 export function addLaterStarters(projectRoot: string): string[] {
   const have = new Set(listRoles(projectRoot).map((r) => r.id))
   if (!have.has('lead')) return []

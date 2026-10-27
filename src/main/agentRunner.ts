@@ -763,6 +763,9 @@ export class AgentRunner {
       // own notes. Not when resolving a merge clash: that's its own change to fix.
       const coordinate = !research && !clash && role ? coordinatorFor(role, allRoles, knowledgeFolder(role.id, role.knowledge)) : null
       if (coordinate) append += `\n${coordinateInstructions(coordinate)}`
+      // Reading to understand goes to the cheap Bookworm. (Helpers can't hand work on, so only the agent itself is told.)
+      const canDelegate = !own.tools?.length || own.tools.includes('Agent') || own.tools.includes('Task')
+      if (!research && roleId !== 'bookworm' && canDelegate && allRoles.some((r) => r.id === 'bookworm')) append += `\n\n${BOOKWORM_HINT}`
       const options: Record<string, unknown> = {
         cwd: work.path,
         model: task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel,
@@ -1636,3 +1639,6 @@ export function searchRules(root: string): string[] {
   const abs = root.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
   return [`Grep(//${abs}/**)`, `Glob(//${abs}/**)`]
 }
+
+/** Every agent that can hand work out: reading to understand goes to the Bookworm (cheap) instead of a tour of files. */
+export const BOOKWORM_HINT = `To understand code or notes you won't change (more than a file or two), ask "bookworm" with the Agent tool: name the files or the question, and it returns a short summary with file:line references. It's much cheaper than reading them yourself. Read files directly only when you're about to edit them.`

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -25,7 +25,7 @@ type RawQuery = (args: { prompt: AsyncIterable<unknown>; options: Record<string,
  * No prompt is ever sent, so it uses none of the plan: the engine starts, answers, and is stopped.
  * Returns null with a reason when the answer isn't available (method missing, no plan limits, error).
  */
-export async function probePlanUsage(query: RawQuery, env: Record<string, string>, timeoutMs = 20_000): Promise<{ answer: PlanUsageAnswer | null; reason: string | null }> {
+export async function probePlanUsage(query: RawQuery, env: Record<string, string>, timeoutMs = 20_000, executable?: string): Promise<{ answer: PlanUsageAnswer | null; reason: string | null }> {
   const cwd = mkdtempSync(join(tmpdir(), 'hangar-usage-'))
   const controller = new AbortController()
   let finish!: () => void
@@ -46,7 +46,9 @@ export async function probePlanUsage(query: RawQuery, env: Record<string, string
         mcpServers: {},
         disallowedTools: ['Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Read', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'TodoWrite'],
         canUseTool: async () => ({ behavior: 'deny', message: 'No tools are available.' }),
-        env
+        env,
+        // Your own installed Claude Code: on macOS only it can read its sign-in from the Keychain.
+        ...(executable ? { pathToClaudeCodeExecutable: executable } : {})
       }
     })
     const ask = q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
@@ -65,4 +67,21 @@ export async function probePlanUsage(query: RawQuery, env: Record<string, string
     controller.abort()
     rmSync(cwd, { recursive: true, force: true })
   }
+}
+
+/**
+ * Your installed Claude Code (the `claude` command), if there is one: its own sign-in (`claude auth login`) can read
+ * plan usage, and macOS lets only it read that sign-in from the Keychain. A real program file, never a relative path.
+ */
+export function installedClaude(home: string, find: (cmd: string) => string | null): string | null {
+  const found = find('claude')
+  if (found) return found
+  for (const p of [`${home}/.local/bin/claude`, `${home}/.claude/local/claude`, '/opt/homebrew/bin/claude', '/usr/local/bin/claude']) {
+    try {
+      if (statSync(p).isFile()) return p
+    } catch {
+      // not here
+    }
+  }
+  return null
 }

@@ -489,3 +489,23 @@ test('search rules: Grep and Glob for one folder only, written as absolute rules
   assert.deepEqual(searchRules('/var/folders/x/hangar-copies/p/qa-tester/'), ['Grep(//var/folders/x/hangar-copies/p/qa-tester/**)', 'Glob(//var/folders/x/hangar-copies/p/qa-tester/**)'])
   assert.deepEqual(searchRules('C:\\Games\\Sky'), ['Grep(//C:/Games/Sky/**)', 'Glob(//C:/Games/Sky/**)'])
 })
+
+test('bookworm: a cheap read-only reader that the agents are told to use for reading', async () => {
+  const dir = tmp('hangar-bw-')
+  const { installTemplates, ROLE_TEMPLATES } = await import('../src/main/roles')
+  installTemplates(dir)
+  const bw = ROLE_TEMPLATES.find((r) => r.id === 'bookworm')!
+  assert.equal(bw.model, 'claude-haiku-5-5')
+  const t = runnerFor(dir)
+  t.runner.send(t.project.id, 'scripter', 'add a shop')
+  await until(() => t.calls.length === 1)
+  const o = t.calls[0]!.options
+  assert.match((o.systemPrompt as { append: string }).append, /ask "bookworm" with the Agent tool/)
+  const def = (o.agents as Record<string, { model: string; disallowedTools: string[] }>).bookworm!
+  assert.equal(def.model, 'claude-haiku-5-5')
+  for (const tool of ['Edit', 'Write', 'Bash', 'WebFetch', 'Agent', 'mcp__Roblox_Studio']) assert.ok(def.disallowedTools.includes(tool), tool)
+  // The Bookworm itself isn't told to ask itself.
+  t.runner.send(t.project.id, 'bookworm', 'summarise the shop')
+  await until(() => t.calls.length === 2)
+  assert.doesNotMatch((t.calls[1]!.options.systemPrompt as { append: string }).append, /ask "bookworm"/)
+})
