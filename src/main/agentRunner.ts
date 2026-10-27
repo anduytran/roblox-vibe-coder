@@ -28,7 +28,7 @@ import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
 import { knowledgeUsable, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
-import { contextTokensFor, coordinatesByDefault, disallowedFor, maxTurnsFor } from '@shared/agentConfig'
+import { autoEffort, contextTokensFor, coordinatesByDefault, disallowedFor, LEAN_DISALLOWED, maxTurnsFor } from '@shared/agentConfig'
 import { normalizeModel } from '@shared/models'
 import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
 import type { ProjectRegistry } from './projects'
@@ -766,9 +766,11 @@ export class AgentRunner {
       // Reading to understand goes to the cheap Bookworm. (Helpers can't hand work on, so only the agent itself is told.)
       const canDelegate = !own.tools?.length || own.tools.includes('Agent') || own.tools.includes('Task')
       if (!research && roleId !== 'bookworm' && canDelegate && allRoles.some((r) => r.id === 'bookworm')) append += `\n\n${BOOKWORM_HINT}`
+      const runModel = task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel
+      const runEffort = research ? undefined : (own.effort ?? autoEffort(runModel))
       const options: Record<string, unknown> = {
         cwd: work.path,
-        model: task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel,
+        model: runModel,
         abortController: controller,
         // No settings files are loaded at all: not the user's global ones, and not the project's
         // .claude/settings.json, whose hooks and allow-rules a repository could use to run commands
@@ -783,7 +785,9 @@ export class AgentRunner {
             .filter((r) => r.id !== role?.id && r.mode !== 'research' && !r.mcp?.length)
             // A role with no model of its own uses the project's (not the model of whichever agent hands it work).
             .map((r) => {
-              const blocked = [...disallowedFor(r.tools), ...(r.studio === false ? [`mcp__${STUDIO_MCP_NAME}`] : [])]
+              const blocked = [...LEAN_DISALLOWED, ...disallowedFor(r.tools), ...(r.studio === false ? [`mcp__${STUDIO_MCP_NAME}`] : [])]
+              const helperModel = r.model ?? project.settings.model ?? settings.defaultModel
+              const helperEffort = r.effort ?? autoEffort(helperModel)
               const folder = knowledgeFolder(r.id, r.knowledge)
               return [r.id, {
                 description: r.description || r.name,
@@ -791,8 +795,8 @@ export class AgentRunner {
                 // Limits are given as tools it may NOT use: a "tools" list would also shut out connected tools
                 // (Roblox Studio), which the QA Tester needs to playtest.
                 ...(blocked.length ? { disallowedTools: blocked } : {}),
-                ...(r.effort ? { effort: r.effort } : {}),
-                model: r.model ?? project.settings.model ?? settings.defaultModel,
+                ...(helperEffort ? { effort: helperEffort } : {}),
+                model: helperModel,
                 // Its own context size: a long helper run is summarized instead of growing without bound.
                 autoCompactWindow: contextTokensFor(r.id, r.contextTokens),
                 // Most steps per run, so a playtest (QA) can't drag on for hundreds of turns.
@@ -802,7 +806,8 @@ export class AgentRunner {
         ),
         mcpServers: research ? {} : mcpServersFor(project, settings, review.servers, { blender: !!role?.mcp?.includes('blender'), studio: own.studio }),
         ...(onPlan ? {} : { maxBudgetUsd: runBudget }),
-        ...(own.effort && !research ? { effort: own.effort } : {}),
+        // Medium unless the agent says otherwise (Haiku keeps its usual).
+        ...(runEffort ? { effort: runEffort } : {}),
         maxTurns: maxTurnsFor(roleId, own.maxTurns),
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
         canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, coordinate, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
@@ -838,7 +843,7 @@ export class AgentRunner {
           ]
         }
       }
-      if (!research && own.tools?.length) options.disallowedTools = disallowedFor(own.tools)
+      if (!research) options.disallowedTools = [...LEAN_DISALLOWED, ...disallowedFor(own.tools)]
       // The engine only offers its Grep and Glob tools when the session names them; otherwise it expects searching
       // through the shell, which agents without one (the QA Tester) can't do, so search just failed for them. These
       // rules name them for the agent's own folder only: anywhere else still goes through canUseTool.
@@ -1606,7 +1611,7 @@ export function coordinateBlock(c: Coordinate, root: string, toolName: string, i
 export function coordinateInstructions(c: Coordinate): string {
   return `
 # How you work: you coordinate, the team builds
-- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each, for one small piece. Each brief names the exact files to read and change (you know the codebase from the notes; the helper starts with nothing but your brief), what to build, and the acceptance criteria. A vague brief makes the helper explore the whole project, which is slow and uses up the plan. Work in parallel: split the work into independent briefs (say the server part for one builder and the HUD for another, each with its own files) and send all of their Agent calls in ONE message, so they build at the same time. Only brief one after another when one needs the other's result. Run helpers in the foreground and wait for them (never run_in_background: each one finishing later wakes you to re-read everything). When QA reports several problems in different files, hand the fixes out in parallel the same way.${
+- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (at most 120 words), for one small piece. Each brief names the exact files to read and change (you know the codebase from the notes; the helper starts with nothing but your brief), what to build, and the acceptance criteria. A vague brief makes the helper explore the whole project, which is slow and uses up the plan. Work in parallel: split the work into independent briefs (say the server part for one builder and the HUD for another, each with its own files) and send all of their Agent calls in ONE message, so they build at the same time. Only brief one after another when one needs the other's result. Run helpers in the foreground and wait for them (never run_in_background: each one finishing later wakes you to re-read everything). When QA reports several problems in different files, hand the fixes out in parallel the same way.${
     c.qa ? `\n- Hand playtesting to "${c.qa}" with the Agent tool, then have the builders fix what it finds.` : ''
   }
 - You edit only your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}); Hangar refuses other file edits${c.qa ? ' and Studio use' : ''} from you. Don't edit files with shell commands either.

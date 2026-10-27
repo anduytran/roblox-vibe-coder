@@ -66,6 +66,9 @@ export interface AutopilotDeps {
  */
 export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with Luau tests (*.spec.luau files, which Hangar runs without Studio) and the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
 
+/** Planning replies are kept short: every word a planner writes is output, the costliest kind of token. */
+export const KEEP_SHORT = `Be brief: no restating the brief or the notes, no long rationale. Read only what the plan needs (ask "bookworm" for a summary instead of reading many files).`
+
 /** While the game hasn't shipped, its ship checklist comes first. */
 export const SHIP_FIRST = `If design-vault/Ship Checklist.md has unticked items, the next step comes from it first (skip the ones marked "(you)": they need the product owner, so list them under "Needs you" in Roadmap.md). Tick items in it as they're done.`
 
@@ -829,11 +832,11 @@ Reply with only these sections, short and concrete:
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, or work that isn't merged): say so in your plan instead.
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
-Reply with a short plan, then one \`\`\`json block like this, and nothing after it:
+Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
 \`\`\`json
 {"items":[{"agent":"scripter","title":"Bots use the heavy melee","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/BotService.luau"]}]}
 \`\`\`
-Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria.${feedback}`
+Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria, in at most 120 words. ${KEEP_SHORT}${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     this.deps.send(st.projectId, this.plannerOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.plannerModel ? { model: st.config.plannerModel } : {}) })
@@ -847,15 +850,15 @@ Each brief is all its agent gets: say what to build, which files to read and cha
     const feedback = st.feedback.length ? `\n\nProduct owner notes to act on:\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const prompt = `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
 1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md. Nothing else is needed yet.
-2. Write, briefly (speed beats polish; they can grow later): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
+2. Write, briefly (speed beats polish; they can grow later; at most about 150 words each): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
 3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
-Reply with a short plan, then one \`\`\`json block like this, and nothing after it:
+Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
 \`\`\`json
 {"items":[{"agent":"scripter","title":"Core loop: collect and deliver","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/DeliveryService.luau"]}]}
 \`\`\`
-Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria.${feedback}`
+Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria, in at most 120 words. ${KEEP_SHORT}${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [], mvp: true }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     // The Planner runs on its own model (Fable); without one, the Lead plans this step on Fable.

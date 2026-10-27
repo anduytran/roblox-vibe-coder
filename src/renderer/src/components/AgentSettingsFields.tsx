@@ -75,9 +75,9 @@ export function AgentSettingsFields(props: {
         {props.blender && <Toggle checked={props.blender.on} onChange={props.blender.onChange} label="Blender" hint="Model 3D meshes. Needs the Blender connection in Settings → Roblox." />}
       </div>
       <div className="grid-2">
-        <Field label="Effort" hint="How hard it thinks before acting. Higher is slower and costs more.">
+        <Field label="Effort" hint="How hard it thinks before acting. Thinking counts as output, the costliest kind of token: higher is slower and uses more of the plan.">
           <select value={f.effort} onChange={(e) => set({ effort: e.target.value as AgentEffort | '' })}>
-            <option value="">Model's usual</option>
+            <option value="">Auto (medium; Haiku keeps its usual)</option>
             {EFFORTS.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.label}

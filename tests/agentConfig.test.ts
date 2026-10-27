@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { AgentEvent, AppSettings } from '../src/shared/types'
-import { cleanAgentSettings, cleanMainAgent, disallowedFor, groupsFromTools, toolsFromGroups } from '../src/shared/agentConfig'
+import { cleanAgentSettings, cleanMainAgent, disallowedFor, groupsFromTools, LEAN_DISALLOWED, toolsFromGroups } from '../src/shared/agentConfig'
 import { AgentRunner, type CanUseTool, type QueryFn } from '../src/main/agentRunner'
 import { CostTracker } from '../src/main/costs'
 import { knowledgeFolder, knowledgeInstructions, knowledgeTitles, knowledgeUsable } from '../src/main/knowledge'
@@ -165,7 +165,7 @@ test('agent config: the runner applies each agent\'s tools, Studio, effort, budg
   assert.equal(m.effort, 'high')
   assert.equal(m.maxBudgetUsd, 2)
   assert.ok((m.mcpServers as Record<string, unknown>).Roblox_Studio)
-  assert.equal(m.disallowedTools, undefined)
+  assert.deepEqual(m.disallowedTools, LEAN_DISALLOWED, 'the Main agent with no tool limits: only the tools no agent needs are left out')
   assert.match((m.systemPrompt as { append: string }).append, /Always answer in haiku\./)
   assert.match((m.systemPrompt as { append: string }).append, /knowledge\/main\/[\s\S]*no notes yet \(the folder is created with your first note\)/)
 })
@@ -508,4 +508,27 @@ test('bookworm: a cheap read-only reader that the agents are told to use for rea
   t.runner.send(t.project.id, 'bookworm', 'summarise the shop')
   await until(() => t.calls.length === 2)
   assert.doesNotMatch((t.calls[1]!.options.systemPrompt as { append: string }).append, /ask "bookworm"/)
+})
+
+test('leaner runs: medium effort by default (Haiku keeps its usual), and tools no agent needs are left out', async () => {
+  const { autoEffort, LEAN_DISALLOWED } = await import('../src/shared/agentConfig')
+  assert.equal(autoEffort('claude-opus-5-5'), 'medium')
+  assert.equal(autoEffort('claude-fable-5-1'), 'medium')
+  assert.equal(autoEffort('claude-haiku-5-5'), undefined)
+  const dir = tmp('hangar-lean-')
+  const { installTemplates } = await import('../src/main/roles')
+  installTemplates(dir)
+  saveRole(dir, { id: 'scripter', name: 'Scripter', description: 'code', prompt: 'p', model: 'claude-opus-5-5', effort: 'high' })
+  const t = runnerFor(dir)
+  t.runner.send(t.project.id, 'lead', 'plan it')
+  await until(() => t.calls.length === 1)
+  const o = t.calls[0]!.options
+  assert.equal(o.effort, 'medium', 'the Lead thinks at medium unless it says otherwise')
+  for (const tool of ['NotebookEdit', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode']) assert.ok((o.disallowedTools as string[]).includes(tool), tool)
+  assert.ok(!(o.disallowedTools as string[]).includes('Read') && !(o.disallowedTools as string[]).includes('ToolSearch'))
+  const agents = o.agents as Record<string, { effort?: string; disallowedTools: string[] }>
+  assert.equal(agents.scripter!.effort, 'high', 'a role\'s own effort wins')
+  assert.equal(agents['qa-tester']!.effort, undefined, 'Haiku keeps its usual')
+  assert.equal(agents['ui-builder']!.effort, 'medium')
+  assert.ok(LEAN_DISALLOWED.every((x) => agents['ui-builder']!.disallowedTools.includes(x)))
 })

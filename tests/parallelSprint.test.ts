@@ -281,3 +281,12 @@ test('planner: coordinates by default; the Lead and Planner are never builders',
   assert.ok(!c.builders.includes('lead') && !c.builders.includes('planner'))
   assert.deepEqual(c.notes, ['design-vault', 'knowledge/planner'])
 })
+
+test('planning prompts ask for short replies and briefs', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  const p = t.sent.at(-1)!.prompt
+  assert.match(p, /at most 5 short lines/)
+  assert.match(p, /at most 120 words/)
+  assert.match(p, /ask "bookworm"/)
+})

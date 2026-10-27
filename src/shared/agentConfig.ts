@@ -116,3 +116,37 @@ export function cleanMaxTurns(v: unknown): number | undefined {
 /** Roles that coordinate (hand building to the others) unless their role file says otherwise. */
 export const COORDINATORS = ['lead', 'planner']
 export const coordinatesByDefault = (roleId: string): boolean => COORDINATORS.includes(roleId)
+
+/**
+ * The effort an agent thinks at unless it has its own: medium. The models' thinking counts as output, the most
+ * expensive kind of token, and medium is plenty for building from a clear brief. Haiku keeps its usual (it's the
+ * cheap tier already).
+ */
+export function autoEffort(model: string | null | undefined): AgentEffort | undefined {
+  return model && /haiku/i.test(model) ? undefined : 'medium'
+}
+
+/**
+ * Tools no Hangar agent needs (notebooks, plan mode, questions to a user who isn't in the conversation, skills,
+ * schedules, other sessions). Leaving them out keeps every agent's starting prompt smaller, and that prompt is written
+ * again for each fresh task and each helper.
+ */
+export const LEAN_DISALLOWED = [
+  'NotebookEdit',
+  'NotebookRead',
+  'AskUserQuestion',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Skill',
+  'SlashCommand',
+  'TodoWrite',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'PushNotification',
+  'EnterWorktree',
+  'ExitWorktree',
+  'ListAgents'
+]
