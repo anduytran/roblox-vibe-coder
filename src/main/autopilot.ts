@@ -1,3 +1,4 @@
+import { coordinatesByDefault } from '@shared/agentConfig'
 import { normalizeModel } from '@shared/models'
 import type { AgentEvent, ApprovalExplanation, ApprovalRequest, AutopilotConfig, AutopilotState, AwaySummary, QueuedTask, Review, SprintItem, SprintReport } from '@shared/types'
 import { stripHidden } from '@shared/text'
@@ -235,6 +236,15 @@ export class Autopilot {
 
   private spent(projectId: string): number {
     return this.deps.costs.summary().projectTotalUsd[projectId] ?? 0
+  }
+
+  /** Who plans sprints: the Planner when the game has one (it runs on its own model, Fable), else the Lead. */
+  private plannerOf(projectId: string): string {
+    try {
+      return listRoles(this.deps.registry.get(projectId).path).some((r) => r.id === 'planner') ? 'planner' : this.leadOf(projectId)
+    } catch {
+      return this.leadOf(projectId)
+    }
   }
 
   private leadOf(projectId: string): string {
@@ -787,7 +797,7 @@ Reply with only these sections, short and concrete:
   private builders(projectId: string): { id: string; description: string }[] {
     try {
       return listRoles(this.deps.registry.get(projectId).path)
-        .filter((r) => r.id !== 'lead' && r.id !== 'qa-tester' && r.mode !== 'research' && !r.mcp?.length)
+        .filter((r) => r.id !== 'qa-tester' && !(r.delegate ?? coordinatesByDefault(r.id)) && r.mode !== 'research' && !r.mcp?.length)
         .filter((r) => !r.tools?.length || r.tools.some((t) => t === 'Edit' || t === 'Write'))
         .map((r) => ({ id: r.id, description: r.description || r.name }))
     } catch {
@@ -826,7 +836,7 @@ Reply with a short plan, then one \`\`\`json block like this, and nothing after 
 Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria.${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
-    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.plannerModel ? { model: st.config.plannerModel } : {}) })
+    this.deps.send(st.projectId, this.plannerOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.plannerModel ? { model: st.config.plannerModel } : {}) })
   }
 
   /**
@@ -848,7 +858,10 @@ Reply with a short plan, then one \`\`\`json block like this, and nothing after 
 Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria.${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [], mvp: true }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
-    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', model: st.config.plannerModel ?? MVP_PLANNER })
+    // The Planner runs on its own model (Fable); without one, the Lead plans this step on Fable.
+    const planner = this.plannerOf(st.projectId)
+    const model = st.config.plannerModel ?? (planner === 'planner' ? undefined : MVP_PLANNER)
+    this.deps.send(st.projectId, planner, prompt, { origin: 'autopilot', ...(model ? { model } : {}) })
   }
 
   /** The Lead's plan is in: its pieces go to their agents at once, or the sprint runs one task at a time without one. */

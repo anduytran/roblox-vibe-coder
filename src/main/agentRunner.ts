@@ -28,7 +28,7 @@ import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
 import { knowledgeUsable, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
-import { contextTokensFor, disallowedFor, maxTurnsFor } from '@shared/agentConfig'
+import { contextTokensFor, coordinatesByDefault, disallowedFor, maxTurnsFor } from '@shared/agentConfig'
 import { normalizeModel } from '@shared/models'
 import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
 import type { ProjectRegistry } from './projects'
@@ -1570,10 +1570,11 @@ export interface Coordinate {
 
 /** The coordinator setup for a role, or null when it builds itself (setting off, or nobody to hand work to). */
 export function coordinatorFor(role: Role, roles: Role[], knowledge: string): Coordinate | null {
-  if (!(role.delegate ?? role.id === 'lead')) return null
+  if (!(role.delegate ?? coordinatesByDefault(role.id))) return null
   const helpers = roles.filter((r) => r.id !== role.id && r.mode !== 'research' && !r.mcp?.length)
   const qa = helpers.find((r) => r.id === 'qa-tester') ?? null
-  const builders = helpers.filter((r) => r !== qa && (!r.tools?.length || r.tools.some((t) => NOTE_EDIT_TOOLS.has(t))))
+  // Builders: roles that change files, other than the QA Tester and other coordinators (the Lead, the Planner).
+  const builders = helpers.filter((r) => r !== qa && !(r.delegate ?? coordinatesByDefault(r.id)) && (!r.tools?.length || r.tools.some((t) => NOTE_EDIT_TOOLS.has(t))))
   if (!builders.length) return null
   return { notes: [role.vault, knowledge].filter((f): f is string => !!f), builders: builders.map((b) => b.id), qa: qa?.id ?? null }
 }

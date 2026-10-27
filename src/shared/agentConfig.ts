@@ -112,3 +112,7 @@ export function cleanMaxTurns(v: unknown): number | undefined {
   const n = typeof v === 'string' ? parseInt(v, 10) : typeof v === 'number' ? v : NaN
   return Number.isFinite(n) && n > 0 ? Math.round(Math.min(300, Math.max(5, n))) : undefined
 }
+
+/** Roles that coordinate (hand building to the others) unless their role file says otherwise. */
+export const COORDINATORS = ['lead', 'planner']
+export const coordinatesByDefault = (roleId: string): boolean => COORDINATORS.includes(roleId)

@@ -39,7 +39,7 @@ import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault
 import { listProjectDir, projectEntryPath, readProjectFile } from './projectFiles'
 import { findRojo, installRojo, StudioSync } from './studioSync'
 import { defaultStudioMcp, ProjectRegistry } from './projects'
-import { deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
+import { addLaterStarters, deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
 import { isInsideRoot, linkInPath } from './pathScope'
 import { SecretStore } from './secrets'
@@ -534,6 +534,15 @@ app.whenReady().then(() => {
   remote = new RemoteServer(join(dataDir(), 'remote.json'), { registry, runner, reviews: reviewActions, costs, autopilot, trends, emit })
   // A task that was running when Hangar last closed is wrapped up now: back on the main branch, its work in Reviews.
   void runner.recoverInterrupted().catch(() => undefined)
+  // Games made before a starter role existed (the Planner) get it, as one commit of its role file.
+  for (const project of registry.list()) {
+    void runner
+      .withProjectLock(project.id, async () => {
+        const written = addLaterStarters(project.path)
+        if (written.length) await commitFiles(project.path, written, 'Add the Planner agent (plans fast, hands pieces to the team)').catch(() => undefined)
+      })
+      .catch(() => undefined)
+  }
   void remote.start().catch(() => undefined)
 
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void => {

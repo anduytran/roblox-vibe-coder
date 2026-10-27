@@ -66,7 +66,7 @@ test('parallel sprint: the Lead plans, pieces go to their agents at once, change
   const t = setup()
   t.ap.start(t.project.id)
   assert.match(t.sent.at(-1)!.prompt, /^Autopilot: plan sprint 2\b/)
-  assert.equal(t.sent.at(-1)!.agent, 'lead')
+  assert.equal(t.sent.at(-1)!.agent, 'planner', 'the Planner plans when the game has one')
   assert.match(t.sent.at(-1)!.prompt, /"scripter"/)
   t.done(
     t.sent.at(-1)!.prompt,
@@ -228,10 +228,10 @@ test('fast MVP start: Fable plans the first sprint, the team builds its pieces a
   const ap = new Autopilot({ file: join(tmp('hangar-mvp-a-'), 'a.json'), registry, reviews, costs: new CostTracker(join(tmp('hangar-mvp-c-'), 'c.json')), emit: () => {}, send: (_p, agent, prompt, opts) => void sent.push({ agent, prompt, model: opts.model }), merge: async () => undefined })
   ap.start(project.id, { config: { sprintTasks: 0 } as never })
   const first = sent.at(-1)!
-  assert.equal(first.agent, 'lead')
+  assert.equal(first.agent, 'planner')
   assert.match(first.prompt, /^Autopilot: plan sprint 1 \(fast MVP start\)/)
   assert.match(first.prompt, /Game Overview\.md/)
-  assert.equal(first.model, 'claude-fable-5-1', 'planned with Fable')
+  assert.equal(first.model, undefined, 'the Planner runs on its own model (Fable)')
   const items = [1, 2, 3, 4, 5].map((n) => ({ agent: n % 2 ? 'scripter' : 'ui-builder', title: `Piece ${n}`, brief: `Build piece ${n}.`, files: [`src/p${n}.luau`] }))
   ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: 't1', prompt: first.prompt, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: plan(items), error: null, reviewId: null })
   const built = sent.filter((s) => s.prompt.startsWith('Autopilot item '))
@@ -249,4 +249,34 @@ test('fast MVP start off: the Lead sets the design up first, one task at a time;
   t.ap.start(t.project.id)
   assert.match(t.sent.at(-1)!.prompt, /^Autopilot: plan sprint 2\b/)
   assert.equal(t.sent.at(-1)!.model, 'claude-sonnet-5-5')
+})
+
+test('planner: without a Planner role, the Lead plans the MVP on Fable; games with a Lead get the Planner added', async () => {
+  const { addLaterStarters, deleteRole, listRoles, ROLE_TEMPLATES } = await import('../src/main/roles')
+  assert.equal(ROLE_TEMPLATES.find((r) => r.id === 'planner')!.model, 'claude-fable-5-1')
+  const dir = tmp('hangar-noplan-')
+  installTemplates(dir)
+  deleteRole(dir, 'planner')
+  const registry = new ProjectRegistry(join(tmp('hangar-noplan-reg-'), 'p.json'))
+  const project = registry.add(dir)
+  registry.update(project.id, { settings: { autonomous: true } })
+  const sent: { agent: string; model?: string }[] = []
+  const ap = new Autopilot({ file: join(tmp('hangar-noplan-a-'), 'a.json'), registry, reviews: new ReviewStore(join(tmp('hangar-noplan-r-'), 'r.json')), costs: new CostTracker(join(tmp('hangar-noplan-c-'), 'c.json')), emit: () => {}, send: (_p, agent, _prompt, opts) => void sent.push({ agent, model: opts.model }), merge: async () => undefined })
+  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  assert.deepEqual(sent.at(-1), { agent: 'lead', model: 'claude-fable-5-1' })
+  // An existing game with a Lead gets the Planner; one without the starter set doesn't.
+  assert.deepEqual(addLaterStarters(dir), ['.claude/agents/planner.md'])
+  assert.ok(listRoles(dir).some((r) => r.id === 'planner'))
+  assert.deepEqual(addLaterStarters(dir), [], 'only once')
+  assert.deepEqual(addLaterStarters(tmp('hangar-bare-')), [])
+})
+
+test('planner: coordinates by default; the Lead and Planner are never builders', async () => {
+  const { coordinatorFor } = await import('../src/main/agentRunner')
+  const { ROLE_TEMPLATES } = await import('../src/main/roles')
+  const planner = ROLE_TEMPLATES.find((r) => r.id === 'planner')!
+  const c = coordinatorFor(planner, ROLE_TEMPLATES, 'knowledge/planner')!
+  assert.ok(c.builders.includes('scripter') && c.builders.includes('ui-builder'))
+  assert.ok(!c.builders.includes('lead') && !c.builders.includes('planner'))
+  assert.deepEqual(c.notes, ['design-vault', 'knowledge/planner'])
 })

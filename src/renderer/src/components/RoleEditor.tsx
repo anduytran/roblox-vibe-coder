@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Project, Role } from '@shared/types'
 import { confirmDialog, attempt, replaceProject, setRoles, toast } from '../store'
+import { coordinatesByDefault } from '@shared/agentConfig'
 import { AgentSettingsFields, agentFormState, agentSettingsFrom } from './AgentSettingsFields'
 import { Button, Field, Modal, Toggle } from './ui'
 import { ModelSelect } from './ModelSelect'
@@ -12,7 +13,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
   const [description, setDescription] = useState(props.role.description)
   const [agent, setAgent] = useState(() => agentFormState(props.role))
   const [blender, setBlender] = useState(props.role.mcp?.includes('blender') ?? false)
-  const [delegate, setDelegate] = useState(props.role.delegate ?? props.role.id === 'lead')
+  const [delegate, setDelegate] = useState(props.role.delegate ?? coordinatesByDefault(props.role.id))
   const [model, setModel] = useState(props.role.model ?? '')
   const [prompt, setPrompt] = useState(props.role.prompt)
   const [vault, setVault] = useState(props.role.vault ?? '')
@@ -30,7 +31,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
         ...(research ? {} : agentSettingsFrom(agent)),
         mcp: !research && blender ? ['blender'] : undefined,
         // Saved only when it differs from the default (on for the Lead, off for others).
-        delegate: research || delegate === (props.role.id === 'lead') ? undefined : delegate,
+        delegate: research || delegate === coordinatesByDefault(props.role.id) ? undefined : delegate,
         model: model.trim() || undefined,
         vault: research ? undefined : vault.trim() || undefined,
         vaultKind: !research && vault.trim() && vaultKind === 'design' ? 'design' : undefined,

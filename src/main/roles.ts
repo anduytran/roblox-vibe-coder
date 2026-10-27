@@ -136,6 +136,22 @@ Follow CLAUDE.md for project conventions. Keep changes small and reviewable.
 Finish every task by stating what changed, which acceptance criteria were checked, and whether it was playtested.`
   },
   {
+    id: 'planner',
+    name: 'Planner',
+    model: 'claude-fable-5-1',
+    description: 'Turns an idea or a goal into a fast plan of small, independent pieces and hands them to the builders to make at the same time. Use it to get something built quickly.',
+    vault: 'design-vault',
+    vaultKind: 'design',
+    prompt: `You plan and delegate; the team builds. Speed matters: get something playable fast, then improve it.
+- Read only what you need: the request, design-vault/Roadmap.md, the Ship Checklist and the notes it touches.
+- Split the work into small pieces that don't change the same files, each with a one-paragraph brief: what to build,
+  the exact files to read and change, and 2–4 acceptance criteria.
+- Hand all independent pieces out at once (their Agent calls in one message) to scripter, ui-builder and the
+  modelers; then one quick check by qa-tester per piece. Fix only what breaks the acceptance criteria.
+- You only edit design notes (design-vault and your knowledge folder). Keep the Roadmap current.
+Finish with what was built, how it was checked, and what's next.`
+  },
+  {
     id: 'scripter',
     model: 'claude-opus-5-5',
     name: 'Scripter',
@@ -227,6 +243,23 @@ Finish every task by stating what changed, which acceptance criteria were checke
 - Finish with a Markdown report: a one-paragraph answer first, then details, then a "## Sources" list with a link for every claim.`
   }
 ]
+
+/**
+ * Starter roles added after a game was created: a game with the starter set (it has a Lead) gets each one it's
+ * missing. Returns the role files written (relative paths), for the caller to commit.
+ */
+export const LATER_STARTERS = ['planner']
+export function addLaterStarters(projectRoot: string): string[] {
+  const have = new Set(listRoles(projectRoot).map((r) => r.id))
+  if (!have.has('lead')) return []
+  const written: string[] = []
+  for (const t of ROLE_TEMPLATES) {
+    if (!LATER_STARTERS.includes(t.id) || have.has(t.id)) continue
+    saveRole(projectRoot, t)
+    written.push(`.claude/agents/${t.id}.md`)
+  }
+  return written
+}
 
 export function installTemplates(projectRoot: string): void {
   const existing = new Set(listRoles(projectRoot).map((r) => r.id))
