@@ -135,6 +135,9 @@ test('agent config: the runner applies each agent\'s tools, Studio, effort, budg
   const o = t.calls[0]!.options
   assert.equal(o.effort, 'max')
   assert.equal(o.maxBudgetUsd, 4)
+  // Grep and Glob are offered, approved only inside the agent's own folder.
+  const root = String(o.cwd).replace(/^\/+/, '')
+  assert.deepEqual(o.allowedTools, [`Grep(//${root}/**)`, `Glob(//${root}/**)`])
   assert.equal((o.mcpServers as Record<string, unknown>).Roblox_Studio, undefined, 'Studio off for the Lead')
   for (const tool of ['Edit', 'Write', 'Bash', 'WebFetch']) assert.ok((o.disallowedTools as string[]).includes(tool), tool)
   assert.ok(!(o.disallowedTools as string[]).includes('Task'))
@@ -479,4 +482,10 @@ test('lanes: a second Scripter runs with the Scripter\'s settings, in its own la
   }
   assert.ok(t.runner.snapshot(t.project.id).some((a) => a.agentId === 'scripter~2'), 'the lane shows next to its role')
   assert.equal(t.runner.agentName(t.project, 'scripter~2'), 'Scripter (2)')
+})
+
+test('search rules: Grep and Glob for one folder only, written as absolute rules', async () => {
+  const { searchRules } = await import('../src/main/agentRunner')
+  assert.deepEqual(searchRules('/var/folders/x/hangar-copies/p/qa-tester/'), ['Grep(//var/folders/x/hangar-copies/p/qa-tester/**)', 'Glob(//var/folders/x/hangar-copies/p/qa-tester/**)'])
+  assert.deepEqual(searchRules('C:\\Games\\Sky'), ['Grep(//C:/Games/Sky/**)', 'Glob(//C:/Games/Sky/**)'])
 })

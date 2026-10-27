@@ -836,6 +836,10 @@ export class AgentRunner {
         }
       }
       if (!research && own.tools?.length) options.disallowedTools = disallowedFor(own.tools)
+      // The engine only offers its Grep and Glob tools when the session names them; otherwise it expects searching
+      // through the shell, which agents without one (the QA Tester) can't do, so search just failed for them. These
+      // rules name them for the agent's own folder only: anywhere else still goes through canUseTool.
+      if (!research) options.allowedTools = searchRules(work.path)
       // A researcher never resumes or keeps a session, so web content can't carry over into another run
       // (or into a normal agent if the role's kind is changed later), and project context can't flow in.
       // Autopilot steps and clash fixes each start a fresh conversation: the design vault and the agent's knowledge
@@ -1626,3 +1630,9 @@ interface StudioTask {
 /** How long a task waits for another to finish with Studio, and how long Studio left untouched counts as finished. */
 export const STUDIO_WAIT_MS = 20 * 60_000
 export const STUDIO_IDLE_MS = 10 * 60_000
+
+/** Grep and Glob, approved inside the agent's folder only ("//" marks an absolute path in the engine's rules). */
+export function searchRules(root: string): string[] {
+  const abs = root.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+  return [`Grep(//${abs}/**)`, `Glob(//${abs}/**)`]
+}
