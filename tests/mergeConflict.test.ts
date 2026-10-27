@@ -110,3 +110,12 @@ test('notes merge by keeping both sides; code and CLAUDE.md still clash', async 
   await mergeTaskBranch(r.dir, 'main', 'hangar/lead-c-cccccc', c, 'C')
   await assert.rejects(mergeTaskBranch(r.dir, 'main', 'hangar/lead-d-dddddd', d, 'D'), /clashes with work already on main \(in CLAUDE\.md\)/)
 })
+
+test('a review checked out in a temporary copy can be listed (Try it in Studio)', async () => {
+  const { addTempWorktree, listWorkingFiles, removeTempWorktree } = await import('../src/main/git')
+  const r = repo()
+  const dir = join(mkdtempSync(join(tmpdir(), 'hangar-preview-')), 'copy')
+  await addTempWorktree(r.dir, r.g('rev-parse', 'HEAD'), dir)
+  assert.deepEqual(await listWorkingFiles(dir), ['game.luau'])
+  await removeTempWorktree(r.dir, dir)
+})

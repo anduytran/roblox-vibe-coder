@@ -1018,6 +1018,8 @@ export async function addTempWorktree(root: string, sha: string, dir: string): P
   if (!SHA.test(sha)) throw new Error('Invalid review.')
   await assertSafeRepo(root)
   await git(root, ['worktree', 'add', '--detach', dir, sha])
+  // Hangar's own copy: git may run in it (listing its files to show it in Studio), like in a task's copy.
+  trustTaskCopy(dir, root)
 }
 
 /** Paths in a commit that are symlinks or submodules (they could pull in files from outside the project). */
