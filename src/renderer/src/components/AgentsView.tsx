@@ -10,6 +10,13 @@ import { MainAgentEditor, RoleEditor } from './RoleEditor'
 import { EmptyState } from './EmptyState'
 import { Button, Icon, StatusPill, timeAgo, usd } from './ui'
 
+/** A time today (or a date and time when it isn't today). */
+const clockAt = (ts: number): string => {
+  const d = new Date(ts)
+  const today = new Date().toDateString() === d.toDateString()
+  return today ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
 const MAIN_AGENT: Role = {
   id: 'main',
   name: 'Main',
@@ -90,11 +97,13 @@ export function AgentsView({ project }: { project: Project }) {
                     </span>
                   )}
                 </span>
-                <StatusPill status={a?.status ?? 'idle'} helpingFor={a?.helping?.forName} />
+                <StatusPill status={a?.status ?? 'idle'} helpingFor={a?.helping?.forName} paused={!!a?.paused} />
               </div>
               <div className="agent-activity">
                 {waiting
                   ? `${waiting} action${waiting > 1 ? 's need' : ' needs'} approval`
+                  : a?.paused && a.status !== 'working'
+                  ? `Plan usage ran out · continues ${clockAt(a.paused.until)}`
                   : (a?.activity ?? (a?.helping ? `${a.helping.brief}${a.helping.activity ? ` · ${a.helping.activity}` : ''}` : r.description))}
               </div>
               <div className="agent-meta">
@@ -178,7 +187,7 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <div>
           <div className="row gap-sm">
             <h2>{role.name}</h2>
-            <StatusPill status={state?.status ?? 'idle'} helpingFor={state?.helping?.forName} />
+            <StatusPill status={state?.status ?? 'idle'} helpingFor={state?.helping?.forName} paused={!!state?.paused} />
           </div>
           <p className="muted small panel-desc" title={role.description}>
             {role.description}
@@ -222,6 +231,26 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
           watch={`${role.id}:${state?.status ?? 'idle'}`}
           load={(refresh) => window.hangar.briefs.agent(project.id, role.id, refresh)}
         />
+      )}
+
+      {state?.paused && state.status !== 'working' && (
+        <div className="callout callout-amber row gap-sm wrap" role="status">
+          <span className="small">
+            Paused: {state.paused.reason} Its work so far is kept, and it continues where it stopped at {clockAt(state.paused.until)}.
+          </span>
+          <span className="spacer" />
+          <Button
+            size="sm"
+            onClick={() =>
+              void attempt(async () => {
+                await window.hangar.agents.continueNow(project.id, role.id)
+                toast('Trying again now. If the plan still says no, it waits for the reset.')
+              })
+            }
+          >
+            Continue now
+          </Button>
+        </div>
       )}
 
       {state?.lastError && state.status === 'error' && (

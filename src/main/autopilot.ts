@@ -41,6 +41,8 @@ export interface TaskOutcome {
   text: string
   error: string | null
   reviewId: string | null
+  /** Held because the plan's usage ran out: it isn't over and continues by itself, so nothing happens yet. */
+  paused?: boolean
 }
 
 export interface AutopilotDeps {
@@ -611,6 +613,8 @@ Reply with only these sections, short and concrete:
 
   /** Called by the runner when any task ends. */
   onTaskDone(o: TaskOutcome): void {
+    // A task held for plan usage continues later in the same run of autopilot: not a failure, not a finished step.
+    if (o.paused) return
     if (o.task.origin !== 'autopilot' && o.task.origin !== 'autopilot-report') return
     if (o.task.origin === 'autopilot' && o.task.prompt.startsWith(ITEM_PREFIX)) return this.itemDone(o)
     if (o.task.origin === 'autopilot' && o.task.prompt.startsWith(PLAN_PREFIX)) return this.planDone(o)

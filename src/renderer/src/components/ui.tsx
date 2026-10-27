@@ -50,7 +50,16 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
   stopped: 'Stopped'
 }
 
-export function StatusPill({ status, helpingFor }: { status: AgentStatus; helpingFor?: string | null }) {
+export function StatusPill({ status, helpingFor, paused }: { status: AgentStatus; helpingFor?: string | null; paused?: boolean }) {
+  // Held until the Claude plan's usage resets.
+  if (paused && status !== 'working' && status !== 'awaiting_approval') {
+    return (
+      <span className="pill pill-paused">
+        <span className="pill-dot" />
+        Paused
+      </span>
+    )
+  }
   // Doing a piece of another agent's task (inside that agent's run) while it has nothing of its own going.
   if (helpingFor && status !== 'working' && status !== 'awaiting_approval') {
     return (

@@ -80,7 +80,7 @@ export type CanUseTool = (
 export type QueryFn = (args: { prompt: string; options: Record<string, unknown> }) => AsyncIterable<unknown>
 
 interface Persisted {
-  agents: Record<string, { sessionId: string | null; log: LogEntry[]; sessionCostUsd?: number; contextTokens?: number }>
+  agents: Record<string, { sessionId: string | null; log: LogEntry[]; sessionCostUsd?: number; contextTokens?: number; held?: { task: QueuedTask; paused: NonNullable<AgentState['paused']> } }>
 }
 
 /**
@@ -147,7 +147,7 @@ export interface RunnerDeps {
   /** Called with each new review (to start its checks and the reviewer agent). */
   onReview?: (review: Review) => void
   /** Called when any task ends (autopilot uses it to plan the next step). */
-  onTaskDone?: (outcome: { projectId: string; agentId: string; task: QueuedTask; ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null }) => void
+  onTaskDone?: (outcome: { projectId: string; agentId: string; task: QueuedTask; ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null; paused?: boolean }) => void
   /** A per-run URL (with credentials) for the web researcher's filtering proxy (see webEgress.ts). */
   researchProxy?: () => Promise<{ url: string; release: () => void }>
   /**
@@ -252,6 +252,16 @@ export class AgentRunner {
     this.persisted = new JsonStore<Persisted>(deps.persistFile, { agents: {} })
     this.inflight = new JsonStore<InFlightFile>(deps.persistFile.replace(/\.json$/i, '') + '.inflight.json', { tasks: {} })
     this.trust = new TrustStore(deps.trustFile)
+    // Tasks held when the plan's usage ran out are kept across restarts: back in their agent's queue, still held.
+    for (const [key, saved] of Object.entries(this.persisted.get().agents)) {
+      if (!saved.held) continue
+      const i = key.indexOf(':')
+      const s = this.state(key.slice(0, i), key.slice(i + 1))
+      s.queue.unshift(saved.held.task)
+      s.paused = saved.held.paused
+      s.status = 'queued'
+      this.wakeAt(s, saved.held.paused.until)
+    }
   }
 
   // ---------- state ----------
@@ -296,7 +306,16 @@ export class AgentRunner {
     const key = keyOf(s.projectId, s.agentId)
     this.persisted.update((p) => ({
       ...p,
-      agents: { ...p.agents, [key]: { sessionId: s.sessionId, log: s.log.slice(-MAX_LOG), sessionCostUsd: s.sessionId ? (this.sessionCost.get(key) ?? 0) : 0, contextTokens: s.sessionId ? (this.contextSize.get(key) ?? 0) : 0 } }
+      agents: {
+        ...p.agents,
+        [key]: {
+          sessionId: s.sessionId,
+          log: s.log.slice(-MAX_LOG),
+          sessionCostUsd: s.sessionId ? (this.sessionCost.get(key) ?? 0) : 0,
+          contextTokens: s.sessionId ? (this.contextSize.get(key) ?? 0) : 0,
+          ...(s.paused && s.queue[0] ? { held: { task: s.queue[0], paused: s.paused } } : {})
+        }
+      }
     }))
   }
 
@@ -414,6 +433,58 @@ export class AgentRunner {
       s.activity = null
       this.publish(s)
     }
+    if (s.paused) {
+      // Stopping a held agent drops the hold (the task stays queued; Resume or a new message runs it).
+      s.paused = null
+      this.save(s)
+      this.publish(s)
+    }
+  }
+
+  /** Continue now: a task held for plan usage tries again at once (and is held again if the plan still says no). */
+  continueNow(projectId: string, agentId: string): void {
+    const s = this.state(projectId, agentId)
+    if (!s.paused) throw new Error('Nothing is paused for this agent.')
+    s.paused = { ...s.paused, until: 0 }
+    if (s.status !== 'working') s.status = 'queued'
+    this.publish(s)
+    this.schedule()
+  }
+
+  private readonly holdTimers = new Map<string, NodeJS.Timeout>()
+
+  /** Look at the queue again when a hold ends. */
+  private wakeAt(s: AgentState, until: number): void {
+    const key = keyOf(s.projectId, s.agentId)
+    clearTimeout(this.holdTimers.get(key))
+    const t = setTimeout(() => {
+      this.holdTimers.delete(key)
+      this.schedule()
+    }, Math.max(1_000, Math.min(until - Date.now(), 2 ** 31 - 1)))
+    t.unref?.()
+    this.holdTimers.set(key, t)
+  }
+
+  /**
+   * Hold a task because the plan's usage ran out: it goes back to the front of its agent's queue (with what it needs to
+   * pick up where it stopped) and runs again once the plan has reset.
+   */
+  private hold(s: AgentState, task: QueuedTask, reason: string): void {
+    const settings = this.deps.getSettings()
+    const limits = planLimitsFor(settings)
+    const resetAt = (limits ? this.deps.costs.planResumeAt(limits) : null) ?? Date.now() + 30 * 60_000
+    // A minute after the reset, so the plan has caught up.
+    const until = resetAt + 60_000
+    s.queue.unshift(task)
+    this.order.set(task, -1)
+    s.paused = { reason: reason.slice(0, 300), until, since: Date.now() }
+    s.status = 'queued'
+    s.lastError = null
+    s.activity = null
+    this.log(s, { kind: 'system', text: `Paused: ${reason} It continues by itself at ${new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, or press Continue now.` })
+    this.wakeAt(s, until)
+    this.save(s)
+    this.publish(s)
   }
 
   /** Stops every agent and empties every queue; returns what was taken out of the queues. */
@@ -542,6 +613,8 @@ export class AgentRunner {
     while (this.runningCount() < max) {
       const next = [...this.states.values()]
         .filter((s) => s.status === 'queued' && s.queue.length > 0 && !this.locked.has(s.projectId))
+        // Held for plan usage: not before its time (Continue now sets it to now).
+        .filter((s) => !s.paused || s.paused.until <= Date.now())
         // Different agents work at the same time: in autonomous mode each task has its own copy of the game.
         .sort((a, b) => (this.order.get(a.queue[0]!) ?? 0) - (this.order.get(b.queue[0]!) ?? 0))[0]
       if (!next) return
@@ -569,7 +642,7 @@ export class AgentRunner {
   }
 
   private async run(s: AgentState, task: QueuedTask): Promise<void> {
-    const box = { ok: false, stopped: false, text: '', error: null as string | null, reviewId: null as string | null }
+    const box: RunBox = { ok: false, stopped: false, text: '', error: null, reviewId: null, paused: false }
     this.current.set(keyOf(s.projectId, s.agentId), task.id)
     try {
       await this.runTask(s, task, box)
@@ -583,7 +656,7 @@ export class AgentRunner {
     }
   }
 
-  private async runTask(s: AgentState, task: QueuedTask, box: { ok: boolean; stopped: boolean; text: string; error: string | null; reviewId: string | null }): Promise<void> {
+  private async runTask(s: AgentState, task: QueuedTask, box: RunBox): Promise<void> {
     const prompt = task.prompt
     const key = keyOf(s.projectId, s.agentId)
     this.log(s, { kind: 'user', text: prompt })
@@ -601,7 +674,16 @@ export class AgentRunner {
     const reserved = others.length * settings.perRunBudgetUsd
     const reservedHere = others.filter((x) => x.projectId === project.id).length * settings.perRunBudgetUsd
     const blocked = this.deps.costs.budgetBlock(project.id, project.settings.dailyBudgetUsd, settings.globalDailyBudgetUsd, Date.now(), reserved, reservedHere, planLimitsFor(settings))
+    // The plan's usage is used up (or past your limit): the task waits for the reset instead of failing.
+    if (blocked && settings.authMode === 'max' && !task.fixClash) {
+      box.paused = true
+      return this.hold(s, task, blocked)
+    }
     if (blocked) return this.fail(s, blocked)
+    if (s.paused) {
+      s.paused = null
+      this.save(s)
+    }
 
     const roleId = roleOf(s.agentId)
     const role: Role | undefined = roleId === MAIN_AGENT_ID ? undefined : listRoles(project.path).find((r) => r.id === roleId)
@@ -627,6 +709,9 @@ export class AgentRunner {
     // Resolving a merge clash: the review, where its branch was, and the files in conflict.
     let clash = null as { review: Review; headSha: string; conflicts: string[] } | null
     let lastText = ''
+    // This run's own conversation (also for fresh runs, which don't become the agent's), to continue it after a hold.
+    let runSession: string | null = null
+    let runCostSoFar = 0
     let clip: ClipSession | null = null
     const screenshotCalls = new Set<string>()
     const research = role?.mode === 'research'
@@ -683,15 +768,20 @@ export class AgentRunner {
             })
             return
           }
-          // A follow-up in the same conversation adds to that conversation's change (one review), not a new one.
-          const open = task.origin || task.fresh ? undefined : this.openChatReview(project.id, s)
+          // A follow-up in the same conversation adds to that conversation's change (one review), not a new one; so does
+          // a task picking up after the plan's usage reset.
+          const cont = task.continueFrom?.reviewId ? this.deps.reviews.list(project.id).find((r) => r.id === task.continueFrom!.reviewId && r.status === 'pending' && r.kind !== 'research') : undefined
+          const open = cont ?? (task.origin || task.fresh ? undefined : this.openChatReview(project.id, s))
           const base = await prepareTaskBase(project.path)
           let resumed: { name: string; from: TaskBase; reviewId: string } | null = null
           if (open) {
             try {
               await resumeTaskWorktree(project.path, dir, open.branch, open.headSha)
               resumed = { name: open.branch, from: { ...base, base: open.base, baseSha: open.baseSha }, reviewId: open.id }
-              this.log(s, { kind: 'system', text: `Adding to “${open.title}” (in Reviews): this conversation stays one change until you merge or discard it.` })
+              this.log(s, {
+                kind: 'system',
+                text: cont ? `Continuing “${open.title}” where it stopped.` : `Adding to “${open.title}” (in Reviews): this conversation stays one change until you merge or discard it.`
+              })
             } catch {
               resumed = null
             }
@@ -868,11 +958,18 @@ export class AgentRunner {
         options.resume = s.sessionId
         costSoFar = this.sessionCost.get(key) ?? 0
       }
+      // Picking up after the plan's usage reset: the same conversation, so the agent knows what it already did.
+      if (task.continueFrom?.sessionId && !research) {
+        options.resume = task.continueFrom.sessionId
+        costSoFar = task.continueFrom.costSoFar ?? 0
+        this.log(s, { kind: 'system', text: 'Continuing after the plan\'s usage reset.' })
+      }
       const resumed = options.resume as string | undefined
 
       started = true
-      for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : prompt, options })) {
+      for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : task.continueFrom ? CONTINUE_PROMPT : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
+        if (c.sessionId) runSession = c.sessionId
         if (!research) this.trackHelpers(s, this.agentName(project, s.agentId), allRoles, helpers, raw as StreamMessage, c)
         // Resuming didn't take (a new conversation started): its running total starts from nothing.
         if (c.sessionId && resumed && c.sessionId !== resumed && costSoFar) costSoFar = 0
@@ -883,6 +980,7 @@ export class AgentRunner {
         if (c.costUsd !== undefined) {
           runCost = c.costUsd >= costSoFar ? c.costUsd - costSoFar : c.costUsd
           costSoFar = c.costUsd
+          runCostSoFar = c.costUsd
           if (!research && !fresh) this.sessionCost.set(key, c.costUsd)
           const total = `$${c.costUsd.toFixed(4)}`
           for (const e of c.entries) if (e.kind === 'result' || e.kind === 'error') e.text = e.text.replace(total, `$${runCost.toFixed(4)}`)
@@ -974,6 +1072,17 @@ export class AgentRunner {
       }
       if (research && lastText.trim()) {
         this.finishResearch(s, project, task, lastText, fetched, queries, finished && !s.lastError && !controller.signal.aborted)
+      }
+      // The plan's usage ran out mid-task: its work is kept (committed to its change above) and the task is held, to
+      // continue in the same conversation once the plan resets. Not a failure.
+      const limits = planLimitsFor(settings)
+      const usageStop =
+        onPlan && started && !completed && !controller.signal.aborted && !research && !task.fixClash && (USAGE_STOP.test(s.lastError ?? '') || (!!limits && this.deps.costs.planBlock(limits) !== null))
+      if (usageStop) {
+        box.paused = true
+        box.ok = false
+        const why = s.lastError && USAGE_STOP.test(s.lastError) ? 'the Claude plan\'s usage ran out mid-task.' : (limits ? this.deps.costs.planBlock(limits) : null) ?? 'the Claude plan\'s usage ran out.'
+        this.hold(s, { ...task, id: randomUUID(), continueFrom: { sessionId: runSession ?? task.continueFrom?.sessionId ?? null, reviewId: box.reviewId ?? task.continueFrom?.reviewId ?? null, costSoFar: runCostSoFar } }, why)
       }
       s.activity = null
       this.save(s)
@@ -1647,3 +1756,20 @@ export function searchRules(root: string): string[] {
 
 /** Every agent that can hand work out: reading to understand goes to the Bookworm (cheap) instead of a tour of files. */
 export const BOOKWORM_HINT = `To understand code or notes you won't change (more than a file or two), ask "bookworm" with the Agent tool: name the files or the question, and it returns a short summary with file:line references. It's much cheaper than reading them yourself. Read files directly only when you're about to edit them.`
+
+/** What a run tells whoever is waiting for it. */
+interface RunBox {
+  ok: boolean
+  stopped: boolean
+  text: string
+  error: string | null
+  reviewId: string | null
+  /** Held for plan usage: it isn't over, it continues later. */
+  paused: boolean
+}
+
+/** An engine error that means the plan's usage ran out (not some other failure). */
+export const USAGE_STOP = /usage limit|rate[ -]?limit|limit (is |was )?(reached|hit)|hit your (usage )?limit|out of (extra )?usage|(5-hour|five[- ]hour|weekly) limit|plan limit/i
+
+/** What the engine is told when a task picks up after the plan's usage reset. */
+export const CONTINUE_PROMPT = `Your Claude plan's usage ran out partway through this task, and it has reset now. Continue where you left off: finish the task as it was given, without redoing work that's already done. Your earlier changes are still in the files.`

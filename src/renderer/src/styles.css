@@ -4364,3 +4364,12 @@ kbd {
   height: 100%;
   background: var(--live);
 }
+
+/* Held until the plan's usage resets */
+.pill-paused {
+  color: var(--amber-text);
+  background: var(--amber-soft);
+}
+.pill-paused .pill-dot {
+  background: var(--amber);
+}

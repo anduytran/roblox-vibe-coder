@@ -686,6 +686,7 @@ app.whenReady().then(() => {
     const task = runner.removeQueued(projectId, str(agentId, 'agent'), str(taskId, 'task'))
     if (task) removedFromQueue(projectId, [task])
   })
+  handle(IPC.agentsContinue, (id: unknown, agentId: unknown) => runner.continueNow(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsResetSession, (id: unknown, agentId: unknown) => runner.resetSession(str(id, 'project'), str(agentId, 'agent')))
 
   // Approvals

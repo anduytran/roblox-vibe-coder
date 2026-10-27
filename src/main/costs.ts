@@ -187,6 +187,20 @@ export class CostTracker {
     return null
   }
 
+  /**
+   * When work held by the plan's limits can try again: the refused window's reset, or the reset of the window over
+   * your limit. Null when nothing blocks; a guess half an hour out when the reset time isn't known.
+   */
+  planResumeAt(limits: AppSettings['planLimits'], now = Date.now()): number | null {
+    if (!this.planBlock(limits, now)) return null
+    const p = this.planUsage(now)
+    const fallback = now + 30 * 60_000
+    if (p?.blocked) return p.blocked.until ?? fallback
+    if (p?.fiveHour && p.fiveHour.usedPct >= limits.fiveHourPct) return p.fiveHour.resetsAt ?? fallback
+    if (p?.weekly && p.weekly.usedPct >= limits.weeklyPct) return p.weekly.resetsAt ?? fallback
+    return fallback
+  }
+
   /** Pass engine messages through, recording plan usage reports; `onChange` runs when usage changed. */
   async *watch(messages: AsyncIterable<unknown>, onChange: (info: RateLimitInfo) => void): AsyncGenerator<unknown> {
     for await (const m of messages) {

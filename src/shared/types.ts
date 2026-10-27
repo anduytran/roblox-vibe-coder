@@ -177,6 +177,11 @@ export interface QueuedTask {
   fresh?: boolean
   /** Run on this model instead of the agent's own (autopilot's planning model). */
   model?: string
+  /**
+   * Picking up a run that stopped when the Claude plan's usage ran out: its conversation (resumed, so the agent knows
+   * what it did) and its change in Reviews (its branch, to keep adding to). The task's own prompt is unchanged.
+   */
+  continueFrom?: { sessionId: string | null; reviewId: string | null; costSoFar?: number }
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
@@ -319,6 +324,11 @@ export interface AgentState {
   activity: string | null
   /** Doing a piece of another agent's task (the Lead handed it a brief), inside that agent's run. */
   helping?: { for: string; forName: string; brief: string; activity: string | null } | null
+  /**
+   * Held because the Claude plan's usage ran out (or your 5-hour/weekly limit in Settings was reached): its next task
+   * continues by itself after `until` once the plan allows it, or now with Continue.
+   */
+  paused?: { reason: string; until: number; since: number } | null
 }
 
 export type ApprovalDecision = 'allow' | 'deny' | 'always'

@@ -116,9 +116,12 @@ export class Briefer {
     const facts = [
       `Agent: ${name}. Status now: ${state.status}${state.activity ? ` (${state.activity})` : ''}${state.helping ? `, working for ${state.helping.forName} on "${state.helping.brief}"` : ''}.`,
       `Queued messages: ${state.queue.length}. Approvals waiting for the owner: ${waiting}.`,
+      state.paused ? `Paused until ${new Date(state.paused.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${state.paused.reason} Its work is kept and it continues by itself.` : '',
       `Its changes waiting in Reviews: ${reviews.length ? reviews.map((r) => `"${firstLines(r.title, 1)}"${reviewIssue(r)}`).join('; ') : 'none'}.`,
       prev ? `Last brief was ${ago(this.now() - prev.at)} ago.` : 'First brief for this agent (covering the last day).'
-    ].join('\n')
+    ]
+      .filter(Boolean)
+      .join('\n')
     return this.write(key, projectId, `Brief the owner on the ${name} agent since they last looked.`, facts, text || '(no activity in this period)', upTo, state.status)
   }
 
@@ -151,6 +154,9 @@ export class Briefer {
         : 'Autopilot: off.',
       ap?.away ? `While away: ${ap.away.tasks} tasks, ${ap.away.merged} merged, ${ap.away.leftForYou} left for the owner, ${ap.away.declined} actions set aside${ap.away.endReason ? `, ended because ${ap.away.endReason}` : ''}.` : '',
       `Set aside for the owner's OK: ${(ap?.setAside ?? []).length}. Approvals waiting: ${this.deps.approvals().filter((a) => a.projectId === projectId).length}.`,
+      ...agents
+        .filter((a) => a.paused)
+        .map((a) => `${this.deps.agentName(projectId, a.agentId)} is paused until ${new Date(a.paused!.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: ${a.paused!.reason} Its work is kept and it continues by itself.`),
       `Working now: ${working.length ? working.map((a) => `${this.deps.agentName(projectId, a.agentId)} (${a.helping ? `for ${a.helping.forName}: ${a.helping.brief}` : (a.activity ?? a.status)})`).join('; ') : 'nobody'}.`,
       `Waiting in Reviews (${pending.length}): ${pending.slice(0, 8).map((r) => `"${firstLines(r.title, 1)}"${reviewIssue(r)}`).join('; ') || 'none'}.`,
       prev ? `Last brief was ${ago(this.now() - prev.at)} ago.` : 'First brief for this game (covering the last day).'

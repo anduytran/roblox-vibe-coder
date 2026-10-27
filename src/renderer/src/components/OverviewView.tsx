@@ -40,6 +40,11 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
     const a = s.agents[project.id]?.lead ?? s.agents[project.id]?.main
     return a && (a.status === 'working' || a.status === 'awaiting_approval') ? (a.activity ?? 'Working…') : null
   })
+  // Agents held until the plan's usage resets (their work is kept, and they continue by themselves).
+  const pausedUntil = useStore((s) => {
+    const held = Object.values(s.agents[project.id] ?? {}).filter((a) => a.paused && a.status !== 'working')
+    return held.length ? Math.min(...held.map((a) => a.paused!.until)) : null
+  })
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
   const status = ap?.status ?? 'off'
@@ -126,6 +131,12 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
               ))}
             </div>
             {status === 'running' && leadActivity && !ap.parallel?.items.length && <div className="activity">Task {ap.tasksDone + 1}: {leadActivity}</div>}
+            {pausedUntil !== null && (
+              <p className="small warn">
+                Paused: the Claude plan's usage ran out. Work so far is kept, and it continues by itself at{' '}
+                {new Date(pausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} (or press Continue now on the agent).
+              </p>
+            )}
             {ap.parallel && ap.parallel.phase !== 'single' && <SprintPieces project={project} parallel={ap.parallel} running={status === 'running'} />}
             {ap.sprintTasks.length > 0 && <TaskList tasks={ap.sprintTasks} />}
             <div className="field">

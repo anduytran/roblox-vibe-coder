@@ -54,6 +54,7 @@ export const IPC = {
   agentsClearQueue: 'agents:clearQueue',
   agentsRemoveQueued: 'agents:removeQueued',
   agentsResetSession: 'agents:resetSession',
+  agentsContinue: 'agents:continue',
   approvalsPending: 'approvals:pending',
   approvalsRespond: 'approvals:respond',
   approvalsExplain: 'approvals:explain',
@@ -245,6 +246,8 @@ export interface HangarApi {
     /** Takes one task out of the queue (autopilot pauses if it was autopilot's step). */
     removeQueued(projectId: string, agentId: string, taskId: string): Promise<void>
     resetSession(projectId: string, agentId: string): Promise<void>
+    /** A task held for plan usage tries again now (it's held again if the plan still says no). */
+    continueNow(projectId: string, agentId: string): Promise<void>
   }
   approvals: {
     pending(): Promise<ApprovalRequest[]>
