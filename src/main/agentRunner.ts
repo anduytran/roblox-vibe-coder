@@ -397,7 +397,7 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean; model?: string } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean; model?: string; continueFrom?: QueuedTask['continueFrom'] } = {}): void {
     const text = prompt.trim()
     if (!text) return
     const project = this.deps.registry.get(projectId)
@@ -411,7 +411,8 @@ export class AgentRunner {
       ...(opts.origin ? { origin: opts.origin } : {}),
       ...(opts.fixClash ? { fixClash: opts.fixClash } : {}),
       ...(opts.fresh ? { fresh: true } : {}),
-      ...(normalizeModel(opts.model) ? { model: normalizeModel(opts.model)! } : {})
+      ...(normalizeModel(opts.model) ? { model: normalizeModel(opts.model)! } : {}),
+      ...(opts.continueFrom ? { continueFrom: opts.continueFrom } : {})
     }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
@@ -439,6 +440,25 @@ export class AgentRunner {
       this.save(s)
       this.publish(s)
     }
+  }
+
+  /**
+   * Continue a change that stopped early (Reviews → Continue): if its task is held for plan usage, that tries again
+   * now; otherwise its agent gets a new task that picks the change's branch up where it stopped.
+   */
+  continueReview(review: Review, prompt: string): 'resumed' | 'queued' {
+    for (const s of this.states.values()) {
+      if (s.projectId !== review.projectId) continue
+      if (s.queue.some((q) => q.continueFrom?.reviewId === review.id)) {
+        if (s.paused) this.continueNow(s.projectId, s.agentId)
+        return 'resumed'
+      }
+    }
+    const project = this.deps.registry.get(review.projectId)
+    const agentId = this.isAgentId(project, review.agentId) ? review.agentId : MAIN_AGENT_ID
+    // If the agent is busy, it waits its turn in the queue.
+    this.send(review.projectId, agentId, prompt, { fresh: true, continueFrom: { sessionId: null, reviewId: review.id } })
+    return 'queued'
   }
 
   /** Continue now: a task held for plan usage tries again at once (and is held again if the plan still says no). */
@@ -967,7 +987,7 @@ export class AgentRunner {
       const resumed = options.resume as string | undefined
 
       started = true
-      for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : task.continueFrom ? CONTINUE_PROMPT : prompt, options })) {
+      for await (const raw of query({ prompt: clash ? clashPrompt(clash.review, clash.conflicts) : task.continueFrom?.sessionId ? CONTINUE_PROMPT : prompt, options })) {
         const c = convertMessage(raw as StreamMessage)
         if (c.sessionId) runSession = c.sessionId
         if (!research) this.trackHelpers(s, this.agentName(project, s.agentId), allRoles, helpers, raw as StreamMessage, c)

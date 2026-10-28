@@ -147,3 +147,29 @@ test('usage pause: autopilot keeps waiting on a held task instead of counting it
   assert.equal(after.tasksDone, before.tasksDone)
   assert.equal(sent.length, 1, 'no next step yet')
 })
+
+test('reviews: Continue picks an unfinished change up (a held task tries now; otherwise a new task on its branch)', async () => {
+  const { ReviewActions } = await import('../src/main/reviewActions')
+  const t = setup()
+  const actions = new ReviewActions({ registry: t.registry, reviews: t.reviews, runner: t.runner, emit: () => {}, publisher: null })
+  t.runner.send(t.project.id, 'main', 'build the gun')
+  await until(() => t.outcomes.length === 1)
+  const id = t.outcomes[0]!.reviewId!
+  // Its task is held: Continue tries it now, in the same conversation.
+  t.state.outOfUsage = false
+  assert.equal(actions.continueReview(id).how, 'resumed')
+  await until(() => t.outcomes.length === 2)
+  assert.equal(t.calls[1]!.resume, 's1')
+  assert.equal(t.reviews.get(id).incomplete, null)
+
+  // A change that stopped another way (nothing held): a new task continues its branch and updates the same review.
+  t.reviews.update(id, { incomplete: 'The run was stopped before it finished.' })
+  assert.equal(actions.continueReview(id).how, 'queued')
+  await until(() => t.outcomes.length === 3)
+  assert.match(t.calls[2]!.prompt, /^Continue this unfinished change: build the gun/)
+  assert.match(t.calls[2]!.prompt, /It stopped early: The run was stopped/)
+  assert.equal(t.calls[2]!.resume, undefined, 'a fresh conversation, told what was done')
+  assert.equal(t.outcomes[2]!.reviewId, id, 'the same change')
+  assert.equal(t.reviews.get(id).incomplete, null)
+  assert.match(execFileSync('git', ['show', `${t.reviews.get(id).headSha}:Gun.luau`], { cwd: t.dir }).toString(), /step = 3/)
+})

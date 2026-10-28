@@ -282,7 +282,28 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
             )}
           </div>
         )}
-        {review.incomplete && <div className="error-bar">This run stopped before finishing: {review.incomplete}</div>}
+        {review.incomplete && (
+          <div className="error-bar row gap-sm wrap">
+            <span>This run stopped before finishing: {review.incomplete}</span>
+            {isPending && (
+              <>
+                <span className="spacer" />
+                <Button
+                  size="sm"
+                  disabled={!!busy}
+                  onClick={() =>
+                    run('continue', async () => {
+                      const r = await window.hangar.reviews.continueReview(review.id)
+                      return r.review
+                    }, 'Continuing: its agent picks this change up where it stopped. The review updates when it finishes.')
+                  }
+                >
+                  Continue
+                </Button>
+              </>
+            )}
+          </div>
+        )}
         {review.note && <div className="error-bar">{review.note}</div>}
         {(review.skippedActions?.length ?? 0) > 0 && (
           <div className="callout callout-amber">

@@ -770,6 +770,7 @@ app.whenReady().then(() => {
   handle(IPC.briefsAgent, (id: unknown, agentId: unknown, refresh?: unknown) => briefer.agent(str(id, 'project'), str(agentId, 'agent'), { refresh: refresh === true }))
   handle(IPC.briefsProject, (id: unknown, refresh?: unknown) => briefer.project(str(id, 'project'), { refresh: refresh === true }))
   handle(IPC.reviewsCancelMergeAll, (id: unknown) => reviewActions.cancelMergeAll(str(id, 'project')))
+  handle(IPC.reviewsContinue, (id: unknown) => reviewActions.continueReview(str(id, 'review')))
   handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))
