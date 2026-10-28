@@ -228,6 +228,7 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         <BriefCard
           key={`${project.id}:${role.id}`}
           title={`Brief: ${role.name}`}
+          ask={`Brief me on ${role.name}`}
           watch={`${role.id}:${state?.status ?? 'idle'}`}
           load={(refresh) => window.hangar.briefs.agent(project.id, role.id, refresh)}
         />

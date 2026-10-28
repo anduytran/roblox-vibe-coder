@@ -37,6 +37,8 @@ export function AgentSettingsFields(props: {
   onChange: (v: AgentFormState) => void
   /** Roles can use Blender; the Main agent can't. */
   blender?: { on: boolean; onChange: (v: boolean) => void }
+  /** It hands building to the others (lower defaults: 120k context, low effort). */
+  coordinator?: boolean
 }) {
   const { value: f, onChange } = props
   const perRun = useStore((s) => s.settings?.perRunBudgetUsd)
@@ -77,7 +79,7 @@ export function AgentSettingsFields(props: {
       <div className="grid-2">
         <Field label="Effort" hint="How hard it thinks before acting. Thinking counts as output, the costliest kind of token: higher is slower and uses more of the plan.">
           <select value={f.effort} onChange={(e) => set({ effort: e.target.value as AgentEffort | '' })}>
-            <option value="">Auto (medium; Haiku keeps its usual)</option>
+            <option value="">{props.coordinator ? 'Auto (low: it plans, the team builds)' : 'Auto (medium; Haiku keeps its usual)'}</option>
             {EFFORTS.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.label}
@@ -101,7 +103,7 @@ export function AgentSettingsFields(props: {
         hint="How much of the conversation it keeps word for word. Past this, the engine summarizes the older part, so each step stays quick and light on usage. Auto is sized for the role."
       >
         <select value={f.context} onChange={(e) => set({ context: Number(e.target.value) })}>
-          <option value={0}>Auto ({Math.round(autoContextTokens(props.agentId || 'x') / 1000)}k for this role)</option>
+          <option value={0}>Auto ({Math.round(autoContextTokens(props.agentId || 'x', props.coordinator) / 1000)}k for this role)</option>
           {[...new Set([100, 150, 200, 300, 500, 1000, ...(f.context ? [Math.round(f.context / 1000)] : [])])].sort((a, b) => a - b).map((k) => (
             <option key={k} value={k * 1000}>
               {k === 1000 ? '1M' : `${k}k`}

@@ -109,7 +109,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
             label="Hands building to the other agents"
             hint="Coordinates instead of building: code and UI go to the builders, playtests to the QA Tester. It only edits its own notes (vault and knowledge folder)."
           />
-          <AgentSettingsFields agentId={props.role.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} />
+          <AgentSettingsFields agentId={props.role.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} coordinator={delegate} />
           <div className="grid-2">
             <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated. Created from templates on first use.">
               <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />

@@ -510,7 +510,7 @@ test('bookworm: a cheap read-only reader that the agents are told to use for rea
   assert.doesNotMatch((t.calls[1]!.options.systemPrompt as { append: string }).append, /ask "bookworm"/)
 })
 
-test('leaner runs: medium effort by default (Haiku keeps its usual), and tools no agent needs are left out', async () => {
+test('leaner runs: medium effort by default (low for coordinators, Haiku keeps its usual), and tools no agent needs are left out', async () => {
   const { autoEffort, LEAN_DISALLOWED } = await import('../src/shared/agentConfig')
   assert.equal(autoEffort('claude-opus-5-5'), 'medium')
   assert.equal(autoEffort('claude-fable-5-1'), 'medium')
@@ -523,7 +523,7 @@ test('leaner runs: medium effort by default (Haiku keeps its usual), and tools n
   t.runner.send(t.project.id, 'lead', 'plan it')
   await until(() => t.calls.length === 1)
   const o = t.calls[0]!.options
-  assert.equal(o.effort, 'medium', 'the Lead thinks at medium unless it says otherwise')
+  assert.equal(o.effort, 'low', 'the Lead coordinates, so it thinks at low unless it says otherwise')
   for (const tool of ['NotebookEdit', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode']) assert.ok((o.disallowedTools as string[]).includes(tool), tool)
   assert.ok(!(o.disallowedTools as string[]).includes('Read') && !(o.disallowedTools as string[]).includes('ToolSearch'))
   const agents = o.agents as Record<string, { effort?: string; disallowedTools: string[] }>
@@ -531,4 +531,28 @@ test('leaner runs: medium effort by default (Haiku keeps its usual), and tools n
   assert.equal(agents['qa-tester']!.effort, undefined, 'Haiku keeps its usual')
   assert.equal(agents['ui-builder']!.effort, 'medium')
   assert.ok(LEAN_DISALLOWED.every((x) => agents['ui-builder']!.disallowedTools.includes(x)))
+})
+
+test('coordinators: smaller context and low effort by default; their own settings win', async () => {
+  const { autoContextTokens, autoEffort } = await import('../src/shared/agentConfig')
+  assert.equal(autoEffort('claude-fable-5-1', true), 'low')
+  assert.equal(autoEffort('claude-opus-5-5'), 'medium')
+  assert.equal(autoEffort('claude-haiku-5-5', true), undefined)
+  assert.equal(autoContextTokens('fast-tracker', true), 120_000)
+  assert.equal(autoContextTokens('fast-tracker'), 150_000)
+  const dir = tmp('hangar-coord-')
+  const { installTemplates, saveRole } = await import('../src/main/roles')
+  installTemplates(dir)
+  saveRole(dir, { id: 'fast-tracker', name: 'Fast Tracker', description: 'plans', prompt: 'Plan fast.', model: 'claude-fable-5-1', delegate: true })
+  saveRole(dir, { id: 'big-planner', name: 'Big Planner', description: 'plans', prompt: 'Plan.', model: 'claude-fable-5-1', delegate: true, contextTokens: 300_000, effort: 'high' })
+  const t = runnerFor(dir)
+  t.runner.send(t.project.id, 'fast-tracker', 'plan the MVP')
+  await until(() => t.calls.length === 1)
+  assert.equal(t.calls[0]!.options.effort, 'low')
+  assert.equal((t.calls[0]!.options.settings as { autoCompactWindow: number }).autoCompactWindow, 120_000)
+  assert.match((t.calls[0]!.options.systemPrompt as { append: string }).append, /never one brief per problem/)
+  t.runner.send(t.project.id, 'big-planner', 'plan')
+  await until(() => t.calls.length === 2)
+  assert.equal(t.calls[1]!.options.effort, 'high')
+  assert.equal((t.calls[1]!.options.settings as { autoCompactWindow: number }).autoCompactWindow, 300_000)
 })

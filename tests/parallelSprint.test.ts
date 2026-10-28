@@ -290,3 +290,16 @@ test('planning prompts ask for short replies and briefs', () => {
   assert.match(p, /at most 120 words/)
   assert.match(p, /ask "bookworm"/)
 })
+
+test('sizes: simple pieces are built on Sonnet, hard ones on the builder\'s own model', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  const planPrompt = t.sent.at(-1)!.prompt
+  assert.match(planPrompt, /"size": "simple"/)
+  assert.deepEqual(parseSprintPlan(plan([{ agent: 'scripter', title: 'A', brief: 'b', files: ['a'], size: 'simple' }, { agent: 'ui-builder', title: 'B', brief: 'b', files: ['b'], size: 'huge' }]), ['scripter', 'ui-builder']).map((i) => i.size), ['simple', undefined])
+  t.done(planPrompt, 'planner', { text: plan([{ agent: 'scripter', title: 'Tweak speed', brief: 'Set WALK_SPEED to 22.', files: ['src/shared/Config.luau'], size: 'simple' }, { agent: 'ui-builder', title: 'Shop panel', brief: 'Build the shop.', files: ['src/client/Shop.luau'], size: 'hard' }]) })
+  const items = t.sent.filter((s) => s.prompt.startsWith('Autopilot item '))
+  assert.equal(items.find((s) => /Tweak speed/.test(s.prompt))!.model, 'claude-sonnet-5-5')
+  assert.equal(items.find((s) => /Shop panel/.test(s.prompt))!.model, undefined)
+  assert.match(items[0]!.prompt, /in one go/)
+})

@@ -86,15 +86,16 @@ export const CONTEXT_MAX = 1_000_000
  * The context size for an agent's job, unless it has its own: the Lead plans from notes (helpers read the code),
  * builders need several code files open, QA and research read output and pages that needn't stay around.
  */
-export function autoContextTokens(agentId: string): number {
-  if (agentId === 'lead') return 120_000
+export function autoContextTokens(agentId: string, coordinator = false): number {
+  // Coordinators plan from notes and briefs; the helpers read the code.
+  if (agentId === 'lead' || coordinator) return 120_000
   if (agentId === 'qa-tester' || agentId === 'researcher') return 100_000
   if (agentId === 'scripter' || agentId === 'ui-builder' || agentId === 'studio-modeler' || agentId === 'blender-modeler') return 200_000
   return 150_000
 }
 
-export function contextTokensFor(agentId: string, own?: number): number {
-  return cleanContextTokens(own) ?? autoContextTokens(agentId)
+export function contextTokensFor(agentId: string, own?: number, coordinator = false): number {
+  return cleanContextTokens(own) ?? autoContextTokens(agentId, coordinator)
 }
 
 /** A context size within what the engine accepts, or undefined. Accepts 200000, "200k" or "200000". */
@@ -122,8 +123,10 @@ export const coordinatesByDefault = (roleId: string): boolean => COORDINATORS.in
  * expensive kind of token, and medium is plenty for building from a clear brief. Haiku keeps its usual (it's the
  * cheap tier already).
  */
-export function autoEffort(model: string | null | undefined): AgentEffort | undefined {
-  return model && /haiku/i.test(model) ? undefined : 'medium'
+export function autoEffort(model: string | null | undefined, coordinator = false): AgentEffort | undefined {
+  if (model && /haiku/i.test(model)) return undefined
+  // A coordinator writes plans and short briefs, not code: its long hidden thinking was the costliest part of a run.
+  return coordinator ? 'low' : 'medium'
 }
 
 /**

@@ -711,7 +711,9 @@ export class AgentRunner {
     // This agent's own settings: its role file, or the project's Main agent settings.
     const own = role ?? project.settings.mainAgent ?? {}
     const runBudget = own.budgetUsd ?? settings.perRunBudgetUsd
-    const contextWindow = contextTokensFor(roleId, own.contextTokens)
+    // Coordinators (the Lead, the Planner, any role that hands building out) plan from notes: smaller and lighter.
+    const coordinating = !!role && (role.delegate ?? coordinatesByDefault(roleId))
+    const contextWindow = contextTokensFor(roleId, own.contextTokens, coordinating)
     // On a Claude Max plan there's no per-task dollar cap: the plan's usage limits decide (checked before each run).
     const onPlan = settings.authMode === 'max'
 
@@ -877,7 +879,7 @@ export class AgentRunner {
       const canDelegate = !own.tools?.length || own.tools.includes('Agent') || own.tools.includes('Task')
       if (!research && roleId !== 'bookworm' && canDelegate && allRoles.some((r) => r.id === 'bookworm')) append += `\n\n${BOOKWORM_HINT}`
       const runModel = task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel
-      const runEffort = research ? undefined : (own.effort ?? autoEffort(runModel))
+      const runEffort = research ? undefined : (own.effort ?? autoEffort(runModel, coordinating))
       const options: Record<string, unknown> = {
         cwd: work.path,
         model: runModel,
@@ -897,7 +899,8 @@ export class AgentRunner {
             .map((r) => {
               const blocked = [...LEAN_DISALLOWED, ...disallowedFor(r.tools), ...(r.studio === false ? [`mcp__${STUDIO_MCP_NAME}`] : [])]
               const helperModel = r.model ?? project.settings.model ?? settings.defaultModel
-              const helperEffort = r.effort ?? autoEffort(helperModel)
+              const helperCoordinates = r.delegate ?? coordinatesByDefault(r.id)
+              const helperEffort = r.effort ?? autoEffort(helperModel, helperCoordinates)
               const folder = knowledgeFolder(r.id, r.knowledge)
               return [r.id, {
                 description: r.description || r.name,
@@ -908,7 +911,7 @@ export class AgentRunner {
                 ...(helperEffort ? { effort: helperEffort } : {}),
                 model: helperModel,
                 // Its own context size: a long helper run is summarized instead of growing without bound.
-                autoCompactWindow: contextTokensFor(r.id, r.contextTokens),
+                autoCompactWindow: contextTokensFor(r.id, r.contextTokens, helperCoordinates),
                 // Most steps per run, so a playtest (QA) can't drag on for hundreds of turns.
                 maxTurns: maxTurnsFor(r.id, r.maxTurns)
               }]
@@ -1740,7 +1743,7 @@ export function coordinateBlock(c: Coordinate, root: string, toolName: string, i
 export function coordinateInstructions(c: Coordinate): string {
   return `
 # How you work: you coordinate, the team builds
-- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (at most 120 words), for one small piece. Each brief names the exact files to read and change (you know the codebase from the notes; the helper starts with nothing but your brief), what to build, and the acceptance criteria. A vague brief makes the helper explore the whole project, which is slow and uses up the plan. Work in parallel: split the work into independent briefs (say the server part for one builder and the HUD for another, each with its own files) and send all of their Agent calls in ONE message, so they build at the same time. Only brief one after another when one needs the other's result. Run helpers in the foreground and wait for them (never run_in_background: each one finishing later wakes you to re-read everything). When QA reports several problems in different files, hand the fixes out in parallel the same way.${
+- Hand every code or UI change to ${c.builders.map((b) => `"${b}"`).join(' or ')} with the Agent tool: one clear brief each (at most 120 words), for one small piece. Each brief names the exact files to read and change (you know the codebase from the notes; the helper starts with nothing but your brief), what to build, and the acceptance criteria. A vague brief makes the helper explore the whole project, which is slow and uses up the plan. Work in parallel: split the work into independent briefs (say the server part for one builder and the HUD for another, each with its own files) and send all of their Agent calls in ONE message, so they build at the same time. Only brief one after another when one needs the other's result. Run helpers in the foreground and wait for them (never run_in_background: each one finishing later wakes you to re-read everything). When QA reports problems, collect them and send each builder all the fixes for its files in one brief (one brief per file group, in parallel), never one brief per problem: every brief starts a fresh helper that rereads its whole setup.${
     c.qa ? `\n- Hand playtesting to "${c.qa}" with the Agent tool, then have the builders fix what it finds.` : ''
   }
 - You edit only your own notes (${c.notes.map((f) => `${f}/`).join(', ') || 'none'}); Hangar refuses other file edits${c.qa ? ' and Studio use' : ''} from you. Don't edit files with shell commands either.

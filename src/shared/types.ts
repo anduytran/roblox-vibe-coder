@@ -542,6 +542,8 @@ export interface SprintItem {
   title: string
   brief: string
   files: string[]
+  /** "simple" pieces are built on the cheaper Sonnet; "hard" ones (and unmarked) on the builder's own model. */
+  size?: 'simple' | 'hard'
   status: 'queued' | 'review' | 'done'
   /** Handed to its agent (not yet after a restart, when queued tasks are gone). */
   sent?: boolean

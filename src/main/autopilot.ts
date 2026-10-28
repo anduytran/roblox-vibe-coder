@@ -74,6 +74,11 @@ export const KEEP_SHORT = `Be brief: no restating the brief or the notes, no lon
 /** While the game hasn't shipped, its ship checklist comes first. */
 export const SHIP_FIRST = `If design-vault/Ship Checklist.md has unticked items, the next step comes from it first (skip the ones marked "(you)": they need the product owner, so list them under "Needs you" in Roadmap.md). Tick items in it as they're done.`
 
+/** How the planner marks each piece, so simple ones are built on a cheaper model. */
+export const SIZE_RULE = `Mark each piece's "size": "simple" for a small, well-understood change (a value, a small UI tweak, a fix in one place), built on Sonnet, which is faster and much cheaper; "hard" for a new system or tricky logic, built on the builder's own model.`
+/** The model a "simple" piece is built on. */
+export const SIMPLE_MODEL = 'claude-sonnet-5-5'
+
 /** Tries at resolving one change's clash on its own before it waits for you. */
 export const MAX_CLASH_FIXES = 2
 
@@ -165,7 +170,8 @@ export function parseSprintPlan(text: string, builders: string[], max = MAX_SPRI
     // Parallel pieces must not share files: one that does waits for a later sprint.
     if (files.some((f) => taken.has(f))) continue
     files.forEach((f) => taken.add(f))
-    out.push({ agentId, title, brief, files })
+    const size = o.size === 'simple' ? 'simple' : o.size === 'hard' ? 'hard' : undefined
+    out.push({ agentId, title, brief, files, ...(size ? { size } : {}) })
     if (out.length >= max) break
   }
   return out
@@ -838,9 +844,9 @@ Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the s
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
 \`\`\`json
-{"items":[{"agent":"scripter","title":"Bots use the heavy melee","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/BotService.luau"]}]}
+{"items":[{"agent":"scripter","title":"Bots use the heavy melee","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/BotService.luau"],"size":"hard"}]}
 \`\`\`
-Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria, in at most 120 words. ${KEEP_SHORT}${feedback}`
+Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria, in at most 120 words. ${SIZE_RULE} ${KEEP_SHORT}${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     this.deps.send(st.projectId, this.plannerOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.plannerModel ? { model: st.config.plannerModel } : {}) })
@@ -860,9 +866,9 @@ Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the s
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
 \`\`\`json
-{"items":[{"agent":"scripter","title":"Core loop: collect and deliver","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/DeliveryService.luau"]}]}
+{"items":[{"agent":"scripter","title":"Core loop: collect and deliver","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/DeliveryService.luau"],"size":"hard"}]}
 \`\`\`
-Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria, in at most 120 words. ${KEEP_SHORT}${feedback}`
+Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria, in at most 120 words. ${SIZE_RULE} ${KEEP_SHORT}${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [], mvp: true }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     // The Planner runs on its own model (Fable); without one, the Lead plans this step on Fable.
@@ -927,11 +933,11 @@ ${item.brief}
 ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 
 1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
-2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix only what breaks the acceptance criteria; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix what it finds, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
+2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
       const lane = laneFor.get(item.id) ?? item.agentId
-      this.deps.send(st.projectId, lane, prompt, { origin: 'autopilot' })
+      this.deps.send(st.projectId, lane, prompt, { origin: 'autopilot', ...(item.size === 'simple' ? { model: SIMPLE_MODEL } : {}) })
       items = items.map((i) => (i.id === item.id ? { ...i, sent: true, lane } : i))
     }
     this.put({ ...this.get(st.projectId), parallel: { ...st.parallel, items } })

@@ -66,6 +66,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
         <BriefCard
           key={project.id}
           title="Brief"
+          ask="Brief me: what happened, and what needs me?"
           watch={`${status}:${ap?.sprint ?? 0}:${ap?.tasksDone ?? 0}:${reviewCount}`}
           load={(refresh) => window.hangar.briefs.project(project.id, refresh)}
         />

@@ -4373,3 +4373,7 @@ kbd {
 .pill-paused .pill-dot {
   background: var(--amber);
 }
+
+.brief-ask {
+  margin: 2px 0 6px;
+}
