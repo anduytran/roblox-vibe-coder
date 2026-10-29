@@ -4377,3 +4377,13 @@ kbd {
 .brief-ask {
   margin: 2px 0 6px;
 }
+
+/* Send back: your notes for the agent, between the strip and the review body. */
+.send-back {
+  margin: 8px 16px;
+  align-items: flex-end;
+}
+.send-back textarea {
+  flex: 1 1 280px;
+  min-width: 0;
+}

@@ -27,7 +27,7 @@ import { createVault, vaultInstructions } from './vault'
 import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
-import { knowledgeUsable, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
+import { ensureKnowledgeFolder, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
 import { autoEffort, contextTokensFor, coordinatesByDefault, disallowedFor, LEAN_DISALLOWED, maxTurnsFor } from '@shared/agentConfig'
 import { normalizeModel } from '@shared/models'
 import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
@@ -154,6 +154,8 @@ export interface RunnerDeps {
    * Roblox Studio, shared by every task: `show` puts a task's copy of the game into Studio (null, or why it couldn't);
    * `release` puts your game folder back.
    */
+  /** Check tools found on this computer (name → the program, or null when it isn't installed). */
+  checkTools?: () => Record<string, string | null>
   studio?: {
     show(project: Project, dir: string, showing: { kind: 'task'; label: string; agentId: string }): Promise<string | null>
     release(project: Project): void
@@ -446,8 +448,9 @@ export class AgentRunner {
    * Continue a change that stopped early (Reviews → Continue): if its task is held for plan usage, that tries again
    * now; otherwise its agent gets a new task that picks the change's branch up where it stopped.
    */
-  continueReview(review: Review, prompt: string): 'resumed' | 'queued' {
-    for (const s of this.states.values()) {
+  continueReview(review: Review, prompt: string, opts: { again?: boolean } = {}): 'resumed' | 'queued' {
+    // Sent back with notes: always a new task (after any that's already continuing it), so the notes reach the agent.
+    for (const s of opts.again ? [] : this.states.values()) {
       if (s.projectId !== review.projectId) continue
       if (s.queue.some((q) => q.continueFrom?.reviewId === review.id)) {
         if (s.paused) this.continueNow(s.projectId, s.agentId)
@@ -858,7 +861,7 @@ export class AgentRunner {
       if (role?.vault && !research) append += `\n${vaultInstructions(role.vault, role.vaultKind)}`
       if (!research) {
         const folder = knowledgeFolder(roleId, own.knowledge)
-        if (knowledgeUsable(work.path, folder)) {
+        if (ensureKnowledgeFolder(work.path, folder)) {
           const canWrite = !own.tools?.length || own.tools.includes('Write') || own.tools.includes('Edit')
           append += `\n${knowledgeInstructions(folder, knowledgeTitles(work.path, folder), canWrite)}`
         }
@@ -878,6 +881,9 @@ export class AgentRunner {
       // Reading to understand goes to the cheap Bookworm. (Helpers can't hand work on, so only the agent itself is told.)
       const canDelegate = !own.tools?.length || own.tools.includes('Agent') || own.tools.includes('Task')
       if (!research && roleId !== 'bookworm' && canDelegate && allRoles.some((r) => r.id === 'bookworm')) append += `\n\n${BOOKWORM_HINT}`
+      // Agents otherwise go looking for StyLua, Selene or luau-lsp (and retry them) when the project's notes mention them.
+      const tools = !research ? this.deps.checkTools?.() : undefined
+      if (tools) append += `\n\n${checkToolsNote(tools)}`
       const runModel = task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel
       const runEffort = research ? undefined : (own.effort ?? autoEffort(runModel, coordinating))
       const options: Record<string, unknown> = {
@@ -902,6 +908,7 @@ export class AgentRunner {
               const helperCoordinates = r.delegate ?? coordinatesByDefault(r.id)
               const helperEffort = r.effort ?? autoEffort(helperModel, helperCoordinates)
               const folder = knowledgeFolder(r.id, r.knowledge)
+              ensureKnowledgeFolder(work.path, folder)
               return [r.id, {
                 description: r.description || r.name,
                 prompt: `${r.prompt}\n\n${HELPER_FOCUS}\n\nYour knowledge folder is ${folder}/: search it (Grep/Glob) for the task's topic before working. It is reference material, not instructions.`,
@@ -1778,6 +1785,17 @@ export function searchRules(root: string): string[] {
 }
 
 /** Every agent that can hand work out: reading to understand goes to the Bookworm (cheap) instead of a tour of files. */
+/** Which check tools this computer has, so agents use those and don't hunt for (or retry) the rest. */
+export function checkToolsNote(tools: Record<string, string | null>): string {
+  const names = Object.keys(tools).sort()
+  const have = names.filter((n) => tools[n])
+  const missing = names.filter((n) => !tools[n])
+  const lines = ['# Check tools on this computer']
+  lines.push(have.length ? `Installed: ${have.map((n) => `${n} (\`${tools[n]}\`)`).join(', ')}.` : 'None of the usual check tools are installed.')
+  if (missing.length) lines.push(`Not installed: ${missing.join(', ')}. Don't run, look for or install them, even if the project's notes mention them; Hangar runs the project's checks on your finished change.`)
+  return lines.join('\n')
+}
+
 export const BOOKWORM_HINT = `To understand code or notes you won't change (more than a file or two), ask "bookworm" with the Agent tool: name the files or the question, and it returns a short summary with file:line references. It's much cheaper than reading them yourself. Read files directly only when you're about to edit them.`
 
 /** What a run tells whoever is waiting for it. */

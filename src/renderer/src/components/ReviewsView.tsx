@@ -182,6 +182,17 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
   const warnings = mergeWarnings(review)
   const totals = useMemo(() => (diff ? diffTotals(splitDiff(diff).files) : null), [diff])
   const [showWarnings, setShowWarnings] = useState(false)
+  // Send back: your notes go to the agent that made the change, which reworks it on the same branch.
+  const [sendBack, setSendBack] = useState<string | null>(null)
+  const sendNotes = (): void => {
+    const notes = (sendBack ?? '').trim()
+    if (!notes) return
+    run('sendBack', async () => {
+      const r = await window.hangar.reviews.continueReview(review.id, notes)
+      setSendBack(null)
+      return r.review
+    }, `Sent back to ${agent}. The review updates when it's reworked, then is checked and reviewed again.`)
+  }
   const studioShowsThis = useStore((s) => s.studioSync.reviewId === review.id && s.studioSync.status !== 'off')
   // The strip's chips jump to their section ("top" is the start of the body).
   const at = useRef<Record<string, HTMLElement | null>>({})
@@ -230,6 +241,9 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
               </Button>
             </div>
             <div className="row gap-xs">
+              <Button size="sm" disabled={!!busy || review.clash?.fixing === true} title={`Send it back to ${agent} with your notes`} onClick={() => setSendBack((v) => (v === null ? '' : null))}>
+                Send back…
+              </Button>
               {/* Shown from a separate copy: the game folder never switches branches, so there's nothing to switch back. */}
               <Button
                 size="sm"
@@ -252,6 +266,30 @@ function ReviewDetail({ project, review, agent }: { project: Project; review: Re
         )}
       </header>
       <ReviewStrip review={review} warnings={warnings} warningsOpen={showWarnings} totals={totals} clip={isPending && clip.length > 0} onGo={go} />
+      {isPending && sendBack !== null && (
+        <div className="callout row gap-sm wrap send-back">
+          <textarea
+            rows={3}
+            autoFocus
+            value={sendBack}
+            maxLength={4000}
+            placeholder="The jump feels floaty: make it snappier. Keep the new UI, but move the counter to the top right."
+            onChange={(e) => setSendBack(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendNotes()
+              if (e.key === 'Escape') setSendBack(null)
+            }}
+          />
+          <div className="row gap-xs">
+            <Button size="sm" tone="primary" disabled={!!busy || !sendBack.trim()} onClick={sendNotes}>
+              Send to {agent}
+            </Button>
+            <Button size="sm" tone="ghost" onClick={() => setSendBack(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
       {showWarnings && warnings.length > 0 && (
         <ul className="review-warnings">
           {warnings.map((w) => (

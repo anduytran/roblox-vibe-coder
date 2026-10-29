@@ -17,7 +17,7 @@ import { JsonStore } from './jsonStore'
 import { KeyProxy } from './keyProxy'
 import { StudioClipRecorder } from './clips'
 import { RemoteServer } from './remote'
-import { ReviewActions } from './reviewActions'
+import { MAX_NOTES, ReviewActions } from './reviewActions'
 import { ReviewPipeline } from './reviewPipeline'
 import { runChecks } from './checks'
 import { TaskReviewer } from './taskReviewer'
@@ -38,7 +38,7 @@ import { TestPlacePublisher } from './testPlace'
 import { TestPlaceKeys } from './testPlaceKeys'
 import { createVault, listVaultNotes, readVaultNote, vaultStatus } from './vault'
 import { listProjectDir, projectEntryPath, readProjectFile } from './projectFiles'
-import { findRojo, installRojo, StudioSync } from './studioSync'
+import { findRojo, installRojo, realTool, StudioSync } from './studioSync'
 import { defaultStudioMcp, ProjectRegistry } from './projects'
 import { addLaterStarters, deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
 import { listModels, MESH_DIR, modelTask } from './models'
@@ -438,6 +438,13 @@ app.whenReady().then(() => {
     registry,
     costs,
     emit,
+    checkTools: () => ({
+      rojo: findRojo(settings.get().rojoCommand),
+      selene: realTool('selene', resolveCommand('selene')),
+      stylua: realTool('stylua', resolveCommand('stylua')),
+      'luau-lsp': resolveCommand('luau-lsp'),
+      'luau-analyze': resolveCommand('luau-analyze')
+    }),
     onReview: (r) => void pipeline?.start(r),
     onTaskDone: (o) => {
       autopilot?.onTaskDone(o)
@@ -770,7 +777,7 @@ app.whenReady().then(() => {
   handle(IPC.briefsAgent, (id: unknown, agentId: unknown, refresh?: unknown) => briefer.agent(str(id, 'project'), str(agentId, 'agent'), { refresh: refresh === true }))
   handle(IPC.briefsProject, (id: unknown, refresh?: unknown) => briefer.project(str(id, 'project'), { refresh: refresh === true }))
   handle(IPC.reviewsCancelMergeAll, (id: unknown) => reviewActions.cancelMergeAll(str(id, 'project')))
-  handle(IPC.reviewsContinue, (id: unknown) => reviewActions.continueReview(str(id, 'review')))
+  handle(IPC.reviewsContinue, (id: unknown, notes?: unknown) => reviewActions.continueReview(str(id, 'review'), typeof notes === 'string' ? notes.slice(0, MAX_NOTES) : undefined))
   handle(IPC.reviewsFixClash, (id: unknown) => reviewActions.fixClash(str(id, 'review')))
   handle(IPC.reviewsRecheck, (id: unknown, opts?: { reviewer?: unknown }) => reviewActions.recheck(str(id, 'review'), { reviewer: opts?.reviewer === true }))
   handle(IPC.reviewsDiscard, (id: unknown) => reviewActions.discard(str(id, 'review')))

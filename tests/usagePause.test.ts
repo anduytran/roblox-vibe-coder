@@ -173,3 +173,26 @@ test('reviews: Continue picks an unfinished change up (a held task tries now; ot
   assert.equal(t.reviews.get(id).incomplete, null)
   assert.match(execFileSync('git', ['show', `${t.reviews.get(id).headSha}:Gun.luau`], { cwd: t.dir }).toString(), /step = 3/)
 })
+
+test('reviews: Send back gives the agent your notes and reworks the same change', async () => {
+  const { ReviewActions } = await import('../src/main/reviewActions')
+  const t = setup()
+  t.state.outOfUsage = false
+  const actions = new ReviewActions({ registry: t.registry, reviews: t.reviews, runner: t.runner, emit: () => {}, publisher: null })
+  t.runner.send(t.project.id, 'main', 'build the gun')
+  await until(() => t.outcomes.length === 1)
+  const id = t.outcomes[0]!.reviewId!
+  t.reviews.update(id, {
+    checks: { status: 'done', reason: null, results: [{ name: 'Build', command: 'rojo build', status: 'failed', output: 'bad\u202Eline', ms: 1 }] },
+    aiReview: { status: 'done', verdict: 'concerns', summary: '', findings: [{ severity: 'medium', file: 'Gun.luau', line: 2, title: 'No cooldown', detail: '' }], costUsd: 0, error: null }
+  })
+  assert.equal(actions.continueReview(id, '  Make the recoil smaller.  ').how, 'queued')
+  await until(() => t.outcomes.length === 2)
+  const p = t.calls.at(-1)!.prompt
+  assert.match(p, /^Rework this change: build the gun/)
+  assert.match(p, /sent it back with these notes\. Do what they ask:\nMake the recoil smaller\./)
+  assert.match(p, /- Build: badline/, 'check output, without hidden characters')
+  assert.match(p, /\[medium\] Gun\.luau:2: No cooldown/)
+  assert.equal(t.calls.at(-1)!.resume, undefined)
+  assert.equal(t.outcomes[1]!.reviewId, id, 'the same change')
+})

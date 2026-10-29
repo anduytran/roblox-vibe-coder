@@ -318,8 +318,11 @@ export interface HangarApi {
     recheck(reviewId: string, opts?: { reviewer?: boolean }): Promise<Review>
     /** Hand a merge clash to the agent that made the change; the fixed change is checked and reviewed again. */
     fixClash(reviewId: string): Promise<Review>
-    /** Continue a change that stopped early: its agent picks the branch up where it stopped. */
-    continueReview(reviewId: string): Promise<{ review: Review; how: 'resumed' | 'queued' }>
+    /**
+     * Continue a change that stopped early, or send it back to its agent with your notes: the agent picks its branch
+     * up and the same review is updated, checked and reviewed again.
+     */
+    continueReview(reviewId: string, notes?: string): Promise<{ review: Review; how: 'resumed' | 'queued' }>
     /**
      * Merge every waiting change, oldest first. What can't merge yet (an agent working, checks running) is queued and
      * merges as soon as it can; clashes go to Fix with AI and are queued again once fixed and checked.

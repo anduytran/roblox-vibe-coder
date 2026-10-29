@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { AgentEvent, AppSettings } from '../src/shared/types'
 import { cleanAgentSettings, cleanMainAgent, disallowedFor, groupsFromTools, LEAN_DISALLOWED, toolsFromGroups } from '../src/shared/agentConfig'
-import { AgentRunner, type CanUseTool, type QueryFn } from '../src/main/agentRunner'
+import { AgentRunner, checkToolsNote, type CanUseTool, type QueryFn } from '../src/main/agentRunner'
 import { CostTracker } from '../src/main/costs'
-import { knowledgeFolder, knowledgeInstructions, knowledgeTitles, knowledgeUsable } from '../src/main/knowledge'
+import { ensureKnowledgeFolder, knowledgeFolder, knowledgeInstructions, knowledgeTitles, knowledgeUsable } from '../src/main/knowledge'
 import { DEFAULT_PROJECT_SETTINGS, mcpServersFor, ProjectRegistry } from '../src/main/projects'
 import { ReviewStore } from '../src/main/reviews'
 import { parseRole, saveRole, serializeRole } from '../src/main/roles'
@@ -81,6 +81,26 @@ test('knowledge: a folder per agent, listed by name, never through a link', () =
   assert.equal(knowledgeUsable(dir, 'knowledge2/qa'), false)
   writeFileSync(join(dir, 'afile'), 'x')
   assert.equal(knowledgeUsable(dir, 'afile'), false)
+})
+
+test('knowledge: the folder is made (empty) before a task, so searching it never fails; never through a link', () => {
+  const dir = tmp('hangar-kn-mk-')
+  assert.equal(ensureKnowledgeFolder(dir, 'knowledge/ui-builder'), true)
+  assert.ok(existsSync(join(dir, 'knowledge', 'ui-builder')))
+  assert.equal(ensureKnowledgeFolder(dir, 'knowledge/ui-builder'), true, 'already there is fine')
+  const outside = tmp('hangar-kn-mk-out-')
+  symlinkSync(outside, join(dir, 'notes'))
+  assert.equal(ensureKnowledgeFolder(dir, 'notes/qa'), false)
+  assert.equal(existsSync(join(outside, 'qa')), false, 'nothing made outside the project')
+  assert.equal(ensureKnowledgeFolder(dir, '../escape'), false, 'a bad name makes nothing')
+  assert.equal(existsSync(join(dir, '..', 'escape')), false)
+})
+
+test('check tools: agents are told what is installed and to skip the rest', () => {
+  const note = checkToolsNote({ rojo: '/opt/bin/rojo', stylua: null, selene: null })
+  assert.match(note, /Installed: rojo \(`\/opt\/bin\/rojo`\)/)
+  assert.match(note, /Not installed: selene, stylua\. Don't run, look for or install them/)
+  assert.match(checkToolsNote({ rojo: null }), /None of the usual check tools/)
 })
 
 function runnerFor(dir: string, app: AppSettings = settings) {
@@ -167,7 +187,8 @@ test('agent config: the runner applies each agent\'s tools, Studio, effort, budg
   assert.ok((m.mcpServers as Record<string, unknown>).Roblox_Studio)
   assert.deepEqual(m.disallowedTools, LEAN_DISALLOWED, 'the Main agent with no tool limits: only the tools no agent needs are left out')
   assert.match((m.systemPrompt as { append: string }).append, /Always answer in haiku\./)
-  assert.match((m.systemPrompt as { append: string }).append, /knowledge\/main\/[\s\S]*no notes yet \(the folder is created with your first note\)/)
+  assert.match((m.systemPrompt as { append: string }).append, /knowledge\/main\/[\s\S]*no notes yet\./)
+  assert.ok(existsSync(join(t.project.path, 'knowledge', 'main')), 'made before the run, so searching it works')
 })
 
 test('coordinator: the Lead hands code and playtests to the team and only edits its own notes', async () => {
