@@ -44,18 +44,22 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
   const authCalls: unknown[] = []
   const prompts: string[] = []
   const cwds: string[] = []
+  const resumes: (string | undefined)[] = []
   let active = 0
   let maxActive = 0
   const query: QueryFn = ({ prompt, options }) =>
     (async function* () {
       prompts.push(prompt)
       cwds.push(options.cwd as string)
+      resumes.push(options.resume as string | undefined)
       active++
       maxActive = Math.max(maxActive, active)
       try {
         yield { type: 'system', subtype: 'init', session_id: 's', mcp_servers: [] }
         const cwd = options.cwd as string
-        if (prompt.includes('change')) writeFileSync(join(cwd, `${prompt.replace(/\W+/g, '_')}.luau`), `-- ${prompt}\n`)
+        // The message itself is the last line (a restarted conversation's recap comes first).
+        const said = prompt.split('\n').at(-1)!
+        if (said.includes('change')) writeFileSync(join(cwd, `${said.replace(/\W+/g, '_')}.luau`), `-- ${said}\n`)
         opts.during?.(cwd, (...a: string[]) => execFileSync('git', a, { cwd }).toString())
         if (opts.images) {
           yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'mcp__Roblox_Studio__start_stop_play', input: {} }] } }
@@ -69,7 +73,7 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
         }
         await new Promise<void>((r) => gates.push(r))
         if ((options.abortController as AbortController).signal.aborted) throw new Error('aborted')
-        yield { type: 'assistant', message: { content: [{ type: 'text', text: `Did: ${prompt}. Playtested, no errors.` }] } }
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: `Did: ${prompt.split('\n').at(-1)}. Playtested, no errors.` }] } }
         yield { type: 'result', subtype: 'success', total_cost_usd: 0.1 }
       } finally {
         active--
@@ -99,7 +103,7 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
   })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
-  return { dir, g, registry, project, runner, reviews, actions, events, gates, prompts, cwds, status, authCalls, maxActive: () => maxActive }
+  return { dir, g, registry, project, runner, reviews, actions, events, gates, prompts, cwds, resumes, status, authCalls, maxActive: () => maxActive }
 }
 
 test('autonomous: each task runs on its own branch, in its own copy of the game, and ends as a review; the game folder stays on main', async () => {
@@ -320,6 +324,41 @@ test('one conversation is one review: follow-ups add to it; after a merge, or fo
   await until(() => t.gates.length === 4)
   t.gates[3]!()
   await until(() => t.reviews.list().length === 3)
+})
+
+test('a chat idle over an hour starts a new conversation with a recap, and still adds to the same change', async () => {
+  const { IDLE_FRESH_MS } = await import('../src/main/agentRunner')
+  const t = setup()
+  t.runner.send(t.project.id, 'main', 'change one')
+  await until(() => t.gates.length === 1)
+  t.gates[0]!()
+  await until(() => t.reviews.list().length === 1)
+  await until(() => !t.runner.projectBusy(t.project.id))
+  // Soon after: the same conversation.
+  t.runner.send(t.project.id, 'main', 'change two')
+  await until(() => t.gates.length === 2)
+  t.gates[1]!()
+  await until(() => (t.reviews.list()[0]!.messages ?? 1) === 2)
+  await until(() => !t.runner.projectBusy(t.project.id))
+  assert.equal(t.resumes[1], 's')
+  // Over an hour later: a new conversation, told about the change, still one review.
+  const state = (t.runner as unknown as { states: Map<string, { log: { ts: number }[] }> }).states.get(`${t.project.id}:main`)!
+  for (const e of state.log) e.ts -= IDLE_FRESH_MS + 60_000
+  t.runner.send(t.project.id, 'main', 'change three')
+  await until(() => t.gates.length === 3)
+  t.gates[2]!()
+  await until(() => (t.reviews.list()[0]!.messages ?? 1) === 3)
+  assert.equal(t.resumes[2], undefined, 'not resumed')
+  assert.match(t.prompts[2]!, /^\(This continues an earlier conversation[\s\S]*adding to your change "change one"[\s\S]*Files it changed: [\s\S]*change_two\.luau[\s\S]*\nchange three$/)
+  assert.equal(t.reviews.list().length, 1)
+  await until(() => !t.runner.projectBusy(t.project.id))
+  // The next message carries on from the new conversation, in the same change.
+  t.runner.send(t.project.id, 'main', 'change four')
+  await until(() => t.gates.length === 4)
+  t.gates[3]!()
+  await until(() => (t.reviews.list()[0]!.messages ?? 1) === 4)
+  assert.equal(t.resumes[3], 's')
+  assert.equal(t.prompts[3], 'change four')
 })
 
 test('autonomous: different agents work at the same time, each in its own copy, and merges don\'t wait for them', async () => {

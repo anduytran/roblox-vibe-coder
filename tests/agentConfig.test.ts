@@ -205,6 +205,11 @@ test('coordinator: the Lead hands code and playtests to the team and only edits 
   assert.match(coordinateBlock(c, root, 'Edit', { file_path: '/game/design-vault-evil/x.md' }) ?? '', /hand this change/)
   assert.match(coordinateBlock(c, root, 'mcp__Roblox_Studio__execute_luau', {}) ?? '', /hand playtesting to "qa-tester"/)
   assert.equal(coordinateBlock(c, root, 'Bash', { command: 'selene src' }), null)
+  // Briefs: short, and at most a handful of build briefs per message (QA isn't counted).
+  assert.equal(coordinateBlock(c, root, 'Agent', { subagent_type: 'scripter', prompt: 'Add a cooldown in src/server/Gun.luau.' }, 0), null)
+  assert.match(coordinateBlock(c, root, 'Agent', { subagent_type: 'scripter', prompt: 'x'.repeat(2500) }, 0) ?? '', /2500 characters; keep each one under 2000/)
+  assert.match(coordinateBlock(c, root, 'Agent', { subagent_type: 'ui-builder', prompt: 'HUD' }, 6) ?? '', /6 build briefs in this task/)
+  assert.equal(coordinateBlock(c, root, 'Agent', { subagent_type: 'qa-tester', prompt: 'Playtest the gun' }, 6), null)
   // Off when switched off, for other roles, or with nobody to hand work to.
   assert.equal(coordinatorFor({ ...lead, delegate: false }, ROLE_TEMPLATES, 'k'), null)
   assert.equal(coordinatorFor(ROLE_TEMPLATES.find((r) => r.id === 'scripter')!, ROLE_TEMPLATES, 'k'), null)
