@@ -1,6 +1,7 @@
 import type { ProjectSettings } from '@shared/types'
 import { isProtectedPath, patternEscapes, pathsFromToolInput, relativeInside, linkInPath } from './pathScope'
 import { DECEPTIVE_CHARS } from '@shared/text'
+import { sandboxAutoRun } from './sandbox'
 
 export type PolicyDecision =
   | { action: 'allow' }
@@ -168,6 +169,8 @@ export function evaluateToolUse(args: {
   input: Record<string, unknown>
   projectRoot: string
   settings: ProjectSettings
+  /** This run's commands are in the OS sandbox and the agent doesn't hold the real API key. */
+  sandboxed?: boolean
 }): PolicyDecision {
   const { toolName, input, projectRoot, settings } = args
   const ask = (reason: string, dangerous = false, canAlwaysAllow = !dangerous): PolicyDecision => ({
@@ -233,6 +236,8 @@ export function evaluateToolUse(args: {
     const command = typeof input.command === 'string' ? input.command : ''
     if (mayRevealSecrets(command)) return ask('This command may print environment variables or secrets, including your API key', true)
     if (commandAllowed(command, settings.allowedBashPrefixes)) return { action: 'allow' }
+    // The sandbox keeps the command inside the project, off the network and away from credentials.
+    if (args.sandboxed && sandboxAutoRun(settings)) return { action: 'allow' }
     return ask(shellWords(command) ? 'Runs a shell command' : 'Runs a shell command with special characters (quotes, variables, chaining or redirection)', false, alwaysRuleFor(command) !== null)
   }
 

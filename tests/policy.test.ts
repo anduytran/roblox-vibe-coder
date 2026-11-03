@@ -107,6 +107,18 @@ test('H3: "always allow" saves the exact command and is refused for dangerous pr
   assert.equal(d.action === 'ask' && d.canAlwaysAllow, false)
 })
 
+test('sandboxed auto-run: allowed only when the run is sandboxed and the project turns it on', () => {
+  const on = { ...settings, autoRunSandboxed: true }
+  const run = (s: typeof settings, sandboxed: boolean) => evaluateToolUse({ toolName: 'Bash', input: { command: 'rm -rf build' }, projectRoot: root, settings: s, sandboxed }).action
+  assert.equal(run(on, true), 'allow')
+  assert.equal(run(on, false), 'ask', 'not sandboxed (Windows, or sandbox off): asks')
+  assert.equal(run(settings, true), 'ask', 'setting off: asks')
+  assert.equal(run({ ...settings, autonomous: true }, true), 'allow')
+  assert.ok(isDanger(evaluateToolUse({ toolName: 'Bash', input: { command: 'printenv' }, projectRoot: root, settings: on, sandboxed: true })))
+  assert.ok(isDanger(evaluateToolUse({ toolName: 'Bash', input: { command: 'echo $ANTHROPIC_API_KEY' }, projectRoot: root, settings: on, sandboxed: true })))
+  assert.equal(evaluateToolUse({ toolName: 'Bash', input: { command: 'ls', dangerouslyDisableSandbox: true }, projectRoot: root, settings: on, sandboxed: true }).action, 'deny')
+})
+
 test('H2: commands that could print secrets are flagged in red', () => {
   for (const c of ['env', 'printenv ANTHROPIC_API_KEY', 'echo $ANTHROPIC_API_KEY', 'set', 'Get-ChildItem env:', 'cat .env | grep _TOKEN']) {
     assert.ok(isDanger(evalTool('Bash', { command: c })), c)

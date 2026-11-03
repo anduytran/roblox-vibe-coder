@@ -176,7 +176,19 @@ export function ProjectSettingsView({ project }: { project: Project }) {
                         />
                       </Field>
                     )}
-                    {s.sandbox && s.autoApproveEdits && <p className="small muted">Because file edits are auto-approved here, sandboxed commands also run without asking.</p>}
+                    {s.sandbox && (
+                      <Toggle
+                        checked={s.autoRunSandboxed === true || s.autonomous || s.autoApproveEdits}
+                        disabled={s.autonomous || s.autoApproveEdits}
+                        onChange={(v) => update({ settings: { autoRunSandboxed: v } }, v ? 'Sandboxed commands run without asking.' : 'Sandboxed commands ask again.')}
+                        label="Run sandboxed commands without asking"
+                        hint={
+                          s.autonomous || s.autoApproveEdits
+                            ? `Already on, because ${s.autonomous ? 'autonomous mode is on' : 'file edits are auto-approved'} here.`
+                            : "Shell commands run straight away, inside the sandbox above: they can only change this project, can't read your credential folders, and only reach the websites listed. Agents then get a stand-in for your API key, not the real one. Commands that could print secrets still ask."
+                        }
+                      />
+                    )}
                   </>
                 ) : (
                   <p className="small warn">

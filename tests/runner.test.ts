@@ -320,6 +320,32 @@ test('sandbox: not available on Windows, and the run says so', async () => {
   await until(() => status('main') === 'idle')
 })
 
+test('sandbox: "Run sandboxed commands without asking" lets commands run with no approval, only while sandboxed', async () => {
+  for (const platform of ['darwin', 'win32'] as const) {
+    const { runner, project, registry, calls, status, events } = setup({ platform })
+    registry.update(project.id, { settings: { autoRunSandboxed: true } })
+    runner.send(project.id, 'main', 'go')
+    await until(() => calls.length === 1)
+    const can = calls[0]!.options.canUseTool as CanUseTool
+    const ac = new AbortController()
+    if (platform === 'darwin') {
+      assert.equal((calls[0]!.options.settings as { sandbox: Record<string, any> }).sandbox.autoAllowBashIfSandboxed, true)
+      assert.equal((await can('Bash', { command: 'rm -rf build && rojo build -o x.rbxl' }, { signal: ac.signal })).behavior, 'allow')
+      // Still asks: commands that may print secrets.
+      void can('Bash', { command: 'printenv' }, { signal: ac.signal })
+      void can('Bash', { command: 'echo $ANTHROPIC_API_KEY' }, { signal: ac.signal })
+      await until(() => events.filter((e) => e.type === 'approval' && e.request.toolName === 'Bash').length === 2)
+    } else {
+      // No sandbox on Windows: the setting does nothing and the command asks.
+      void can('Bash', { command: 'rm -rf build' }, { signal: ac.signal })
+      await until(() => events.some((e) => e.type === 'approval' && e.request.toolName === 'Bash'))
+    }
+    ac.abort()
+    calls[0]!.release()
+    await until(() => status('main') === 'idle')
+  }
+})
+
 test('sandbox: auto-run only when the project auto-approves edits; domains are passed through', async () => {
   const { runner, project, registry, calls, status } = setup()
   registry.update(project.id, { settings: { autoApproveEdits: true, sandboxAllowedDomains: ['api.github.com', 'not a domain'] } })

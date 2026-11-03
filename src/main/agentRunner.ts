@@ -22,7 +22,7 @@ import type { ReviewStore } from './reviews'
 import { StudioClipRecorder } from './clips'
 import { alwaysRuleFor, DECEPTIVE_CHARS, evaluateToolUse, STUDIO_MCP_NAME, summarizeToolUse } from './permissions'
 import { readClaudeMd, reviewProject, TrustStore } from './projectTrust'
-import { planSandbox } from './sandbox'
+import { planSandbox, sandboxAutoRun } from './sandbox'
 import { createVault, vaultInstructions } from './vault'
 import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
@@ -861,7 +861,7 @@ export class AgentRunner {
       })
       // Unattended agents never hold the real API key.
       // Whenever commands can run without a click (autonomous, or sandboxed auto-run), agents never hold the real key.
-      const autoRun = sandbox.active && (project.settings.autoApproveEdits || project.settings.autonomous)
+      const autoRun = sandbox.active && sandboxAutoRun(project.settings)
       const auth = await this.deps.engineAuth(apiKey, { forceHideKey: project.settings.autonomous || research || autoRun })
       releaseAuth = auth.release
       if (auth.note) this.log(s, { kind: 'system', text: auth.note })
@@ -944,7 +944,7 @@ export class AgentRunner {
         ...(runEffort ? { effort: runEffort } : {}),
         maxTurns: maxTurnsFor(roleId, own.maxTurns),
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
-        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, coordinate, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
+        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, autoRun, coordinate, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
       }
       if (research) {
         // An empty folder of its own: nothing from your project or computer to read.
@@ -1596,7 +1596,7 @@ export class AgentRunner {
     for (const wake of this.studioWaiters.splice(0)) wake()
   }
 
-  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, coordinate: Coordinate | null = null, studioTask: StudioTask | null = null): CanUseTool {
+  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, sandboxed: boolean, coordinate: Coordinate | null = null, studioTask: StudioTask | null = null): CanUseTool {
     // Build briefs handed out in this task (each makeCanUseTool is one task's run).
     const briefs = { count: 0 }
     return async (toolName, input, { signal, agentID }) => {
@@ -1620,7 +1620,7 @@ export class AgentRunner {
         const busy = await this.takeStudio(project, studioTask, signal)
         if (busy) return { behavior: 'deny', message: busy }
       }
-      const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings })
+      const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings, sandboxed })
       if (decision.action === 'allow') return { behavior: 'allow', updatedInput: input }
       if (decision.action === 'deny') return { behavior: 'deny', message: decision.reason }
       if (signal.aborted) return { behavior: 'deny', message: 'Run was stopped.', interrupt: true }

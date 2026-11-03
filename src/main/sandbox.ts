@@ -39,6 +39,11 @@ const PROJECT_DENY_WRITE = [
   '.pre-commit-config.yaml', '.github', '.husky', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs'
 ]
 
+/** Whether this project's settings let sandboxed shell commands run without a click. */
+export function sandboxAutoRun(s: Project['settings']): boolean {
+  return s.autoApproveEdits || s.autonomous || s.autoRunSandboxed === true
+}
+
 export interface SandboxPlan {
   /** Passed to the SDK's `settings` option (the same layer as `claude --settings`). */
   settings: { sandbox: Record<string, unknown> } | null
@@ -67,9 +72,9 @@ export function planSandbox(project: Project, opts: { platform?: NodeJS.Platform
         failIfUnavailable: true,
         // Ignore the engine's "retry outside the sandbox" escape hatch.
         allowUnsandboxedCommands: false,
-        // Sandboxed commands run without a prompt only in autonomous mode or when this project already
-        // auto-approves edits; otherwise every command still asks, with the sandbox as a second layer.
-        autoAllowBashIfSandboxed: project.settings.autoApproveEdits || project.settings.autonomous,
+        // Sandboxed commands run without a prompt only in autonomous mode, with auto-run on, or when this project
+        // already auto-approves edits; otherwise every command still asks, with the sandbox as a second layer.
+        autoAllowBashIfSandboxed: sandboxAutoRun(project.settings),
         filesystem: {
           denyWrite,
           // Hangar's own data folder holds the encrypted API key.

@@ -44,7 +44,7 @@ On macOS and Linux, agents' shell commands run inside Claude Code's built-in san
 - No reads of credential folders (`~/.ssh`, `~/.aws`, cloud CLIs, `~/.claude`) or Hangar's own data folder.
 - No network except domains you list for the project.
 - `failIfUnavailable` and `allowUnsandboxedCommands: false`: if the sandbox can't start the run fails, and the engine's "retry outside the sandbox" option is refused (Hangar also denies it directly).
-- Sandboxed commands still ask for approval unless the project auto-approves edits.
+- Sandboxed commands still ask for approval unless the project auto-approves edits, is autonomous, or has "Run sandboxed commands without asking" on. Hangar itself allows them then (not only the engine's sandbox setting), and only for a run that started sandboxed with the real API key hidden; commands that may print secrets still ask in red. Shell commands' file paths aren't checked by Hangar, so reads outside the project rely on the sandbox (credential folders and Hangar's data are unreadable, no network beyond allowed domains).
 
 The sandbox covers shell commands only. File edits are covered by Hangar's own path rules, and MCP servers (including Roblox Studio) run outside it. It is not available on native Windows.
 

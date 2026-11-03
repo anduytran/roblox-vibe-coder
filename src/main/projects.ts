@@ -17,6 +17,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   model: null,
   sandbox: true,
   sandboxAllowedDomains: [],
+  autoRunSandboxed: false,
   autonomous: false,
   testPlace: null,
   checks: [],
@@ -101,6 +102,7 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     dailyBudgetUsd: budget,
     model: normalizeModel(s.model),
     sandbox: s.sandbox !== false,
+    autoRunSandboxed: s.autoRunSandboxed === true,
     autonomous: Boolean(s.autonomous),
     testPlace:
       s.testPlace && /^\d{1,20}$/.test(String(s.testPlace.universeId)) && /^\d{1,20}$/.test(String(s.testPlace.placeId))

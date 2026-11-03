@@ -28,10 +28,10 @@ export function Button(props: {
   )
 }
 
-export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }) {
   return (
-    <label className="toggle">
-      <input type="checkbox" checked={props.checked} onChange={(e) => props.onChange(e.target.checked)} />
+    <label className={`toggle${props.disabled ? ' toggle-disabled' : ''}`}>
+      <input type="checkbox" checked={props.checked} disabled={props.disabled} onChange={(e) => props.onChange(e.target.checked)} />
       <span className="toggle-track" aria-hidden />
       <span className="toggle-text">
         <span className="toggle-label">{props.label}</span>

@@ -1644,6 +1644,12 @@ button.file-item {
 .toggle input:checked + .toggle-track::after {
   transform: translateX(14px);
 }
+.toggle-disabled {
+  cursor: default;
+}
+.toggle-disabled .toggle-track {
+  opacity: 0.55;
+}
 .toggle input:focus-visible + .toggle-track {
   outline: 2px solid var(--info);
   outline-offset: 2px;

@@ -91,6 +91,11 @@ export interface ProjectSettings {
   /** Network domains sandboxed commands may reach (e.g. "api.github.com"). Empty = no network. */
   sandboxAllowedDomains: string[]
   /**
+   * Shell commands run without asking whenever the OS sandbox is on (macOS/Linux), even outside autonomous mode.
+   * Agents then never hold the real API key. Commands that may print secrets still ask.
+   */
+  autoRunSandboxed?: boolean
+  /**
    * Agents work without asking inside the fence: edits in the project, sandboxed commands and Studio
    * playtest tools run freely. Each task runs on its own git branch and ends as a review.
    */
