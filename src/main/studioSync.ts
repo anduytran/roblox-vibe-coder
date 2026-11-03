@@ -87,8 +87,11 @@ const OFF: StudioSyncState = { projectId: null, status: 'off', port: SYNC_PORT, 
 /**
  * Make `dest` hold exactly the game's files from `source` (tracked and new, not git-ignored; links skipped). Files
  * already the same (size and time) aren't copied again, so Rojo only sees what changed.
+ *
+ * Folders emptied by the sweep are removed a moment after their files: Rojo 7.7 crashes ("No such file or directory"
+ * in its change processor) when a folder disappears right after the files in it.
  */
-export async function mirrorGame(source: string, dest: string): Promise<void> {
+export async function mirrorGame(source: string, dest: string, opts: { folderDelayMs?: number } = {}): Promise<void> {
   const files = (await listWorkingFiles(source)).filter((f) => !f.split('/').some((s) => s === '..' || s === '.git' || s === ''))
   mkdirSync(dest, { recursive: true })
   const keep = new Set<string>()
@@ -114,7 +117,8 @@ export async function mirrorGame(source: string, dest: string): Promise<void> {
     copyFileSync(src, dst)
     utimesSync(dst, st.atime, st.mtime)
   }
-  // What's no longer in the source goes (the view holds nothing but the game).
+  // What's no longer in the source goes (the view holds nothing but the game). Emptied folders, deepest first.
+  const emptied: string[] = []
   const sweep = (rel: string): boolean => {
     let entries: import('node:fs').Dirent[]
     try {
@@ -126,19 +130,23 @@ export async function mirrorGame(source: string, dest: string): Promise<void> {
     for (const e of entries) {
       const path = rel ? `${rel}/${e.name}` : e.name
       if (e.isDirectory() && !e.isSymbolicLink()) {
-        if (sweep(path)) {
-          try {
-            rmdirSync(join(dest, path))
-          } catch {
-            empty = false
-          }
-        } else empty = false
+        if (sweep(path)) emptied.push(path)
+        else empty = false
       } else if (!keep.has(path)) unlinkSync(join(dest, path))
       else empty = false
     }
     return empty
   }
   sweep('')
+  if (!emptied.length) return
+  await new Promise((r) => setTimeout(r, opts.folderDelayMs ?? 500))
+  for (const path of emptied) {
+    try {
+      rmdirSync(join(dest, path))
+    } catch {
+      // Not empty any more (a file came back meanwhile): it stays.
+    }
+  }
 }
 
 /**
@@ -159,6 +167,7 @@ export class StudioSync {
   private view: { projectId: string; dir: string } | null = null
   private watcher: FSWatcher | null = null
   private mirroring: Promise<unknown> = Promise.resolve()
+  private crashes: number[] = []
 
   constructor(
     private readonly deps: {
@@ -316,6 +325,16 @@ export class StudioSync {
     child.on('exit', () => {
       if (this.child !== child) return
       this.child = null
+      // A Rojo crash (a Rojo bug, not the game) while serving the view: start it again, a few times at most.
+      const now = Date.now()
+      this.crashes = this.crashes.filter((t) => now - t < 60_000)
+      if (/Rojo crashed/i.test(tail) && this.view?.dir === dir && this.crashes.length < 3) {
+        this.crashes.push(now)
+        const before = this.state.showing
+        const st = this.serve(project, dir, review)
+        if (st.status !== 'error' && before) this.set({ ...st, showing: before })
+        return
+      }
       const last = tail.trim().split('\n').slice(-3).join(' ').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 400)
       fail(/address already in use|in use|10048/i.test(tail) ? `Port ${SYNC_PORT} is busy: another \`rojo serve\` is probably running. Stop it and try again.` : `Rojo stopped${last ? `: ${last}` : '.'}`)
     })

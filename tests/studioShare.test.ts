@@ -107,6 +107,59 @@ test('studio view: Rojo serves one folder; switching what Studio shows copies in
   sync.stop()
 })
 
+test('studio view: emptied folders go a moment after their files (Rojo 7.7 crashes when both go at once)', async () => {
+  const { dir } = repo()
+  const view = join(tmp('hangar-view-'), 'v')
+  mkdirSync(join(dir, 'src', 'Shop', 'Ui'), { recursive: true })
+  writeFileSync(join(dir, 'src', 'Shop', 'Ui', 'Button.luau'), 'return 1\n')
+  await mirrorGame(dir, view)
+  assert.equal(existsSync(join(view, 'src', 'Shop', 'Ui', 'Button.luau')), true)
+  execFileSync('rm', ['-r', join(dir, 'src', 'Shop')])
+  const done = mirrorGame(dir, view, { folderDelayMs: 50 })
+  await until(() => !existsSync(join(view, 'src', 'Shop', 'Ui', 'Button.luau')))
+  assert.equal(existsSync(join(view, 'src', 'Shop', 'Ui')), true, 'the folder waits until after its files are gone')
+  await done
+  assert.equal(existsSync(join(view, 'src', 'Shop')), false)
+  assert.equal(existsSync(join(view, 'src', 'Gun.luau')), true)
+})
+
+test('studio view: a Rojo crash restarts Rojo (a few times), keeping what Studio shows', async () => {
+  const { dir } = repo()
+  const views = tmp('hangar-views-')
+  let child!: FakeChild
+  let spawned = 0
+  const sync = new StudioSync({
+    rojo: () => '/opt/rojo',
+    emit: () => {},
+    viewDir: (id) => join(views, id),
+    spawnFn: (() => {
+      spawned++
+      child = new FakeChild()
+      return child
+    }) as never
+  })
+  const project = { id: 'p1', name: 'G', path: dir, createdAt: 1, settings: {} } as Project
+  sync.start(project)
+  await until(() => spawned === 1)
+  const crash = (): void => {
+    child.stderr.emit('data', Buffer.from('[ERROR rojo] Rojo crashed! You are running Rojo 7.7.1.\n[ERROR rojo] Details: called `Result::unwrap()` on an `Err` value\n'))
+    child.exitCode = 101
+    child.emit('exit', 101)
+  }
+  crash()
+  assert.equal(spawned, 2)
+  assert.equal(sync.status().status, 'starting')
+  assert.equal(sync.showing('p1')?.kind, 'main')
+  crash()
+  crash()
+  assert.equal(spawned, 4)
+  crash() // a fourth within a minute: something is wrong, so it stops and says so
+  assert.equal(spawned, 4)
+  assert.equal(sync.status().status, 'error')
+  assert.match(sync.status().message ?? '', /Rojo stopped/)
+  sync.stop()
+})
+
 test('studio lock: one task at a time gets Studio, switched to its own copy; the next waits, then gets it', async () => {
   const { dir, g } = repo()
   saveRole(dir, { id: 'scripter', name: 'Scripter', description: 'code', prompt: 'Write code.' })
