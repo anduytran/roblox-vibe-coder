@@ -22,6 +22,24 @@ export interface AgentSettings {
   contextTokens?: number
   /** Most steps (model turns) in one run. Missing: 60 for the QA Tester (a playtest shouldn't drag on), 80 otherwise. */
   maxTurns?: number
+  /** Claude skills (folders in the project's .claude/skills) this agent may use. Missing: none. */
+  skills?: string[]
+}
+
+/** A Claude skill in the project (.claude/skills/<id>/SKILL.md), as the window shows it (hidden characters removed). */
+export interface SkillInfo {
+  id: string
+  name: string
+  description: string
+  /** Why it may not work well (e.g. no description). */
+  problem?: string
+}
+
+export interface SkillView extends SkillInfo {
+  /** The instructions as agents get them (cleaned). */
+  body: string
+  /** Its other files, relative to the skill folder. */
+  files: string[]
 }
 
 /** The Main agent's own settings (it has no role file): its extra instructions and the shared settings. */

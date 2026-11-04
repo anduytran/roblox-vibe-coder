@@ -41,6 +41,7 @@ import { listProjectDir, projectEntryPath, readProjectFile } from './projectFile
 import { findRojo, installRojo, realTool, StudioSync } from './studioSync'
 import { defaultStudioMcp, ProjectRegistry } from './projects'
 import { addLaterStarters, deleteRole, installTemplates, listRoles, ROLE_TEMPLATES, saveRole } from './roles'
+import { createSkill, importSkill, listSkills, viewSkill } from './skills'
 import { listModels, MESH_DIR, modelTask } from './models'
 import { isInsideRoot, linkInPath } from './pathScope'
 import { SecretStore } from './secrets'
@@ -669,6 +670,23 @@ app.whenReady().then(() => {
     runner.stop(str(id, 'project'), str(roleId, 'role'))
     deleteRole(root(id), str(roleId, 'role'))
     return listRoles(root(id))
+  })
+
+  // Skills
+  handle(IPC.skillsList, (id: unknown) => listSkills(root(id)))
+  handle(IPC.skillsView, (id: unknown, skillId: unknown) => viewSkill(root(id), str(skillId, 'skill')))
+  handle(IPC.skillsCreate, (id: unknown, input: { name?: unknown; description?: unknown; body?: unknown }) => {
+    createSkill(root(id), { name: str(input?.name, 'name'), description: str(input?.description ?? '', 'description'), body: str(input?.body, 'instructions') })
+    return listSkills(root(id))
+  })
+  handle(IPC.skillsImport, async (id: unknown) => {
+    const projectRoot = root(id)
+    // Only a folder you pick here: this is the one way a skill from ~/.claude (or anywhere else) gets in.
+    const opts = { title: 'Choose a skill folder (the one with SKILL.md)', defaultPath: join(app.getPath('home'), '.claude', 'skills'), properties: ['openDirectory'] as Array<'openDirectory'> }
+    const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    importSkill(projectRoot, res.filePaths[0])
+    return listSkills(projectRoot)
   })
 
   // Agents

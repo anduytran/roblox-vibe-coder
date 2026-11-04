@@ -109,7 +109,7 @@ export function RoleEditor(props: { project: Project; role: Role; onClose: () =>
             label="Hands building to the other agents"
             hint="Coordinates instead of building: code and UI go to the builders, playtests to the QA Tester. It only edits its own notes (vault and knowledge folder)."
           />
-          <AgentSettingsFields agentId={props.role.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} coordinator={delegate} />
+          <AgentSettingsFields agentId={props.role.id} projectId={project.id} value={agent} onChange={setAgent} blender={{ on: blender, onChange: setBlender }} coordinator={delegate} />
           <div className="grid-2">
             <Field label="Obsidian vault folder (optional)" hint="A notes folder inside the project this role reads first and keeps updated. Created from templates on first use.">
               <input value={vault} onChange={(e) => setVault(e.target.value)} placeholder="ui-vault" />
@@ -165,7 +165,7 @@ export function MainAgentEditor(props: { project: Project; onClose: () => void }
       }
     >
       <p className="muted small">The general-purpose agent. It uses the project's model (Project → General → Model) and can hand work to every role.</p>
-      <AgentSettingsFields agentId="main" value={agent} onChange={setAgent} />
+      <AgentSettingsFields agentId="main" projectId={project.id} value={agent} onChange={setAgent} />
       <Field label="Extra instructions (optional)" hint="Added to what it already knows: the project's CLAUDE.md and Hangar's rules.">
         <textarea className="mono" rows={8} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
       </Field>

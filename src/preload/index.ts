@@ -64,6 +64,12 @@ const api: HangarApi = {
     save: (id, role) => invoke(IPC.rolesSave, id, role),
     delete: (id, roleId) => invoke(IPC.rolesDelete, id, roleId)
   },
+  skills: {
+    list: (id) => invoke(IPC.skillsList, id),
+    view: (id, skillId) => invoke(IPC.skillsView, id, skillId),
+    create: (id, input) => invoke(IPC.skillsCreate, id, input),
+    import: (id) => invoke(IPC.skillsImport, id)
+  },
   models: {
     list: (projectId) => invoke(IPC.modelsList, projectId),
     make: (projectId, request) => invoke(IPC.modelsMake, projectId, request),

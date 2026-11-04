@@ -2,6 +2,7 @@ import type { ProjectSettings } from '@shared/types'
 import { isProtectedPath, patternEscapes, pathsFromToolInput, relativeInside, linkInPath } from './pathScope'
 import { DECEPTIVE_CHARS } from '@shared/text'
 import { sandboxAutoRun } from './sandbox'
+import { requestedSkill } from './skills'
 
 export type PolicyDecision =
   | { action: 'allow' }
@@ -171,6 +172,8 @@ export function evaluateToolUse(args: {
   settings: ProjectSettings
   /** This run's commands are in the OS sandbox and the agent doesn't hold the real API key. */
   sandboxed?: boolean
+  /** Skills this agent may load (Skill tool). Missing or empty: none. */
+  enabledSkills?: string[]
 }): PolicyDecision {
   const { toolName, input, projectRoot, settings } = args
   const ask = (reason: string, dangerous = false, canAlwaysAllow = !dangerous): PolicyDecision => ({
@@ -182,6 +185,13 @@ export function evaluateToolUse(args: {
 
   if (allStrings(input).some((str) => DECEPTIVE_CHARS.test(str))) {
     return ask('Contains hidden or direction-changing characters — check the details carefully', true)
+  }
+
+  // A skill is text the agent reads; it never adds tools. Only the agent's own chosen skills load.
+  if (toolName === 'Skill') {
+    const id = requestedSkill(input)
+    if (id && args.enabledSkills?.includes(id)) return { action: 'allow' }
+    return { action: 'deny', reason: `That skill isn't turned on for this agent. Skills it can use: ${args.enabledSkills?.length ? args.enabledSkills.join(', ') : 'none'}.` }
   }
 
   const paths = pathsFromToolInput(input)

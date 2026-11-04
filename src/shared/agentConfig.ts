@@ -49,6 +49,9 @@ export function cleanBudget(v: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? Math.round(Math.min(20, Math.max(0.1, n)) * 100) / 100 : undefined
 }
 
+/** A skill's folder name, as Claude names skills: lower case letters, digits and dashes, up to 64. */
+export const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
+
 const FOLDER = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,40}(\/[A-Za-z0-9][A-Za-z0-9 _-]{0,40}){0,2}$/
 
 /** The shared settings, cleaned of anything unexpected (they arrive from the UI and from saved files). */
@@ -68,6 +71,10 @@ export function cleanAgentSettings(v: unknown): AgentSettings {
   if (ctx) out.contextTokens = ctx
   const turns = cleanMaxTurns(o.maxTurns)
   if (turns) out.maxTurns = turns
+  if (Array.isArray(o.skills)) {
+    const skills = [...new Set(o.skills.filter((t): t is string => typeof t === 'string' && SKILL_ID.test(t)))].slice(0, 40)
+    if (skills.length) out.skills = skills
+  }
   return out
 }
 

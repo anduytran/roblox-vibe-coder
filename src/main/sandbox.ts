@@ -34,6 +34,8 @@ const ANY_DEPTH = [
 ]
 const PROJECT_DENY_WRITE = [
   '.git',
+  // Claude skills: their instructions reach agents, so commands can't change them (Claude Code also guards .claude).
+  '.claude', '.claude/skills',
   'CLAUDE.md', 'package.json', 'Makefile', '.envrc', '.npmrc', '.gitattributes', '.gitmodules', '.lfsconfig',
   'rokit.toml', 'aftman.toml', 'foreman.toml', 'wally.toml', 'mise.toml', '.mise.toml', '.tool-versions',
   '.pre-commit-config.yaml', '.github', '.husky', '.cursor', '.devcontainer', '.zed', '.windsurf', '.vs'

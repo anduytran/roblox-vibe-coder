@@ -87,6 +87,10 @@ Two roles keep an Obsidian vault in the project by default (any role can have on
 
 Vaults are created from templates on first use (or Project tab → Obsidian vaults). Open it with Obsidian → "Open folder as vault", or from Project tab → Obsidian vaults. The vault lives in the project, so note changes are versioned and appear in reviews. Agents can never write the vault's `.obsidian/` folder (Obsidian plugins there run code).
 
+## Claude skills
+
+Any agent can use Claude skills (folders with a `SKILL.md`). In Edit role (or Main agent settings) → Skills, tick the ones it may use, View a skill's instructions, Import a skill folder (for example one from `~/.claude/skills`; it is copied into the project) or write a New skill. Skills live in the project's `.claude/skills/`, so they're versioned with the game; commit them so task copies (autonomous mode) have their extra files too. Your own `~/.claude` skills are never used unless you import one. A skill is guidance only: it can't give an agent more tools, and agents' edits to skills ask in red. See SECURITY.md.
+
 ## Phone remote
 
 Settings → Phone remote. Hangar listens on `127.0.0.1` only; one command makes it reachable from your own Tailscale devices over HTTPS (never the public internet):

@@ -2,6 +2,7 @@ import type { AgentEffort, AgentSettings } from '@shared/types'
 import { autoContextTokens, EFFORTS, groupsFromTools, TOOL_GROUPS, toolsFromGroups, type ToolGroup } from '@shared/agentConfig'
 import { useStore } from '../store'
 import { Field, Toggle } from './ui'
+import { SkillsField } from './SkillsField'
 
 /** Form state for the settings every agent has (tools, connections, effort, budget, knowledge). */
 export interface AgentFormState {
@@ -12,10 +13,11 @@ export interface AgentFormState {
   knowledge: string
   /** 0 = Auto (sized for the role). */
   context: number
+  skills: string[]
 }
 
 export function agentFormState(a: AgentSettings): AgentFormState {
-  return { groups: groupsFromTools(a.tools), studio: a.studio !== false, effort: a.effort ?? '', budget: a.budgetUsd ? String(a.budgetUsd) : '', knowledge: a.knowledge ?? '', context: a.contextTokens ?? 0 }
+  return { groups: groupsFromTools(a.tools), studio: a.studio !== false, effort: a.effort ?? '', budget: a.budgetUsd ? String(a.budgetUsd) : '', knowledge: a.knowledge ?? '', context: a.contextTokens ?? 0, skills: a.skills ?? [] }
 }
 
 /** What to save. Defaults are left out, so the role file only lists what was changed. */
@@ -27,12 +29,14 @@ export function agentSettingsFrom(f: AgentFormState): AgentSettings {
     budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : undefined,
     studio: f.studio ? undefined : false,
     knowledge: f.knowledge.trim() || undefined,
-    contextTokens: f.context || undefined
+    contextTokens: f.context || undefined,
+    skills: f.skills.length ? f.skills : undefined
   }
 }
 
 export function AgentSettingsFields(props: {
   agentId: string
+  projectId: string
   value: AgentFormState
   onChange: (v: AgentFormState) => void
   /** Roles can use Blender; the Main agent can't. */
@@ -115,6 +119,7 @@ export function AgentSettingsFields(props: {
       <Field label="Knowledge folder" hint="Its own notes inside the project. It searches them before working and adds what it learns. Plain Markdown, reviewed in git like code.">
         <input value={f.knowledge} onChange={(e) => set({ knowledge: e.target.value })} placeholder={`knowledge/${props.agentId || '<name>'}`} />
       </Field>
+      <SkillsField projectId={props.projectId} value={f.skills} onChange={(skills) => set({ skills })} />
     </>
   )
 }

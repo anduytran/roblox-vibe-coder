@@ -16,6 +16,8 @@ import type { ShipStatus, Brief,
   ProjectSettings,
   Review,
   Role,
+  SkillInfo,
+  SkillView,
   AutopilotConfig,
   AutopilotState,
   NewGameInput,
@@ -44,6 +46,10 @@ export const IPC = {
   rolesInstallTemplates: 'roles:installTemplates',
   rolesSave: 'roles:save',
   rolesDelete: 'roles:delete',
+  skillsList: 'skills:list',
+  skillsView: 'skills:view',
+  skillsCreate: 'skills:create',
+  skillsImport: 'skills:import',
   agentsSnapshot: 'agents:snapshot',
   agentsSend: 'agents:send',
   modelsList: 'models:list',
@@ -230,6 +236,14 @@ export interface HangarApi {
     installTemplates(projectId: string): Promise<Role[]>
     save(projectId: string, role: Role): Promise<Role[]>
     delete(projectId: string, roleId: string): Promise<Role[]>
+  }
+  /** Claude skills in the project's .claude/skills (turned on per agent in its settings). */
+  skills: {
+    list(projectId: string): Promise<SkillInfo[]>
+    view(projectId: string, skillId: string): Promise<SkillView>
+    create(projectId: string, input: { name: string; description: string; body: string }): Promise<SkillInfo[]>
+    /** Folder picker: copies the chosen skill folder into the project. Resolves null if cancelled. */
+    import(projectId: string): Promise<SkillInfo[] | null>
   }
   models: {
     list(projectId: string): Promise<ModelFile[]>

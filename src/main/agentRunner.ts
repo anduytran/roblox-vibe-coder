@@ -27,6 +27,7 @@ import { createVault, vaultInstructions } from './vault'
 import { minimalEnv } from './env'
 import { linkInPath, relativeInside } from './pathScope'
 import { mcpServersFor } from './projects'
+import { buildSkillPlugin } from './skills'
 import { ensureKnowledgeFolder, knowledgeFolder, knowledgeInstructions, knowledgeTitles } from './knowledge'
 import { autoEffort, contextTokensFor, coordinatesByDefault, disallowedFor, LEAN_DISALLOWED, maxTurnsFor } from '@shared/agentConfig'
 import { normalizeModel } from '@shared/models'
@@ -757,6 +758,7 @@ export class AgentRunner {
     const fetched: string[] = []
     const queries: string[] = []
     let researchDir: string | null = null
+    let skillDir: string | null = null
     let proxyGrant: { url: string; release: () => void } | null = null
 
     try {
@@ -898,6 +900,19 @@ export class AgentRunner {
       // Agents otherwise go looking for StyLua, Selene or luau-lsp (and retry them) when the project's notes mention them.
       const tools = !research ? this.deps.checkTools?.() : undefined
       if (tools) append += `\n\n${checkToolsNote(tools)}`
+      // Roles with their own connected tools (Blender) only get them in their own runs, never as a subagent.
+      const helperRoles = research ? [] : allRoles.filter((r) => r.id !== role?.id && r.mode !== 'research' && !r.mcp?.length)
+      // Skills this agent and its helpers chose: cleaned copies in a folder of Hangar's own (agents' commands can't
+      // write there), loaded as a plugin. Never the user's ~/.claude skills.
+      const wantedSkills = research ? [] : [...(own.skills ?? []), ...helperRoles.flatMap((r) => r.skills ?? [])]
+      let skillNames = new Map<string, string>()
+      if (wantedSkills.length) {
+        mkdirSync(join(this.deps.appDataDir, 'skill-runs'), { recursive: true })
+        skillDir = mkdtempSync(join(this.deps.appDataDir, 'skill-runs', 'run-'))
+        skillNames = buildSkillPlugin(project.path, wantedSkills, skillDir)
+      }
+      const ownSkills = (own.skills ?? []).filter((id) => skillNames.has(id))
+      const skillsOf = (ids: string[] | undefined): string[] => (ids ?? []).flatMap((id) => (skillNames.has(id) ? [skillNames.get(id)!] : []))
       const runModel = task.model ?? role?.model ?? project.settings.model ?? settings.defaultModel
       const runEffort = research ? undefined : (own.effort ?? autoEffort(runModel, coordinating))
       const options: Record<string, unknown> = {
@@ -912,9 +927,7 @@ export class AgentRunner {
         systemPrompt: { type: 'preset', preset: 'claude_code', ...(append ? { append } : {}) },
         // Researchers are never subagents: their web findings must go through your review first.
         agents: research ? {} : Object.fromEntries(
-          allRoles
-            // Roles with their own connected tools (Blender) only get them in their own runs, never as a subagent.
-            .filter((r) => r.id !== role?.id && r.mode !== 'research' && !r.mcp?.length)
+          helperRoles
             // A role with no model of its own uses the project's (not the model of whichever agent hands it work).
             .map((r) => {
               const blocked = [...LEAN_DISALLOWED, ...disallowedFor(r.tools), ...(r.studio === false ? [`mcp__${STUDIO_MCP_NAME}`] : [])]
@@ -929,6 +942,8 @@ export class AgentRunner {
                 // Limits are given as tools it may NOT use: a "tools" list would also shut out connected tools
                 // (Roblox Studio), which the QA Tester needs to playtest.
                 ...(blocked.length ? { disallowedTools: blocked } : {}),
+                // A helper's skills are given to it up front; it can't load others (Skill stays off for helpers).
+                ...(skillsOf(r.skills).length ? { skills: skillsOf(r.skills) } : {}),
                 ...(helperEffort ? { effort: helperEffort } : {}),
                 model: helperModel,
                 // Its own context size: a long helper run is summarized instead of growing without bound.
@@ -944,7 +959,7 @@ export class AgentRunner {
         ...(runEffort ? { effort: runEffort } : {}),
         maxTurns: maxTurnsFor(roleId, own.maxTurns),
         env: research ? researchEnv(buildAgentEnv(auth.env), (proxyGrant = this.deps.researchProxy ? await this.deps.researchProxy() : null)?.url ?? null) : buildAgentEnv(auth.env),
-        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, autoRun, coordinate, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
+        canUseTool: research ? researchCanUseTool(fetched, queries) : this.makeCanUseTool(s, work, this.agentName(project, s.agentId), own, autoRun, coordinate, ownSkills, { taskId: task.id, agentId: s.agentId, label: `${this.agentName(project, s.agentId)}: ${(clash ? `fixing a clash in “${clash.review.title}”` : stripHidden(task.prompt).split('\n')[0]!).slice(0, 80)}` })
       }
       if (research) {
         // An empty folder of its own: nothing from your project or computer to read.
@@ -953,7 +968,13 @@ export class AgentRunner {
         options.disallowedTools = RESEARCH_BLOCKED
       }
       // Past its context size, the engine summarizes the conversation (mid-task too), so every step stays cheap to re-read.
-      options.settings = { ...(!research && sandbox.settings ? (sandbox.settings as Record<string, unknown>) : {}), autoCompactWindow: contextWindow }
+      // Skills never run shell commands as they load (the cleaned copies have none either).
+      options.settings = { ...(!research && sandbox.settings ? (sandbox.settings as Record<string, unknown>) : {}), autoCompactWindow: contextWindow, disableSkillShellExecution: true }
+      if (skillDir && skillNames.size) {
+        options.plugins = [{ type: 'local', path: skillDir, skipMcpDiscovery: true }]
+        // Only this agent's own skills are listed to it; anything else the engine finds stays hidden and refused.
+        options.skills = skillsOf(ownSkills)
+      }
       if (!research) {
         // After every file write, check the path again: a link swapped in after Hangar's check (a race with a
         // background command) would have sent the write outside the project. If so, stop the run at once.
@@ -977,7 +998,7 @@ export class AgentRunner {
           ]
         }
       }
-      if (!research) options.disallowedTools = [...LEAN_DISALLOWED, ...disallowedFor(own.tools)]
+      if (!research) options.disallowedTools = [...LEAN_DISALLOWED.filter((t) => t !== 'Skill' || !ownSkills.length), ...disallowedFor(own.tools)]
       // The engine only offers its Grep and Glob tools when the session names them; otherwise it expects searching
       // through the shell, which agents without one (the QA Tester) can't do, so search just failed for them. These
       // rules name them for the agent's own folder only: anywhere else still goes through canUseTool.
@@ -1099,6 +1120,7 @@ export class AgentRunner {
       this.releaseStudio(work, task.id)
       for (const id of helpers.keys()) this.endHelping(helpers, id)
       if (researchDir) rmSync(researchDir, { recursive: true, force: true })
+      if (skillDir) rmSync(skillDir, { recursive: true, force: true })
       proxyGrant?.release()
       this.controllers.delete(key)
       this.denyPendingFor(s.projectId, s.agentId, 'Run ended')
@@ -1596,7 +1618,7 @@ export class AgentRunner {
     for (const wake of this.studioWaiters.splice(0)) wake()
   }
 
-  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, sandboxed: boolean, coordinate: Coordinate | null = null, studioTask: StudioTask | null = null): CanUseTool {
+  private makeCanUseTool(s: AgentState, project: Project, name: string, own: AgentSettings, sandboxed: boolean, coordinate: Coordinate | null = null, skills: string[] = [], studioTask: StudioTask | null = null): CanUseTool {
     // Build briefs handed out in this task (each makeCanUseTool is one task's run).
     const briefs = { count: 0 }
     return async (toolName, input, { signal, agentID }) => {
@@ -1605,7 +1627,8 @@ export class AgentRunner {
       const current = { ...this.deps.registry.get(project.id), path: project.path }
       // This agent's own limits. A helper agent it handed work to (agentID set) has its limits in its own definition.
       if (!agentID) {
-        if (own.tools?.length && !toolName.startsWith('mcp__') && !own.tools.includes(toolName)) {
+        // Skill only loads one of its chosen skills' text (checked below); it adds no tools.
+        if (own.tools?.length && !toolName.startsWith('mcp__') && toolName !== 'Skill' && !own.tools.includes(toolName)) {
           return { behavior: 'deny', message: `The ${name} agent is not allowed to use ${toolName}.` }
         }
         if (own.studio === false && toolName.startsWith(`mcp__${STUDIO_MCP_NAME}__`)) {
@@ -1620,7 +1643,8 @@ export class AgentRunner {
         const busy = await this.takeStudio(project, studioTask, signal)
         if (busy) return { behavior: 'deny', message: busy }
       }
-      const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings, sandboxed })
+      // Helpers have their skills up front and never load others.
+      const decision = evaluateToolUse({ toolName, input, projectRoot: current.path, settings: current.settings, sandboxed, enabledSkills: agentID ? [] : skills })
       if (decision.action === 'allow') return { behavior: 'allow', updatedInput: input }
       if (decision.action === 'deny') return { behavior: 'deny', message: decision.reason }
       if (signal.aborted) return { behavior: 'deny', message: 'Run was stopped.', interrupt: true }

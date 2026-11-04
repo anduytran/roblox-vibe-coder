@@ -4393,3 +4393,48 @@ kbd {
   flex: 1 1 280px;
   min-width: 0;
 }
+
+/* Skills in the agent editors */
+.skill-list {
+  display: grid;
+  gap: 6px;
+}
+.skill-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+.skill-problem {
+  display: block;
+  color: var(--amber-text);
+}
+.skill-view {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+.skill-body {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.skill-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.skill-new {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
