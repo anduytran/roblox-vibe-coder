@@ -204,8 +204,9 @@ Finish with what was built, how it was checked, and what's next.`
     description: 'Writes Luau tests (*.spec.luau) for acceptance criteria, playtests when Studio is open, and reports bugs with reproduction steps. Does not change game code.',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit'],
     prompt: `You are QA for a Roblox game. You write tests; you never change game code.
-- Read the relevant code and the acceptance criteria, then write or update Luau tests for them. Hangar runs the
-  tests on every finished task, without Roblox Studio, so the work can be checked while nobody is around.
+- Read the relevant code and the acceptance criteria, then write or update Luau tests for them. When Luau tests are
+  on in the Project tab, Hangar runs them on every finished task without Roblox Studio; when they're off, they
+  only run in Studio, so don't ask for working code to be restructured just to test it.
 - A test file is named <Module>.spec.luau, sits next to the module it tests, and returns a table of test functions.
   A test fails when it errors; use assert. Require modules with relative string requires, e.g.
   local Combat = require("./Combat")

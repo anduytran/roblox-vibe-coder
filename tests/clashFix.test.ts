@@ -322,6 +322,40 @@ test('autopilot: an unattended run stops after two sprints in a row that built n
   assert.match(st.away!.endReason ?? '', /last 2 sprints built nothing/)
 })
 
+test('autopilot: on the Claude plan with no end time, an unattended run stops after its most sprints', async () => {
+  const { Autopilot, MAX_AWAY_SPRINTS } = await import('../src/main/autopilot')
+  const registry = new ProjectRegistry(join(tmp('hangar-cap-'), 'p.json'))
+  const project = registry.add(tmp('hangar-cap-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-cap-r-'), 'r.json'))
+  const sent: string[] = []
+  let ap!: InstanceType<typeof Autopilot>
+  ap = new Autopilot({
+    file: join(tmp('hangar-cap-a-'), 'a.json'),
+    registry,
+    reviews,
+    costs: new CostTracker(join(tmp('hangar-cap-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt) => void sent.push(prompt),
+    merge: async (id) => void ap.onReview(reviews.update(id, { status: 'merged' })),
+    usesPlan: () => true
+  })
+  ap.start(project.id, { config: { sprintTasks: 1 } as never })
+  ap.configure(project.id, { unattended: true, unattendedUntil: null })
+  const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
+  for (let n = 0; n < MAX_AWAY_SPRINTS + 3 && ap.isAway(project.id); n++) {
+    const r = reviews.add({ projectId: project.id, agentId: 'main', title: `Feature ${n}`, branch: `hangar/main-f${n}-abc123`, base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Built', files: [`src/f${n}.luau`], incomplete: null, note: null, clip: null })
+    reviews.update(r.id, { checks: passed })
+    ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: `t${n}`, prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: 'Built it.', error: null, reviewId: r.id })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: `r${n}`, prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot-report' }, ok: true, stopped: false, text: '## Built\n- A feature', error: null, reviewId: null })
+  }
+  const st = ap.get(project.id)
+  assert.equal(st.status, 'checkin')
+  assert.equal(st.sprint, MAX_AWAY_SPRINTS + 1, 'the sprint it was on when unattended began, plus its most')
+  assert.match(st.away!.endReason ?? '', new RegExp(`ran ${MAX_AWAY_SPRINTS} sprints`))
+})
+
 test('autopilot: "Do it now" on a set-aside action runs in a fresh conversation', async () => {
   const { Autopilot } = await import('../src/main/autopilot')
   const registry = new ProjectRegistry(join(tmp('hangar-doit-'), 'p.json'))

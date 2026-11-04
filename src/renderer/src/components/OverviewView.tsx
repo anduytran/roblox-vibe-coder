@@ -11,6 +11,7 @@ import { AUTOPILOT_LABEL } from './Dashboard'
 import { Button, Toggle, timeAgo, usd } from './ui'
 import { SafeText } from './SafeText'
 import { revealHidden } from '@shared/text'
+import { smallSprintWarning } from '@shared/sprints'
 
 const OUTCOME: Record<SprintReport['tasks'][number]['outcome'], string> = {
   merged: 'Merged',
@@ -225,13 +226,14 @@ function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: 
         <div className="field">
           <span className="field-label">Sprint length</span>
           <div className="segmented" role="radiogroup" aria-label="Sprint length">
-            {[0, 3, 5, 8, 12].map((n) => (
+            {[...new Set([0, 3, 5, 8, 12, tasks])].sort((x, y) => x - y).map((n) => (
               <button key={n} role="radio" aria-checked={tasks === n} className={`segment ${tasks === n ? 'segment-on' : ''}`} onClick={() => setTasks(n)}>
                 {n === 0 ? 'Lead decides' : `${n} tasks`}
               </button>
             ))}
           </div>
           <span className="field-hint">{tasks === 0 ? `The Lead works through the plan and checks in when it's done${plan.on ? '' : ' (or the budget runs out)'}.` : 'Checks in after this many tasks.'}</span>
+          {smallSprintWarning(tasks) && <span className="small warn">{smallSprintWarning(tasks)}</span>}
         </div>
         {plan.on ? (
           <div className="field">
@@ -433,6 +435,7 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
             ))}
           </div>
           <span className="field-hint">{tasks === 0 ? 'The Lead checks in when the sprint\'s plan is done.' : 'Tasks before each check-in.'}</span>
+          {smallSprintWarning(tasks) && <span className="small warn">{smallSprintWarning(tasks)}</span>}
         </div>
         {plan.on ? (
           <div className="field">

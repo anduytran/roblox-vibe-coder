@@ -11,6 +11,7 @@ import type { ReviewStore } from './reviews'
 import { listRoles } from './roles'
 import { isProtectedPath } from './pathScope'
 import { runsAsCode } from './checks'
+import { cleanLuauTests } from './luauTests'
 
 /**
  * Autopilot: the agents keep building and you act as product owner.
@@ -66,7 +67,51 @@ export interface AutopilotDeps {
  * Blocked items never stop the build: the Lead writes down what each one waits for and builds the next thing that
  * isn't blocked. (Twenty sprints once stalled on "playtest first" and "needs the product owner".)
  */
-export const KEEP_BUILDING = `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with Luau tests (*.spec.luau files, which Hangar runs without Studio) and the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md.`
+export function keepBuilding(lune: boolean): string {
+  return `If an item is blocked (it needs the product owner, a playtest that can't run right now, or work that isn't merged yet), don't stop or wait for it: add it under a "## Blocked" heading in Roadmap.md with what it's waiting for, then build the next item that isn't blocked: this sprint's plan first, then the rest of the current milestone, then the next milestone. Never spend a task only re-checking blockers. If a playtest can't run, still build the item, check it with ${lune ? 'Luau tests (*.spec.luau files, which Hangar runs on every finished task without Studio) and ' : ''}the build and lint checks, and list it under "## Needs a playtest" in Roadmap.md. ${lune ? '' : `${NO_SPECS_RUN} `}${NO_FILLER}`
+}
+
+/**
+ * Specs only run without Studio when Lune is on. Told otherwise, agents spent thirty sprints moving working code into
+ * "pure" modules so it could be tested, and none of those tests ever ran.
+ */
+export const NO_SPECS_RUN = `Luau tests don't run without Studio in this game (Lune is off in its Project tab), so never restructure working code just so it can be tested.`
+
+/** Once everything left needs a playtest or the product owner, the only "unblocked" work was refactoring. */
+export const NO_FILLER = `Don't plan refactors, clean-ups or more hardening of code that already works unless the product owner asked for it or it fixes a bug a player would hit. When everything left needs a playtest or the product owner, don't look for filler: say so and stop.`
+
+/** The line a planner replies with when nothing is worth building before the product owner checks in. */
+const NOTHING_TO_BUILD = /^[\s*_>#-]*nothing to build[.!]?[\s*_]*$/im
+
+/** How reviewer follow-ups start, kept apart from the product owner's own feedback. */
+const REVIEWER_NOTE = 'Follow-up from the reviewer agent'
+
+/** The title a piece of reviewer fixes starts with: its own review's concerns aren't followed up again. */
+export const REVIEW_FIX = /^\s*review fix(es)?\b/i
+
+/**
+ * Feedback for a step's prompt: the product owner's comes first; reviewer notes come after the roadmap. (Handed over as
+ * "product owner feedback to act on first", reviewer nits on the last fix filled whole sprints.)
+ */
+export function feedbackText(feedback: string[], ownerHeading: string): string {
+  const owner = feedback.filter((f) => !f.startsWith(REVIEWER_NOTE))
+  const reviewer = feedback.filter((f) => f.startsWith(REVIEWER_NOTE)).slice(-3)
+  return (
+    (owner.length ? `\n\n${ownerHeading}:\n${owner.map((f) => `- ${f}`).join('\n')}` : '') +
+    (reviewer.length
+      ? `\n\nReviewer notes on merged work (from the reviewer agent, not the product owner; they come after the roadmap). Take one up only if it's a bug a player would hit, as one piece whose title starts with "Review fixes:", alongside roadmap work, never a sprint of only these. The rest can be dropped:\n${reviewer.map((f) => `- ${f}`).join('\n')}`
+      : '')
+  )
+}
+
+/** How the Ship Checklist keeps up with the game, so finished items aren't planned again and again. */
+export const SHIP_TICK = `Tick the items in design-vault/Ship Checklist.md that are now done (built, merged and checked by a passing spec or a Studio play). Add "(you)" to an item the Studio tools here can't check (two real players at once, a real phone, a purchase in a published place), so it goes to the product owner instead of being planned again.`
+
+/**
+ * Roadmap.md says where the game is, not what each sprint did: appended to every sprint, one grew to 443 lines of
+ * logs that every planner had to read (git log keeps the history).
+ */
+export const ROADMAP_SHORT = `Keep design-vault/Roadmap.md short (about 80 lines at most): it says where the game is now, not what each sprint did. Mark items done in place and rewrite "Now" to the current state instead of adding a section per sprint; cut finished sprint entries down to one line or delete them (git log has the history); under "## Needs a playtest" keep only what's still unplayed, one line each, and drop what has since been played or replaced.`
 
 /** Planning replies are kept short: every word a planner writes is output, the costliest kind of token. */
 export const KEEP_SHORT = `Be brief: no restating the brief or the notes, no long rationale. Read only what the plan needs (ask "bookworm" for a summary instead of reading many files).`
@@ -84,6 +129,17 @@ export const MAX_CLASH_FIXES = 2
 
 /** Sprints in a row that built nothing before an unattended run stops instead of starting another. */
 export const STUCK_SPRINTS = 2
+
+/**
+ * Most sprints an unattended run on the Claude plan takes when you set no end time: there's no budget to stop it, and
+ * one ran 66 sprints of refactors.
+ */
+export const MAX_AWAY_SPRINTS = 12
+
+/** True when a sprint built something new: not just notes, review fixes, or pieces that changed nothing. */
+export function sprintBuilt(report: Pick<SprintReport, 'tasks'>): boolean {
+  return report.tasks.some((t) => !t.wrapup && !REVIEW_FIX.test(t.title) && t.outcome !== 'no-changes' && t.outcome !== 'failed')
+}
 
 /** Why a finished task can't be merged without you (null = it can). */
 export function autoMergeBlocker(review: Review): string | null {
@@ -543,7 +599,8 @@ export class Autopilot {
     if (!st.parallel && !firstEver && this.parallelOn(st)) return this.queuePlan(st)
     if (st.parallel && st.parallel.phase !== 'single') return
     const first = st.sprint === 1 && st.tasksDone === 0 && st.reports.length === 0
-    const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (record it in design-vault/Inbox.md or Decisions.md as you handle it):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
+    const feedback = feedbackText(st.feedback, 'Product owner feedback to act on first (record it in design-vault/Inbox.md or Decisions.md as you handle it)')
+    const keep = keepBuilding(this.lune(st.projectId))
     const recent = st.sprintTasks.length ? `\n\nEarlier in this sprint:\n${st.sprintTasks.map((t) => `- ${t.title} (${t.outcome})`).join('\n')}` : ''
     const team = this.teamwork(st.projectId)
     const leadDecides = st.config.sprintTasks === 0
@@ -559,14 +616,14 @@ export class Autopilot {
 3. Write design-vault/Roadmap.md as milestones. Milestone 1 is "Ship v1": the smallest version worth publishing (fun for ten minutes, a goal players can see, two or three things to buy), following design-vault/Ship Checklist.md. Later milestones add depth after launch.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
 5. Then build the first, most foundational piece of milestone 1 and playtest it.${team ? `\n   ${team.build}\n   ${team.test}` : ''}
-${KEEP_BUILDING}
+${keep}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
 2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST}
 3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'}
-4. Update Roadmap.md (mark what's done) and Decisions.md.
-${KEEP_BUILDING}
+4. Update Roadmap.md (mark what's done) and Decisions.md. ${ROADMAP_SHORT} ${SHIP_TICK}
+${keep}
 Finish with: what you built, how you tested it, and what's next.${ending}${feedback}${recent}`
     // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
     const cur = this.get(st.projectId)
@@ -645,12 +702,22 @@ Reply with only these sections, short and concrete:
       }
       const report: SprintReport = { sprint: st.sprint, at: Date.now(), text: o.text.slice(0, 20_000), tasks: st.sprintTasks, spentUsd: Math.round((this.spent(o.projectId) - st.spentAtSprintStart) * 100) / 100 }
       this.put({ ...st, status: 'checkin', reason: null, reports: [...st.reports, report].slice(-30) })
-      // Unattended, but stuck: two sprints in a row built nothing (each waiting on something only you can do).
-      // Starting more would only repeat that, so the run stops here and says why.
+      // Unattended, but stuck: two sprints in a row built nothing new (each waiting on something only you can do, or
+      // only fixing the reviewer's notes). Starting more would only repeat that, so the run stops here and says why.
       const recent = [...st.reports, report].slice(-STUCK_SPRINTS)
-      const stuck = recent.length === STUCK_SPRINTS && recent.every((r) => r.tasks.filter((t) => !t.wrapup).every((t) => t.outcome === 'no-changes' || t.outcome === 'failed'))
+      const stuck = recent.length === STUCK_SPRINTS && !recent.some(sprintBuilt)
       if (this.isAway(o.projectId) && stuck) {
-        this.endAway(o.projectId, `the last ${STUCK_SPRINTS} sprints built nothing (the Lead is waiting on you: see the latest check-in)`)
+        this.endAway(o.projectId, `the last ${STUCK_SPRINTS} sprints built nothing new (the Lead is waiting on you: see the latest check-in)`)
+        return
+      }
+      // Its time or budget ran out during this sprint, or (on the plan, with no end time) it has run its most
+      // sprints: the run ends here, at the check-in.
+      const now = this.get(o.projectId)
+      const away = now.config.unattended && now.away && !now.away.endedAt ? now.away : null
+      const capped = !!away && !!this.deps.usesPlan?.() && !now.config.unattendedUntil && away.sprints >= MAX_AWAY_SPRINTS
+      const over = away ? (this.awayOver(now) ?? (capped ? `it ran ${MAX_AWAY_SPRINTS} sprints (the most without an end time set)` : null)) : null
+      if (over) {
+        this.endAway(o.projectId, over)
         return
       }
       // Unattended: the check-in answers itself and the next sprint starts on the Lead's own plan.
@@ -779,20 +846,28 @@ Reply with only these sections, short and concrete:
   /** A change merged with the reviewer's (low or medium) concerns: they're handed to the Lead for the next sprint. */
   private followUpConcerns(review: Review): void {
     const ai = review.aiReview
-    if (ai?.status !== 'done' || ai.verdict !== 'concerns' || !ai.findings.length) return
+    if (ai?.status !== 'done' || ai.verdict !== 'concerns') return
+    // Low ones are nits: following each up was a sprint of its own, whose review found more nits, and so on.
+    const findings = ai.findings.filter((f) => f.severity !== 'low')
+    if (!findings.length) return
+    // One round only: concerns about a change that was itself review fixes aren't followed up again.
+    const item = this.get(review.projectId).parallel?.items.find((i) => i.reviewId === review.id)
+    if (REVIEW_FIX.test(item?.title ?? review.title)) return
     // The reviewer read agent-written code: its words are shown as data, cleaned and cut short.
     const clean = (s: string, n: number): string => stripHidden(s).replace(/\s+/g, ' ').trim().slice(0, n)
-    const points = ai.findings
+    const points = findings
       .slice(0, 6)
       .map((f) => `${clean(f.title, 120)} (${clean(f.file, 80)}${f.line ? `:${f.line}` : ''}, ${f.severity})`)
       .join('; ')
-    const note = `Follow-up from the reviewer agent (not the product owner): address its concerns on "${clean(review.title, 80)}", merged as is: ${points}`
+    const note = `${REVIEWER_NOTE} (not the product owner): address its concerns on "${clean(review.title.startsWith('Autopilot') ? (item?.title ?? this.reviewTitle(review)) : review.title, 80)}", merged as is: ${points}`
     const st = this.get(review.projectId)
     this.put({ ...st, feedback: [...st.feedback, note].slice(-20) })
   }
 
   private settle(review: Review, outcome: SprintReport['tasks'][number]['outcome']): void {
-    const after = this.record(review.projectId, review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title, outcome)
+    // A planned piece keeps its planned title, so the check-in (and the stuck check) can tell review fixes apart.
+    const item = this.get(review.projectId).parallel?.items.find((i) => i.reviewId === review.id && i.status === 'review')
+    const after = this.record(review.projectId, item?.title ?? (review.title.startsWith('Autopilot') ? this.reviewTitle(review) : review.title), outcome)
     const items = after.parallel?.items.map((i) => (i.reviewId === review.id && i.status === 'review' ? { ...i, status: 'done' as const, outcome } : i))
     const next = this.put({
       ...after,
@@ -830,16 +905,26 @@ Reply with only these sections, short and concrete:
     }
   }
 
+  /** Whether Hangar runs this game's plain Luau tests itself (with Lune), without Studio. */
+  private lune(projectId: string): boolean {
+    try {
+      return cleanLuauTests(this.deps.registry.get(projectId).settings.luauTests).lune
+    } catch {
+      return false
+    }
+  }
+
   /** The Lead plans the sprint as pieces that can be built at the same time, without changing files itself. */
   private queuePlan(st: AutopilotState, mvp = false): void {
     const builders = this.builders(st.projectId)
     const max = mvp ? MVP_ITEMS : st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS
     if (mvp) return this.queueMvpPlan(st, builders, max)
-    const feedback = st.feedback.length ? `\n\nProduct owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault):\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
+    const feedback = feedbackText(st.feedback, 'Product owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault)')
+    const lune = this.lune(st.projectId)
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
 2. ${SHIP_FIRST} Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
-3. Don't change any files in this step. Skip anything blocked (it needs the product owner, or work that isn't merged): say so in your plan instead.
+3. Don't change any files in this step. Skip anything blocked (it needs the product owner, a playtest that can't run, or work that isn't merged): say so in your plan instead. ${lune ? '' : `${NO_SPECS_RUN} `}${NO_FILLER.replace('say so and stop.', 'reply with the line "Nothing to build." and say what it waits for, with no json block.')}
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
@@ -889,6 +974,12 @@ Each brief is all its agent gets: what to build, which files to create or change
     }
     const mvp = st.parallel?.mvp === true
     const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), mvp ? MVP_ITEMS : st.config.sprintTasks ? Math.min(MAX_SPRINT_ITEMS, st.config.sprintTasks) : MAX_SPRINT_ITEMS) : []
+    if (!planned.length && o.ok && !o.reviewId && NOTHING_TO_BUILD.test(o.text)) {
+      // Nothing is worth building until you've done something (open Studio, answer a question): straight to the
+      // check-in instead of a task that would only find filler. Unattended, two of these in a row end the run.
+      this.queueReport(this.put({ ...st, parallel: { phase: 'wrapup', items: [] } }))
+      return
+    }
     if (!planned.length) {
       // No usable plan: this sprint goes one task at a time, as before.
       st = this.put({ ...this.giveBack(st), parallel: { phase: 'single', items: [] } })
@@ -923,6 +1014,7 @@ Each brief is all its agent gets: what to build, which files to create or change
       nth.set(item.agentId, n)
       laneFor.set(item.id, item.lane ?? laneId(item.agentId, ((n - 1) % MAX_LANES) + 1))
     }
+    const noSpecs = this.lune(st.projectId) ? '' : ` ${NO_SPECS_RUN}`
     for (const item of items) {
       if (item.status !== 'queued' || item.sent) continue
       const prompt = `${ITEM_PREFIX}${item.id}, sprint ${st.sprint}: ${item.title}
@@ -933,7 +1025,7 @@ ${item.brief}
 ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 
 1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
-2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}
+2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}${noSpecs}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
       const lane = laneFor.get(item.id) ?? item.agentId
@@ -979,8 +1071,9 @@ Finish with: what you built, how it was tested (and what QA found), and anything
 ${done}
 
 1. Read what landed (git log -n 15 --stat, and the merged files that matter).
-2. Update design-vault/Roadmap.md (mark what's done; anything blocked under "## Blocked", anything not yet played under "## Needs a playtest") and Decisions.md, and the mechanic notes' status.
-3. Change nothing else.
+2. Update design-vault/Roadmap.md (mark what's done; anything blocked under "## Blocked", anything not yet played under "## Needs a playtest") and Decisions.md, and the mechanic notes' status. ${ROADMAP_SHORT}
+3. ${SHIP_TICK}
+4. Change nothing else.
 Finish with a short summary of the sprint.`,
       { origin: 'autopilot' }
     )

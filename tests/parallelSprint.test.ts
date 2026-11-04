@@ -303,3 +303,79 @@ test('sizes: simple pieces are built on Sonnet, hard ones on the builder\'s own 
   assert.equal(items.find((s) => /Shop panel/.test(s.prompt))!.model, undefined)
   assert.match(items[0]!.prompt, /in one go/)
 })
+
+test('reviewer notes: low ones are dropped, review fixes are not followed up again, and they come after the roadmap', async () => {
+  const t = setup()
+  const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
+  const concerns = (severity: 'low' | 'medium') => ({ status: 'done' as const, verdict: 'concerns' as const, summary: 's', costUsd: 0, error: null, findings: [{ severity, file: 'src/a.luau', line: 1, title: `A ${severity} nit`, detail: 'x' }] })
+  const base = { projectId: t.project.id, agentId: 'scripter', title: 'Autopilot task', branch: 'hangar/scripter-x-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Did it', incomplete: null, note: null, clip: null }
+  const notes = () => {
+    const st = t.ap.get(t.project.id)
+    return [...st.feedback, ...(st.handedFeedback ?? [])].filter((f) => /Follow-up from the reviewer agent/.test(f))
+  }
+  t.ap.start(t.project.id)
+  t.done(
+    t.sent.at(-1)!.prompt,
+    'planner',
+    {
+      text: plan([
+        { agent: 'scripter', title: 'Ledge grab', brief: 'Grab.', files: ['src/a.luau'] },
+        { agent: 'scripter', title: 'Review fixes: dash', brief: 'Fix.', files: ['src/b.luau'] },
+        { agent: 'ui-builder', title: 'Coins label', brief: 'Label.', files: ['src/c.luau'] }
+      ])
+    }
+  )
+  const items = t.sent.slice(-3)
+  const finish = async (title: string, severity: 'low' | 'medium', file: string) => {
+    const r = t.reviews.add({ ...base, files: [file] })
+    t.reviews.update(r.id, { checks: passed, aiReview: concerns(severity) })
+    const it = items.find((s) => s.prompt.includes(title))!
+    t.done(it.prompt, it.agent, { reviewId: r.id })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(t.reviews.get(r.id).status, 'merged')
+  }
+  await finish('Coins label', 'low', 'src/c.luau')
+  assert.equal(notes().length, 0, 'a low concern is a nit, not a follow-up')
+  await finish('Review fixes: dash', 'medium', 'src/b.luau')
+  assert.equal(notes().length, 0, 'review fixes get one round, not another')
+  await finish('Ledge grab', 'medium', 'src/a.luau')
+  assert.match(notes()[0] ?? '', /concerns on "Ledge grab"/)
+  // The check-in lists the planned pieces by name.
+  const wrap = t.sent.at(-1)!
+  assert.match(wrap.prompt, /^Autopilot: wrap up sprint 2\b[\s\S]*Ship Checklist\.md/)
+  assert.match(wrap.prompt, /Keep design-vault\/Roadmap\.md short[\s\S]*instead of adding a section per sprint/)
+  t.done(wrap.prompt, 'lead', { text: 'Roadmap updated.' })
+  assert.match(t.sent.at(-1)!.prompt, /- Review fixes: dash: merged\n- Ledge grab: merged/)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Ledge\n## Next sprint\n- More' })
+  // Next sprint: the note is under "Reviewer notes", after the owner's own feedback, never as owner feedback.
+  t.ap.start(t.project.id, { feedback: 'Make the ledge grab faster.' })
+  const next = t.sent.at(-1)!.prompt
+  assert.match(next, /Product owner feedback to act on first[^\n]*:\n- Make the ledge grab faster\.\n\nReviewer notes on merged work[\s\S]*A medium nit/)
+  assert.doesNotMatch(next.split('Reviewer notes')[0]!, /Follow-up from the reviewer agent/)
+  assert.match(next, /Luau tests don't run without Studio/, 'Lune is off, so the planner is told specs do not run')
+})
+
+test('nothing to build: the planner says so and the sprint goes straight to its check-in', () => {
+  const t = setup()
+  t.ap.start(t.project.id)
+  assert.match(t.sent.at(-1)!.prompt, /"Nothing to build\."/)
+  t.done(t.sent.at(-1)!.prompt, 'planner', { text: 'Everything left needs a Studio playtest.\nNothing to build.' })
+  assert.match(t.sent.at(-1)!.prompt, /^Autopilot: sprint 2 is over/)
+  assert.equal(t.sent.filter((s) => /^Autopilot item|^Autopilot, sprint 2/.test(s.prompt)).length, 0, 'no filler task')
+})
+
+test('sprintBuilt: notes, review fixes and empty pieces are not new work', async () => {
+  const { sprintBuilt } = await import('../src/main/autopilot')
+  assert.equal(sprintBuilt({ tasks: [] }), false)
+  assert.equal(sprintBuilt({ tasks: [{ title: 'Wrap-up', outcome: 'merged', wrapup: true }, { title: 'Review fixes: HUD', outcome: 'merged' }, { title: 'Soak', outcome: 'failed' }] }), false)
+  assert.equal(sprintBuilt({ tasks: [{ title: 'Ledge grab', outcome: 'merged' }] }), true)
+})
+
+test('sprint length: one or two pieces a sprint gets a warning; Lead decides and 3+ do not', async () => {
+  const { smallSprintWarning } = await import('../src/shared/sprints')
+  const { DEFAULT_AUTOPILOT } = await import('../src/main/autopilot')
+  assert.equal(DEFAULT_AUTOPILOT.sprintTasks, 0, 'the Lead decides by default')
+  assert.match(smallSprintWarning(1) ?? '', /^One piece a sprint is slow/)
+  assert.match(smallSprintWarning(2) ?? '', /^2 pieces a sprint/)
+  for (const n of [0, 3, 5, 12]) assert.equal(smallSprintWarning(n), null)
+})
