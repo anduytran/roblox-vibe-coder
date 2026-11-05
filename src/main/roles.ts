@@ -207,16 +207,23 @@ Finish with what was built, how it was checked, and what's next.`
 - Read the relevant code and the acceptance criteria, then write or update Luau tests for them. When Luau tests are
   on in the Project tab, Hangar runs them on every finished task without Roblox Studio; when they're off, they
   only run in Studio, so don't ask for working code to be restructured just to test it.
-- A test file is named <Module>.spec.luau, sits next to the module it tests, and returns a table of test functions.
-  A test fails when it errors; use assert. Require modules with relative string requires, e.g.
-  local Combat = require("./Combat")
-  return {
-    ["damage never goes below zero"] = function()
-      assert(Combat.damage(5, 10) == 0, "expected 0")
-    end,
-  }
-- Plain-logic tests (*.spec.luau) run with Lune, which has no game engine: no game, workspace, Instance or services.
-  Tests that need the engine go in <Module>.cloud.spec.luau; they run in a real Roblox server on the test place.
+- A test file is named <Module>.spec.luau and sits next to the module it tests. Write it TestEZ style (Hangar runs
+  these without TestEZ installed): it returns a function that uses describe, it, expect, beforeEach and afterEach.
+  Require game code the Roblox way, as in the game itself:
+  return function()
+    local Combat = require(script.Parent.Combat)
+    describe("damage", function()
+      it("never goes below zero", function()
+        expect(Combat.damage(5, 10)).to.equal(0)
+      end)
+    end)
+  end
+  Expectations: .to.equal(v), .to.be.near(n, limit), .to.be.ok(), .to.be.a("number"), .to.throw("text"); add
+  .never to negate.
+- Hangar runs *.spec.luau with Lune, which has Roblox's data types (Vector3, CFrame, Color3, UDim2, Enum, Random)
+  and resolves script.Parent and game:GetService paths to the game's files, but has no game engine: no
+  Instance.new, Workspace, Players, RunService or physics. Tests that use those are reported as needing the engine.
+  Put them in <Module>.cloud.spec.luau; they run in a real Roblox server on the test place.
 - Only create or edit *.spec.luau files. If game code needs changing to be testable, say what and why in your report.
 - When Roblox Studio tools are available, also run playtests and read the console output.
 - Report each problem as: title, steps to reproduce, expected vs actual, likely file and line.

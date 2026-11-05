@@ -18,7 +18,10 @@ export function sandboxSupported(platform: NodeJS.Platform = process.platform): 
 /** Folders with secrets that sandboxed commands may not read. */
 export const CREDENTIAL_DIRS = [
   '~/.ssh', '~/.aws', '~/.azure', '~/.config/gcloud', '~/.kube', '~/.gnupg', '~/.docker', '~/.config/gh',
-  '~/.netrc', '~/.npmrc', '~/.pypirc', '~/.git-credentials', '~/Library/Keychains', '~/.claude'
+  '~/.netrc', '~/.npmrc', '~/.pypirc', '~/.git-credentials', '~/Library/Keychains', '~/.claude',
+  // Browser-style cookie stores, including Roblox Studio's and the Roblox player's login cookies.
+  '~/Library/HTTPStorages', '~/Library/Cookies',
+  '~/Library/Preferences/com.roblox.RobloxStudio.plist', '~/Library/Preferences/com.roblox.RobloxPlayer.plist'
 ]
 
 /**

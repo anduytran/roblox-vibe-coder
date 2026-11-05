@@ -116,6 +116,74 @@ test('Luau tests: the test place report is read as untrusted data', () => {
   assert.equal(readCloudReport(report({ modules: 0, tests: [{ name: 'x', ok: 'true' }] })).status, 'failed')
 })
 
+test('Luau tests: the test place reports passes as counts and lists failures', () => {
+  const r = readCloudReport(report({ modules: 4, loadErrors: {}, tests: {}, passed: 1800, skipped: 2 }))
+  assert.equal(r.status, 'passed')
+  assert.match(r.output, /1800 passed, 0 failed, 2 skipped/)
+  const f = readCloudReport(report({ modules: 4, loadErrors: {}, tests: [{ name: 'RS.Hero.spec > picks', ok: false, error: 'Expected true' }], passed: -5 }))
+  assert.equal(f.status, 'failed')
+  assert.match(f.output, /0 passed, 1 failed/, 'a nonsense count is read as 0')
+  assert.match(CLOUD_SCRIPT, /setfenv\(suite/, 'TestEZ-style specs get describe/it/expect')
+  assert.match(CLOUD_SCRIPT, /local function newTestEZ/)
+})
+
+const lune = ['/usr/local/bin/lune', join(homedir(), '.rokit', 'bin', 'lune')].find((p) => existsSync(p))
+
+test('Luau tests: the Lune runner runs TestEZ specs with Rojo paths, and game code can\'t reach Lune', { skip: !lune }, () => {
+  const dir = tmp('hangar-lune-run-')
+  writeFileSync(join(dir, 'default.project.json'), JSON.stringify({ name: 'g', tree: { $className: 'DataModel', ReplicatedStorage: { Shared: { $path: 'src/shared' } }, ServerScriptService: { Server: { $path: 'src/server' } } } }))
+  mkdirSync(join(dir, 'src', 'shared', 'Util'), { recursive: true })
+  mkdirSync(join(dir, 'src', 'server'), { recursive: true })
+  writeFileSync(join(dir, 'src', 'shared', 'Config.luau'), 'return { SPEED = 20, AIM = Vector3.new(0, 0, -1) }\n')
+  writeFileSync(join(dir, 'src', 'shared', 'Util', 'init.luau'), 'local Config = require(script.Parent.Config)\nreturn { speed = function() return Config.SPEED end, roll = function(seed) return Random.new(seed):NextInteger(1, 6) end }\n')
+  writeFileSync(join(dir, 'src', 'shared', 'Util.spec.luau'), `return function()
+  local Util = require(script.Parent.Util)
+  describe("Util", function()
+    local count = 0
+    beforeEach(function(context) count += 1; context.count = count end)
+    it("reads Config through script.Parent", function() expect(Util.speed()).to.equal(20) end)
+    it("rolls a die", function() local n = Util.roll(42); expect(n >= 1 and n <= 6).to.equal(true) end)
+    it("gives each test a fresh context", function(context) expect(context.count).to.equal(3) end)
+    it("knows game paths", function()
+      expect(require(game:GetService("ReplicatedStorage").Shared.Config).AIM.Z).to.near(-1)
+      expect(script.Parent:GetFullName()).to.equal("ReplicatedStorage.Shared")
+      expect(typeof(script)).to.equal("Instance")
+      expect(function() return script.Parent.Missing end).to.throw("is not a valid member")
+    end)
+    it("fails for real", function() expect(Util.speed()).to.never.equal(20) end)
+    itSKIP("is skipped", function() error("no") end)
+  end)
+end
+`)
+  writeFileSync(join(dir, 'src', 'server', 'Spawn.spec.luau'), 'return function()\n  it("needs the engine", function() Instance.new("Part") end)\nend\n')
+  writeFileSync(join(dir, 'src', 'server', 'Escape.spec.luau'), `return {
+  ["no Lune libraries or loaders"] = function()
+    assert(getfenv == nil and setfenv == nil and loadstring == nil, "loaders")
+    assert(os.exit == nil and os.getenv == nil and debug.info == nil, "os/debug")
+    assert(not pcall(require, "@lune/roblox"), "@lune/roblox")
+    assert(not pcall(require, "@lune/fs"), "@lune/fs")
+    assert(not pcall(require, "../../../../etc/hosts"), "outside paths")
+  end,
+}
+`)
+  writeFileSync(join(dir, LUNE_RUNNER_FILE), LUNE_RUNNER)
+  let out = ''
+  let code = 0
+  try {
+    out = execFileSync(lune!, ['run', LUNE_RUNNER_FILE], { cwd: dir, encoding: 'utf8' })
+  } catch (e) {
+    const err = e as { stdout: string; status: number }
+    out = err.stdout
+    code = err.status
+  }
+  assert.equal(code, 1, out)
+  assert.match(out, /FAIL src\/shared\/Util\.spec\.luau > Util > fails for real/)
+  assert.match(out, /5 passed, 1 failed, 1 skipped, 1 need the game engine, in 3 spec files/, out)
+  assert.doesNotMatch(out, /hangar-run-tests:\d+/, "the runner's own lines are left out of tracebacks")
+  assert.match(out, /Spawn\.spec\.luau \(1 tests, first: Instance\.new\)/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('Luau tests: the test place run uploads, runs Hangar\'s own script, polls and reads the result', async () => {
   const pass = fakeCloud({ output: { results: report({ modules: 1, loadErrors: [], tests: [{ name: 'a', ok: true }] }) } })
   const r = await runOnTestPlace(pass.api, Buffer.from('PLACE'), { pollMs: 1 })
