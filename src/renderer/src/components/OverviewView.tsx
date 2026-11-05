@@ -73,6 +73,7 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
         />
       ) : null}
       <ShipCard project={project} watch={`${ap?.sprint ?? 0}:${ap?.tasksDone ?? 0}:${reviewCount}`} />
+      <TestingCallout project={project} />
       <section className="card overview-status">
         <div className="row between">
           <div>
@@ -200,6 +201,44 @@ export function OverviewView({ project, onOpenReviews }: { project: Project; onO
 
 }
 
+/**
+ * Without Lune or a test place, autopilot can only check its work while Studio is open. Unattended, one game went 34
+ * sprints building and refactoring code nobody ran.
+ */
+function TestingCallout({ project }: { project: Project }) {
+  const [lune, setLune] = useState<boolean | null>(null)
+  const luau = project.settings.luauTests
+  const off = project.settings.autonomous && !luau?.lune && !luau?.testPlace
+  useEffect(() => {
+    if (off) void window.hangar.system.tools().then((t) => setLune(t.lune), () => setLune(false))
+  }, [off])
+  if (!off) return null
+  const canSandbox = project.settings.sandbox && !navigator.userAgent.includes('Windows')
+  return (
+    <div className="callout callout-amber">
+      <strong>Autopilot can't test its work without Studio open.</strong> The tests agents write (*.spec.luau) only run when you turn on Luau tests.{' '}
+      {lune && canSandbox ? (
+        <button
+          className="link"
+          onClick={() =>
+            void attempt(async () => {
+              replaceProject(await window.hangar.projects.update(project.id, { settings: { luauTests: { lune: true, testPlace: luau?.testPlace ?? false } } }))
+              toast('Lune tests on: every finished task runs them.')
+            })
+          }
+        >
+          Turn on Lune tests
+        </button>
+      ) : canSandbox ? (
+        <>Install Lune (rokit add --global lune-org/lune), then turn on “Run tests with Lune” in the Project tab.</>
+      ) : (
+        <>Set up a test place in the Project tab (Lune tests need the sandbox, which Windows doesn't have).</>
+      )}{' '}
+      Tests that need the game engine also need a test place (Project tab).
+    </div>
+  )
+}
+
 function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: AutopilotState | undefined; hasLead: boolean; busy: boolean; run: (fn: () => Promise<AutopilotState>, ok?: string) => void }) {
   const [tasks, setTasks] = useState(ap?.config.sprintTasks ?? 0)
   const [budget, setBudget] = useState(String(ap?.config.sprintBudgetUsd ?? 10))
@@ -210,8 +249,8 @@ function StartCard({ project, ap, hasLead, busy, run }: { project: Project; ap: 
     <section className="card">
       <h3>{ap?.reports.length ? 'Start a new sprint' : 'Let the agents build'}</h3>
       <p className="small muted">
-        The Lead plans from the design vault, builds one reviewed feature at a time, and checks in with you after each sprint. You act as the product owner: read the
-        check-in, answer questions, give feedback, start the next sprint.
+        The Lead plans from the design vault, builds reviewed features sprint after sprint, and writes a check-in after each one. You act as the product owner: read the
+        check-ins and give feedback whenever you like. It keeps going unless you turn on “Wait for me at each check-in” in its sprint settings.
       </p>
       {!project.settings.autonomous && (
         <div className="callout">
@@ -451,6 +490,12 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         )}
       </div>
       <Toggle checked={ap.config.autoMerge} onChange={(v) => save({ autoMerge: v })} label="Merge approved work automatically" hint="Off: every task waits for you in Reviews." />
+      <Toggle
+        checked={ap.config.checkIns === true}
+        onChange={(v) => save({ checkIns: v })}
+        label="Wait for me at each check-in"
+        hint="Off: the Lead writes the check-in, answers its own questions (noted in Decisions.md) and starts the next sprint. Work that needs you waits in Reviews. Add feedback any time and the next step picks it up."
+      />
       <label className="field">
         <span className="field-label">Planning model</span>
         <ModelSelect value={ap.config.plannerModel ?? ''} onChange={(m) => save({ plannerModel: m || null })} inheritLabel="Same as the Lead" />

@@ -45,6 +45,7 @@ import { createSkill, importSkill, listSkills, viewSkill } from './skills'
 import { listModels, MESH_DIR, modelTask } from './models'
 import { isInsideRoot, linkInPath } from './pathScope'
 import { SecretStore } from './secrets'
+import { sandboxSupported } from './sandbox'
 import { EngineCredentials, validateMaxToken, type EngineAuth } from './engineCredentials'
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -914,10 +915,11 @@ app.whenReady().then(() => {
     const program = process.platform === 'win32' ? (d.args?.[1] ?? '') : d.command
     return !!program && existsSync(program)
   }
-  const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; git: boolean; studio: boolean } => ({
+  const tools = (): { rojo: boolean; selene: boolean; stylua: boolean; lune: boolean; git: boolean; studio: boolean } => ({
     rojo: findRojo(settings.get().rojoCommand) !== null,
     selene: resolveCommand('selene') !== null,
     stylua: resolveCommand('stylua') !== null,
+    lune: resolveCommand('lune') !== null,
     git: resolveCommand('git') !== null,
     studio: studioFound()
   })
@@ -950,7 +952,16 @@ app.whenReady().then(() => {
     const checks = SUGGESTED_CHECKS.filter((c) => (c.name === 'Format' ? t.stylua : c.name === 'Lint' ? t.selene : t.rojo))
     const project = registry.update(added.id, {
       name: input.name.trim(),
-      settings: { autonomous: true, reviewer: true, checks, robloxStudioMcp: input.studioTools, model: input.model, dailyBudgetUsd: input.dailyBudgetUsd }
+      settings: {
+        autonomous: true,
+        reviewer: true,
+        checks,
+        // Autopilot can test its work without Studio from the start (Lune needs the sandbox, so not on Windows).
+        luauTests: { lune: t.lune && sandboxSupported(), testPlace: false },
+        robloxStudioMcp: input.studioTools,
+        model: input.model,
+        dailyBudgetUsd: input.dailyBudgetUsd
+      }
     })
     autopilot!.configure(project.id, input.autopilot)
     let started = false

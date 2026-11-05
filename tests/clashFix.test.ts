@@ -322,6 +322,40 @@ test('autopilot: an unattended run stops after two sprints in a row that built n
   assert.match(st.away!.endReason ?? '', /last 2 sprints built nothing/)
 })
 
+test('autopilot: without check-ins it keeps going: each check-in answers itself, and work that needs you waits in Reviews', async () => {
+  const { Autopilot, CARRY_ON_FEEDBACK } = await import('../src/main/autopilot')
+  const registry = new ProjectRegistry(join(tmp('hangar-go-'), 'p.json'))
+  const project = registry.add(tmp('hangar-go-proj-'))
+  registry.update(project.id, { settings: { autonomous: true } })
+  const reviews = new ReviewStore(join(tmp('hangar-go-r-'), 'r.json'))
+  const sent: string[] = []
+  const ap = new Autopilot({
+    file: join(tmp('hangar-go-a-'), 'a.json'),
+    registry,
+    reviews,
+    costs: new CostTracker(join(tmp('hangar-go-c-'), 'c.json')),
+    emit: () => {},
+    send: (_p, _a, prompt) => void sent.push(prompt),
+    merge: async () => undefined
+  })
+  ap.start(project.id, { config: { sprintTasks: 1 } as never })
+  assert.equal(ap.get(project.id).config.checkIns, false, 'off unless you turn it on')
+  // A change with a serious problem can't merge itself: it waits in Reviews and the sprint goes on to its check-in.
+  const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
+  const r = reviews.add({ projectId: project.id, agentId: 'main', title: 'Storms', branch: 'hangar/main-storms-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Storms', files: ['src/s.luau'], incomplete: null, note: null, clip: null })
+  reviews.update(r.id, { checks: passed, aiReview: { status: 'done', verdict: 'concerns', summary: 's', costUsd: 0, error: null, findings: [{ severity: 'high', file: 'src/s.luau', line: 1, title: 'Trusts the client', detail: '' }] } })
+  ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: 't1', prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: 'Built storms.', error: null, reviewId: r.id })
+  assert.match(sent.at(-1)!, /sprint 1 is over/)
+  assert.equal(reviews.get(r.id).status, 'pending')
+  // The check-in is kept, and sprint 2 starts on the Lead's own plan without waiting.
+  ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: 'r1', prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot-report' }, ok: true, stopped: false, text: '## Built\n- Storms', error: null, reviewId: null })
+  const st = ap.get(project.id)
+  assert.equal(st.status, 'running')
+  assert.equal(st.sprint, 2)
+  assert.equal(st.reports.length, 1)
+  assert.ok(sent.at(-1)!.includes(CARRY_ON_FEEDBACK))
+})
+
 test('autopilot: on the Claude plan with no end time, an unattended run stops after its most sprints', async () => {
   const { Autopilot, MAX_AWAY_SPRINTS } = await import('../src/main/autopilot')
   const registry = new ProjectRegistry(join(tmp('hangar-cap-'), 'p.json'))

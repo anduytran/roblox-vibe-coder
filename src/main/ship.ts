@@ -273,7 +273,7 @@ export function shipStatus(root: string): ShipStatus {
     const m = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line)
     if (m) {
       const text = m[2]!.replace(/`/g, '').trim()
-      items.push({ section, text: text.slice(0, 240), done: m[1] !== ' ', you: /^\(you\)/i.test(text) })
+      items.push({ section, text: text.slice(0, 240), done: m[1] !== ' ', you: /^\(you\)/i.test(text) || /\(you\)/i.test(section) })
     }
   }
   const products = readSmall(root, PRODUCTS)

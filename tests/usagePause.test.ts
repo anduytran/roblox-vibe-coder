@@ -138,7 +138,7 @@ test('usage pause: autopilot keeps waiting on a held task instead of counting it
   registry.update(project.id, { settings: { autonomous: true } })
   const sent: string[] = []
   const ap = new Autopilot({ file: join(tmp('hangar-up-ap-a-'), 'a.json'), registry, reviews: new ReviewStore(join(tmp('hangar-up-ap-r-'), 'r.json')), costs: new CostTracker(join(tmp('hangar-up-ap-c-'), 'c.json')), emit: () => {}, send: (_p, _a, prompt) => void sent.push(prompt), merge: async () => undefined })
-  ap.start(project.id, { config: { sprintTasks: 2, fastStart: false } as never })
+  ap.start(project.id, { config: { sprintTasks: 2, fastStart: false, checkIns: true } as never })
   const before = ap.get(project.id)
   ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: 't1', prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot' }, ok: false, stopped: false, text: '', error: "You've hit your usage limit", reviewId: null, paused: true })
   const after = ap.get(project.id)

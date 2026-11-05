@@ -11,7 +11,7 @@ import type { ReviewStore } from './reviews'
 import { listRoles } from './roles'
 import { isProtectedPath } from './pathScope'
 import { runsAsCode } from './checks'
-import { cleanLuauTests } from './luauTests'
+import { ALREADY_FAILING, cleanLuauTests, LUNE_CHECK_NAME } from './luauTests'
 
 /**
  * Autopilot: the agents keep building and you act as product owner.
@@ -77,8 +77,11 @@ export function keepBuilding(lune: boolean): string {
  */
 export const NO_SPECS_RUN = `Luau tests don't run without Studio in this game (Lune is off in its Project tab), so never restructure working code just so it can be tested.`
 
-/** Once everything left needs a playtest or the product owner, the only "unblocked" work was refactoring. */
-export const NO_FILLER = `Don't plan refactors, clean-ups or more hardening of code that already works unless the product owner asked for it or it fixes a bug a player would hit. When everything left needs a playtest or the product owner, don't look for filler: say so and stop.`
+/**
+ * Once everything left needs a playtest or the product owner, the only "unblocked" work was refactoring. And told to
+ * stop there, one game's Lead planned nothing for six sprints while the next milestone sat waiting.
+ */
+export const NO_FILLER = `Don't plan refactors, clean-ups or more hardening of code that already works unless the product owner asked for it or it fixes a bug a player would hit. When everything left in the current milestone needs a playtest or the product owner, that milestone is done for now: keep what waits under "Needs you" in Roadmap.md and start the next milestone without asking (new gameplay, content, sound, polish players will notice). If the Roadmap has no next milestone, add one from design-vault/Brief.md and Game Overview.md: the features they describe that aren't built yet. Only when no milestone has anything left to build, say so and stop.`
 
 /** The line a planner replies with when nothing is worth building before the product owner checks in. */
 const NOTHING_TO_BUILD = /^[\s*_>#-]*nothing to build[.!]?[\s*_]*$/im
@@ -86,18 +89,44 @@ const NOTHING_TO_BUILD = /^[\s*_>#-]*nothing to build[.!]?[\s*_]*$/im
 /** How reviewer follow-ups start, kept apart from the product owner's own feedback. */
 const REVIEWER_NOTE = 'Follow-up from the reviewer agent'
 
+/** How notes about Luau tests already failing on the main branch start. */
+const FAILING_TESTS_NOTE = 'Luau tests failing on the main branch'
+
 /** The title a piece of reviewer fixes starts with: its own review's concerns aren't followed up again. */
 export const REVIEW_FIX = /^\s*review fix(es)?\b/i
+
+/** The test names the Lune check listed as already failing where a change started (cleaned, at most 12). */
+export function alreadyFailing(review: Review): string[] {
+  const out = review.checks?.results.find((r) => r.name === LUNE_CHECK_NAME)?.output ?? ''
+  const at = out.indexOf(ALREADY_FAILING)
+  if (at < 0) return []
+  const names: string[] = []
+  for (const line of out.slice(at + ALREADY_FAILING.length).split('\n')) {
+    const m = /^- (.+)$/.exec(line.trim())
+    if (!m) {
+      if (names.length) break
+      continue
+    }
+    // Names come from agent-written specs: shown as data, cleaned and cut short.
+    const name = stripHidden(m[1]!).replace(/\s+/g, ' ').trim().slice(0, 160)
+    if (name && !name.startsWith('…') && !name.startsWith('(')) names.push(name)
+  }
+  return names.slice(0, 12)
+}
 
 /**
  * Feedback for a step's prompt: the product owner's comes first; reviewer notes come after the roadmap. (Handed over as
  * "product owner feedback to act on first", reviewer nits on the last fix filled whole sprints.)
  */
 export function feedbackText(feedback: string[], ownerHeading: string): string {
-  const owner = feedback.filter((f) => !f.startsWith(REVIEWER_NOTE))
+  const owner = feedback.filter((f) => !f.startsWith(REVIEWER_NOTE) && !f.startsWith(FAILING_TESTS_NOTE))
   const reviewer = feedback.filter((f) => f.startsWith(REVIEWER_NOTE)).slice(-3)
+  const failing = feedback.filter((f) => f.startsWith(FAILING_TESTS_NOTE)).slice(-1)
   return (
     (owner.length ? `\n\n${ownerHeading}:\n${owner.map((f) => `- ${f}`).join('\n')}` : '') +
+    (failing.length
+      ? `\n\n${failing[0]} (Hangar's Lune check found these; they don't hold up other changes, but each is a broken rule or a wrong test). Plan one piece whose title starts with "Fix failing tests:" to fix them, alongside roadmap work: fix the game code when it's wrong, the test when the test is.`
+      : '') +
     (reviewer.length
       ? `\n\nReviewer notes on merged work (from the reviewer agent, not the product owner; they come after the roadmap). Take one up only if it's a bug a player would hit, as one piece whose title starts with "Review fixes:", alongside roadmap work, never a sprint of only these. The rest can be dropped:\n${reviewer.map((f) => `- ${f}`).join('\n')}`
       : '')
@@ -117,7 +146,7 @@ export const ROADMAP_SHORT = `Keep design-vault/Roadmap.md short (about 80 lines
 export const KEEP_SHORT = `Be brief: no restating the brief or the notes, no long rationale. Read only what the plan needs (ask "bookworm" for a summary instead of reading many files).`
 
 /** While the game hasn't shipped, its ship checklist comes first. */
-export const SHIP_FIRST = `If design-vault/Ship Checklist.md has unticked items, the next step comes from it first (skip the ones marked "(you)": they need the product owner, so list them under "Needs you" in Roadmap.md). Tick items in it as they're done.`
+export const SHIP_FIRST = `If design-vault/Ship Checklist.md has unticked items, the next step comes from it first (skip the ones marked "(you)", or under a heading marked "(you)": they need the product owner, so list them under "Needs you" in Roadmap.md). Tick items in it as they're done. When only "(you)" items are left, the checklist is done on your side: go on to the next milestone.`
 
 /** How the planner marks each piece, so simple ones are built on a cheaper model. */
 export const SIZE_RULE = `Mark each piece's "size": "simple" for a small, well-understood change (a value, a small UI tweak, a fix in one place), built on Sonnet, which is faster and much cheaper; "hard" for a new system or tricky logic, built on the builder's own model.`
@@ -180,6 +209,7 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   unattendedBudgetUsd: Math.min(500, Math.max(1, Number.isFinite(c.unattendedBudgetUsd) ? Number(c.unattendedBudgetUsd) : (base.unattendedBudgetUsd ?? 20))),
   parallel: typeof c.parallel === 'boolean' ? c.parallel : (base.parallel ?? true),
   fastStart: typeof c.fastStart === 'boolean' ? c.fastStart : (base.fastStart ?? true),
+  checkIns: typeof c.checkIns === 'boolean' ? c.checkIns : (base.checkIns ?? false),
   plannerModel: c.plannerModel === null ? null : (normalizeModel(c.plannerModel) ?? base.plannerModel ?? null)
 })
 
@@ -239,6 +269,13 @@ const UNATTENDED_RETRY_MS = 30 * 60_000
 /** The note the Lead gets when a check-in answers itself. */
 export const AWAY_FEEDBACK =
   "The product owner is away and left autopilot running unattended. Go ahead with the plan you proposed in your check-in. Decide any open questions yourself from the design docs, choosing the option that's easiest to change later, and record each decision with its reason in design-vault/Decisions.md (under \"Decided while you were away\") so the owner can review them in the morning."
+
+/** The note the Lead gets when a check-in answers itself because autopilot doesn't wait for you between sprints. */
+export const CARRY_ON_FEEDBACK =
+  "Autopilot keeps going without waiting for the product owner between sprints. Go ahead with the plan you proposed in your check-in. Decide any open questions yourself from the design docs, choosing the option that's easiest to change later, and record each decision with its reason in design-vault/Decisions.md (under \"Decided without you\") so the owner can review them."
+
+/** False only when you asked autopilot to stop at each check-in and wait for you. */
+export const keepsGoing = (c: AutopilotConfig): boolean => c.checkIns !== true
 
 export class Autopilot {
   private store: JsonStore<{ states: Record<string, AutopilotState> }>
@@ -702,12 +739,14 @@ Reply with only these sections, short and concrete:
       }
       const report: SprintReport = { sprint: st.sprint, at: Date.now(), text: o.text.slice(0, 20_000), tasks: st.sprintTasks, spentUsd: Math.round((this.spent(o.projectId) - st.spentAtSprintStart) * 100) / 100 }
       this.put({ ...st, status: 'checkin', reason: null, reports: [...st.reports, report].slice(-30) })
-      // Unattended, but stuck: two sprints in a row built nothing new (each waiting on something only you can do, or
-      // only fixing the reviewer's notes). Starting more would only repeat that, so the run stops here and says why.
+      // Going on by itself, but stuck: two sprints in a row built nothing new (each waiting on something only you can
+      // do, or only fixing the reviewer's notes). Starting more would only repeat that, so it stops here and says why.
       const recent = [...st.reports, report].slice(-STUCK_SPRINTS)
       const stuck = recent.length === STUCK_SPRINTS && !recent.some(sprintBuilt)
-      if (this.isAway(o.projectId) && stuck) {
-        this.endAway(o.projectId, `the last ${STUCK_SPRINTS} sprints built nothing new (the Lead is waiting on you: see the latest check-in)`)
+      if (stuck && (this.isAway(o.projectId) || keepsGoing(st.config))) {
+        const why = `the last ${STUCK_SPRINTS} sprints built nothing new (the Lead is waiting on you: see the latest check-in)`
+        if (this.isAway(o.projectId)) this.endAway(o.projectId, why)
+        this.put({ ...this.get(o.projectId), reason: `Stopped at this check-in: ${why}.` })
         return
       }
       // Its time or budget ran out during this sprint, or (on the plan, with no end time) it has run its most
@@ -720,11 +759,12 @@ Reply with only these sections, short and concrete:
         this.endAway(o.projectId, over)
         return
       }
-      // Unattended: the check-in answers itself and the next sprint starts on the Lead's own plan.
+      // Unattended, or not set to wait for you: the check-in answers itself and the next sprint starts on the Lead's
+      // own plan. The report stays on the Overview to read whenever you like.
       if (this.isAway(o.projectId)) {
         this.bumpAway(o.projectId, 'sprints')
         this.start(o.projectId, { feedback: AWAY_FEEDBACK })
-      }
+      } else if (keepsGoing(now.config)) this.start(o.projectId, { feedback: CARRY_ON_FEEDBACK })
       return
     }
 
@@ -783,7 +823,10 @@ Reply with only these sections, short and concrete:
     if (review.status !== 'pending') {
       const outcome = review.status === 'merged' ? 'merged' : 'discarded'
       if (outcome === 'merged') this.bumpAway(review.projectId, 'merged')
-      if (outcome === 'merged') this.followUpConcerns(review)
+      if (outcome === 'merged') {
+        this.followUpConcerns(review)
+        this.followUpFailingTests(review)
+      }
       this.settle(review, outcome)
       return
     }
@@ -816,14 +859,15 @@ Reply with only these sections, short and concrete:
             // gone
           }
           if (now?.clash && now.status === 'pending') return this.evaluate(reviewId)
-          if (this.isAway(review.projectId)) return this.leaveForMorning(review)
+          if (this.isAway(review.projectId) || keepsGoing(this.get(review.projectId).config)) return this.leaveForMorning(review)
           this.put({ ...this.get(review.projectId), status: 'waiting', reason: `Couldn't merge “${this.reviewTitle(review)}” automatically: ${err.message}` })
         })
         .finally(() => this.merging.delete(reviewId))
       return
     }
-    // Unattended: it waits in Reviews for the morning, and work goes on.
-    if (this.isAway(review.projectId)) return this.leaveForMorning(review)
+    // Unattended, or not set to wait for you: it waits in Reviews, and work goes on. (With auto-merge off you review
+    // every change, so autopilot waits for each one: building on top of unmerged work would only pile up clashes.)
+    if (this.isAway(review.projectId) || (keepsGoing(st.config) && st.config.autoMerge)) return this.leaveForMorning(review)
     if (st.status !== 'waiting') {
       this.put({ ...st, status: 'waiting', reason: `“${this.reviewTitle(review)}” needs your review. ${st.config.autoMerge ? (blocker ?? '') : 'Auto-merge is off.'}`.trim() })
     }
@@ -862,6 +906,16 @@ Reply with only these sections, short and concrete:
     const note = `${REVIEWER_NOTE} (not the product owner): address its concerns on "${clean(review.title.startsWith('Autopilot') ? (item?.title ?? this.reviewTitle(review)) : review.title, 80)}", merged as is: ${points}`
     const st = this.get(review.projectId)
     this.put({ ...st, feedback: [...st.feedback, note].slice(-20) })
+  }
+
+  /** Tests that were already failing on the main branch (the Lune check lists them) become a piece for the Lead. */
+  private followUpFailingTests(review: Review): void {
+    const names = alreadyFailing(review)
+    if (!names.length) return
+    const note = `${FAILING_TESTS_NOTE}: ${names.join('; ')}`
+    const st = this.get(review.projectId)
+    // Only the latest list counts: it replaces an older one.
+    this.put({ ...st, feedback: [...st.feedback.filter((f) => !f.startsWith(FAILING_TESTS_NOTE)), note].slice(-20) })
   }
 
   private settle(review: Review, outcome: SprintReport['tasks'][number]['outcome']): void {

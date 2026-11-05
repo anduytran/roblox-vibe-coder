@@ -833,6 +833,28 @@ print(string.format("%d passed, %d failed, %d skipped, %d need the game engine, 
 process.exit(if counts.failed > 0 then 1 else 0)
 `
 
+/** The heading Hangar adds when tests were already failing where the change started. Autopilot looks for it. */
+export const ALREADY_FAILING = 'Already failing before this change (on the commit it started from):'
+
+const failNames = (out: string): string[] => [...out.matchAll(/^FAIL (.+)$/gm)].map((m) => m[1]!.trim())
+
+/**
+ * A change's Lune run against the run on the commit it started from: it fails only for tests it broke (or when the
+ * starting commit passed). Test names come from agent-written specs: they're only compared and shown.
+ */
+export function compareLuneRuns(head: string, base: string, baseCode: number | null): { status: 'passed' | 'failed'; output: string } {
+  if (baseCode === 0) return { status: 'failed', output: head }
+  const before = new Set(failNames(base))
+  const now = failNames(head)
+  // A run that failed without naming a test (no specs, or the runner itself errored) is only excused when the start did too.
+  if (!now.length) return before.size ? { status: 'failed', output: head } : { status: 'passed', output: `${head}\n${ALREADY_FAILING}\n- (the tests didn't run there either)` }
+  const fresh = now.filter((n) => !before.has(n))
+  const old = now.filter((n) => before.has(n))
+  const list = (names: string[]): string => names.slice(0, 20).map((n) => `- ${n.slice(0, 200)}`).join('\n') + (names.length > 20 ? `\n- …and ${names.length - 20} more` : '')
+  if (!fresh.length) return { status: 'passed', output: `${head}\n${ALREADY_FAILING}\n${list(old)}\nThis change didn't break any test.` }
+  return { status: 'failed', output: `${head}\nBroken by this change:\n${list(fresh)}${old.length ? `\n${ALREADY_FAILING}\n${list(old)}` : ''}` }
+}
+
 /**
  * Hangar's smoke script, run by Open Cloud in a fresh server of the uploaded place version. It returns a
  * JSON report; Hangar reads it as untrusted data (the game code ran in the same server).

@@ -233,7 +233,7 @@ test('autopilot: a second check-in report for the same sprint (pause and resume 
       throw new Error('no')
     }
   })
-  ap.start(project.id)
+  ap.start(project.id, { config: { checkIns: true } as never })
   const report = (text: string): void =>
     ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: text, prompt: 'Autopilot: sprint 1 is over.', createdAt: 1, origin: 'autopilot-report' }, ok: true, stopped: false, text, error: null, reviewId: null })
   report('## Built\n- A\n## Questions\n- Stamina?')

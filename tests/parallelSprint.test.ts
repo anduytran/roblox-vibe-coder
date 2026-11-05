@@ -56,7 +56,7 @@ function setup() {
   const done = (prompt: string, agent: string, extra: { text?: string; reviewId?: string | null; ok?: boolean; origin?: 'autopilot' | 'autopilot-report' } = {}) =>
     ap.onTaskDone({ projectId: project.id, agentId: agent, task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: extra.ok ?? true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: extra.reviewId ?? null })
   // Sprint 1 (the very first) runs one task at a time while the Lead sets the design up; then its check-in.
-  ap.start(project.id, { config: { sprintTasks: 0, fastStart: false } as never })
+  ap.start(project.id, { config: { sprintTasks: 0, fastStart: false, checkIns: true } as never })
   done(sent.at(-1)!.prompt, 'lead', { text: 'Set up.\nSprint complete.' })
   done(sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Setup\n## Next sprint\n- Bots\n- HUD' })
   return { project, reviews, sent, ap, done }
@@ -226,7 +226,7 @@ test('fast MVP start: Fable plans the first sprint, the team builds its pieces a
   const reviews = new ReviewStore(join(tmp('hangar-mvp-r-'), 'r.json'))
   const sent: { agent: string; prompt: string; model?: string }[] = []
   const ap = new Autopilot({ file: join(tmp('hangar-mvp-a-'), 'a.json'), registry, reviews, costs: new CostTracker(join(tmp('hangar-mvp-c-'), 'c.json')), emit: () => {}, send: (_p, agent, prompt, opts) => void sent.push({ agent, prompt, model: opts.model }), merge: async () => undefined })
-  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  ap.start(project.id, { config: { sprintTasks: 0, checkIns: true } as never })
   const first = sent.at(-1)!
   assert.equal(first.agent, 'planner')
   assert.match(first.prompt, /^Autopilot: plan sprint 1 \(fast MVP start\)/)
@@ -263,7 +263,7 @@ test('planner: without a Planner role, the Lead plans the MVP on Fable; games wi
   registry.update(project.id, { settings: { autonomous: true } })
   const sent: { agent: string; model?: string }[] = []
   const ap = new Autopilot({ file: join(tmp('hangar-noplan-a-'), 'a.json'), registry, reviews: new ReviewStore(join(tmp('hangar-noplan-r-'), 'r.json')), costs: new CostTracker(join(tmp('hangar-noplan-c-'), 'c.json')), emit: () => {}, send: (_p, agent, _prompt, opts) => void sent.push({ agent, model: opts.model }), merge: async () => undefined })
-  ap.start(project.id, { config: { sprintTasks: 0 } as never })
+  ap.start(project.id, { config: { sprintTasks: 0, checkIns: true } as never })
   assert.deepEqual(sent.at(-1), { agent: 'lead', model: 'claude-fable-5-1' })
   // An existing game with a Lead gets the Planner; one without the starter set doesn't.
   assert.deepEqual(addLaterStarters(dir), ['.claude/agents/planner.md', '.claude/agents/bookworm.md'])

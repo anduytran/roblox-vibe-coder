@@ -545,6 +545,11 @@ export interface AutopilotConfig {
   unattendedUntil?: number | null
   unattendedBudgetUsd?: number
   /**
+   * Stop at each sprint's check-in and wait for you (off unless turned on). Off: the check-in is written and kept, it
+   * answers itself and the next sprint starts; changes that can't merge themselves wait in Reviews while work goes on.
+   */
+  checkIns?: boolean
+  /**
    * Build the sprint's pieces at the same time (on unless turned off): the Lead plans independent items, each built
    * by its agent in its own copy of the game, then wraps up. Off, or with no builder roles: one task after another.
    */

@@ -9,7 +9,7 @@ import { addTempWorktree, linksInCommit, removeTempWorktree } from './git'
 import { isProtectedPath } from './pathScope'
 import { shellWords } from './permissions'
 import { resolveCommand, unsafeRojoPaths, uploadPlace, type KeySource } from './testPlace'
-import { cleanLuauTests, CLOUD_CHECK_NAME, hasChecks, LUNE_CHECK_NAME, LUNE_RUNNER, LUNE_RUNNER_FILE, openCloudApi, runOnTestPlace, type CloudApi } from './luauTests'
+import { cleanLuauTests, CLOUD_CHECK_NAME, compareLuneRuns, hasChecks, LUNE_CHECK_NAME, LUNE_RUNNER, LUNE_RUNNER_FILE, openCloudApi, runOnTestPlace, type CloudApi } from './luauTests'
 import { realTool } from './studioSync'
 import { CREDENTIAL_DIRS } from './sandbox'
 
@@ -241,7 +241,7 @@ export async function runChecks(project: Project, review: Review, opts: CheckOpt
         ms: Date.now() - started
       })
     }
-    const ctx = { project, tree, work, platform, wantSandbox, opts }
+    const ctx = { project, tree, work, platform, wantSandbox, opts, baseSha: review.baseSha, headSha: review.headSha }
     if (luau.lune) results.push(await runLuneTests(ctx))
     if (luau.testPlace) results.push(await runTestPlaceTests(ctx))
     return { status: 'done', reason: null, results, sandboxed: wantSandbox }
@@ -260,10 +260,13 @@ interface LuauContext {
   platform: NodeJS.Platform
   wantSandbox: boolean
   opts: CheckOptions
+  /** The commit the change started from, to tell its own test failures from ones already on the main branch. */
+  baseSha?: string
+  headSha?: string
 }
 
 /** Every *.spec.luau (but *.cloud.spec.luau) in the checkout, run by Hangar's own runner with Lune, in the sandbox. */
-async function runLuneTests({ tree, work, platform, wantSandbox, opts }: LuauContext): Promise<CheckResult> {
+async function runLuneTests({ project, tree, work, platform, wantSandbox, opts, baseSha, headSha }: LuauContext): Promise<CheckResult> {
   const command = `lune run ${LUNE_RUNNER_FILE}`
   const error = (output: string): CheckResult => ({ name: LUNE_CHECK_NAME, command, status: 'error', output, ms: 0 })
   // Tests execute game code (and Lune can reach files, processes and the network), so never without the sandbox.
@@ -283,13 +286,28 @@ async function runLuneTests({ tree, work, platform, wantSandbox, opts }: LuauCon
   // The checkout is Hangar's temporary copy (symlinks were refused), so writing the runner here can't reach anywhere else.
   writeFileSync(join(tree, LUNE_RUNNER_FILE), LUNE_RUNNER, 'utf8')
   const ran = await runOne(program, args, tree, platform, wrap)
-  return {
-    name: LUNE_CHECK_NAME,
-    command,
-    status: ran.error ? 'error' : ran.code === 0 ? 'passed' : 'failed',
-    output: revealHidden(tidyOutput(ran.error ? `${ran.error}\n${ran.output}` : ran.output)),
-    ms: Date.now() - started
+  let status: CheckResult['status'] = ran.error ? 'error' : ran.code === 0 ? 'passed' : 'failed'
+  let output = ran.error ? `${ran.error}\n${ran.output}` : ran.output
+  // Tests that already failed where the change started aren't its fault: they'd hold up every change until someone
+  // fixed them. The same runner runs on the starting commit, and only new failures fail this change.
+  if (status === 'failed' && baseSha && baseSha !== headSha) {
+    const base = join(work, 'base')
+    try {
+      await addTempWorktree(project.path, baseSha, base)
+      writeFileSync(join(base, LUNE_RUNNER_FILE), LUNE_RUNNER, 'utf8')
+      const before = await runOne(program, args, base, platform, sandboxCommand(platform, program, args, { work, appDataDir: opts.appDataDir, home: opts.home, env: opts.env }))
+      if (!before.error) {
+        const compared = compareLuneRuns(ran.output, before.output, before.code)
+        status = compared.status
+        output = compared.output
+      }
+    } catch {
+      // No baseline: the result stands as it is.
+    } finally {
+      await removeTempWorktree(project.path, base)
+    }
   }
+  return { name: LUNE_CHECK_NAME, command, status, output: revealHidden(tidyOutput(output)), ms: Date.now() - started }
 }
 
 /** Build the branch with Rojo (sandboxed), upload it as a saved version of the test place and run the smoke test there. */
