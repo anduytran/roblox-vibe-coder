@@ -1,6 +1,6 @@
 /**
- * Reads a sprint check-in. Autopilot asks the Lead for four sections:
- *   ## Built   ## Try it   ## Next sprint   ## Questions for you
+ * Reads a sprint check-in. Autopilot asks the Lead for these sections:
+ *   ## Built   ## Try it   ## Fun check   ## Next sprint   ## Questions for you
  * This splits them so the Overview can show each one, list the plan as items you can reorder, and give every
  * question its own answer box. Pure; anything it can't recognise is left to the plain-text fallback.
  */
@@ -11,6 +11,8 @@ export interface Checkin {
   intro: string
   built: string
   tryIt: string
+  /** How fun the game is for a new player right now, as the Lead rates it (empty in older check-ins). */
+  fun: string
   /** Next sprint's plan, one item per entry, in the Lead's order. */
   next: string[]
   questions: string[]
@@ -18,12 +20,13 @@ export interface Checkin {
   structured: boolean
 }
 
-type Section = 'built' | 'tryIt' | 'next' | 'questions'
+type Section = 'built' | 'tryIt' | 'fun' | 'next' | 'questions'
 
 function sectionOf(heading: string): Section | null {
   const h = heading.toLowerCase()
   if (/^built\b|^what (was |we )?built/.test(h)) return 'built'
   if (/^try it|^how to (try|test|play)/.test(h)) return 'tryIt'
+  if (/^fun\b/.test(h)) return 'fun'
   if (/^next( sprint)?\b|^plan\b/.test(h)) return 'next'
   if (/^questions?\b|^open questions/.test(h)) return 'questions'
   return null
@@ -138,7 +141,7 @@ const NO_QUESTIONS = /^[*_]*(none|nothing|n\/a|no (open )?(questions|decisions))
 
 export function parseCheckin(raw: string): Checkin {
   const text = stripHidden(String(raw ?? '')).replace(/\r\n?/g, '\n').slice(0, 50_000)
-  const parts: Record<Section, string[]> = { built: [], tryIt: [], next: [], questions: [] }
+  const parts: Record<Section, string[]> = { built: [], tryIt: [], fun: [], next: [], questions: [] }
   const intro: string[] = []
   const found = new Set<Section>()
   let current: Section | null = null
@@ -175,6 +178,7 @@ export function parseCheckin(raw: string): Checkin {
     intro: intro.join('\n').trim(),
     built: body('built'),
     tryIt: body('tryIt'),
+    fun: body('fun'),
     next: planItems(body('next')).filter((q) => !NOTHING.test(q)),
     questions: questionItems(body('questions')).filter((q) => !NOTHING.test(q) && !NO_QUESTIONS.test(q)),
     structured: found.size >= 2

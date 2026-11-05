@@ -416,6 +416,7 @@ function checkinView(p) {
         c.intro ? h('pre', { class: 'summary' }, c.intro) : null,
         sect('Built', c.built ? h('pre', { class: 'summary' }, c.built) : h('div', { class: 'small muted' }, "The Lead didn't list anything.")),
         c.tryIt ? sect('Try it', h('pre', { class: 'summary' }, c.tryIt)) : null,
+        c.fun ? sect('Fun check', h('pre', { class: 'summary' }, c.fun)) : null,
         sect('Next sprint' + (changed ? ' (edited)' : ''),
           h('ol', { class: 'plan' }, d.plan.map((item, i) => h('li', {},
             h('span', { class: 'grow' }, item),

@@ -84,6 +84,7 @@ export function phoneCheckin(report: SprintReport): {
   intro: string
   built: string
   tryIt: string
+  fun: string
   next: string[]
   questions: string[]
   structured: boolean
@@ -99,6 +100,7 @@ export function phoneCheckin(report: SprintReport): {
     intro: c.intro,
     built: c.built,
     tryIt: c.tryIt,
+    fun: c.fun,
     next: c.next,
     questions: c.questions,
     structured: c.structured

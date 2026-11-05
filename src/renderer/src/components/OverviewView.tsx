@@ -612,6 +612,12 @@ function CheckinCard({ project, report, busy, run }: { project: Project; report:
               </div>
             </div>
           )}
+          {c.fun && (
+            <div className="checkin-block">
+              <span className="side-label">Fun check</span>
+              <SafeText text={c.fun} />
+            </div>
+          )}
           <div className="checkin-block">
             <span className="side-label">Next sprint {planChanged && <span className="tag tag-warn">edited</span>}</span>
             <ol className="plan-list" ref={listRef}>

@@ -133,6 +133,32 @@ export function feedbackText(feedback: string[], ownerHeading: string): string {
   )
 }
 
+/** Where the Lead's latest rating of the game, as a new player would feel it, is kept. */
+export const FUN_CHECK = 'design-vault/Fun Check.md'
+
+/**
+ * The questions a fun check answers. Agents otherwise finish feature lists: systems that work but that a player never
+ * feels (two games built this way ran for dozens of sprints with nothing anyone would play twice).
+ */
+export const FUN_QUESTIONS = [
+  'Can a new player tell what to do within 30 seconds, without reading anything long?',
+  'Does every player action get feedback they can see or hear (a sound, effect, number pop or UI change)?',
+  'Is there a reward that makes them want to do the core action again?',
+  'Is there something new to unlock, see or try within ten minutes?',
+  'Is there a reason to come back tomorrow or bring a friend?'
+]
+
+/** Planning rule: a playable core loop first, then whatever a player will feel most. */
+export const FUN_FIRST = `Fun comes before more systems. Until a new player can play the core loop from start to finish (join, do the core action, get a reward they can see, want to go again), every piece goes toward that. After that, start from the weakest answer in ${FUN_CHECK}: something players feel in their first ten minutes beats a system they won't notice.`
+
+/** Wrap-up step: rate the game as a new player would, and let the weakest answer lead the next sprint. */
+export const FUN_RATE = `Rate the game as a new player would, from what is merged now (not what's planned; when unsure, answer "partly"). Rewrite ${FUN_CHECK} (at most 15 lines) with each question answered yes / partly / no and one line of evidence (the feature or file):
+${FUN_QUESTIONS.map((q, i) => `   ${i + 1}. ${q}`).join('\n')}
+   Then put the fix for the weakest answer first under "Next sprint" in Roadmap.md, unless the product owner asked for something else first.`
+
+/** Build rule for one piece: what the player does should be felt. */
+export const MAKE_IT_FELT = `If this piece adds something the player does or gets, make it felt: a visible or audible response when it happens (a tween, particles, a UI pop, a sound, a number that counts up).`
+
 /** How the Ship Checklist keeps up with the game, so finished items aren't planned again and again. */
 export const SHIP_TICK = `Tick the items in design-vault/Ship Checklist.md that are now done (built, merged and checked by a passing spec or a Studio play). Add "(you)" to an item the Studio tools here can't check (two real players at once, a real phone, a purchase in a published place), so it goes to the product owner instead of being planned again.`
 
@@ -652,13 +678,13 @@ export class Autopilot {
 2. Fill in design-vault/Game Overview.md (pitch, core loop, pillars, players and platforms).
 3. Write design-vault/Roadmap.md as milestones. Milestone 1 is "Ship v1": the smallest version worth publishing (fun for ten minutes, a goal players can see, two or three things to buy), following design-vault/Ship Checklist.md. Later milestones add depth after launch.
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
-5. Then build the first, most foundational piece of milestone 1 and playtest it.${team ? `\n   ${team.build}\n   ${team.test}` : ''}
+5. Then build the first, most foundational piece of milestone 1 (toward a core loop a player can play from start to finish) and playtest it. ${MAKE_IT_FELT}${team ? `\n   ${team.build}\n   ${team.test}` : ''}
 ${keep}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
-1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md (and research/ if relevant).
-2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST}
-3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'}
+1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md, Fun Check.md (if there is one) and Inbox.md (and research/ if relevant).
+2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST} ${FUN_FIRST}
+3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'} ${MAKE_IT_FELT}
 4. Update Roadmap.md (mark what's done) and Decisions.md. ${ROADMAP_SHORT} ${SHIP_TICK}
 ${keep}
 Finish with: what you built, how you tested it, and what's next.${ending}${feedback}${recent}`
@@ -670,16 +696,20 @@ Finish with: what you built, how you tested it, and what's next.${ending}${feedb
 
   private queueReport(st: AutopilotState): void {
     const tasks = st.sprintTasks.map((t) => `- ${t.title}: ${t.outcome}`).join('\n') || '- (none)'
+    // The parallel wrap-up has just written Fun Check.md; a single-task sprint has no wrap-up, so the check-in rates it.
+    const rate = `as a new player would feel what is merged now, one line each, yes / partly / no with the evidence: ${FUN_QUESTIONS.join(' ')}`
+    const funCheck = st.parallel?.items.length ? `copy the answers from ${FUN_CHECK}, one line each; if it has none, rate it ${rate}` : rate
     const prompt = `Autopilot: sprint ${st.sprint} is over. Write the check-in for the product owner. Don't change any files.
 Tasks this sprint and what happened to them:
 ${tasks}
 
-For details, read design-vault/Roadmap.md, Decisions.md and Inbox.md, and the latest commits (git log -n 15 --stat).
+For details, read design-vault/Roadmap.md, Decisions.md, Fun Check.md and Inbox.md, and the latest commits (git log -n 15 --stat).
 
 Reply with only these sections, short and concrete:
 ## Built
 ## Try it (how to play or test what's new in Studio)
-## Next sprint (3–5 items, in order)
+## Fun check (${funCheck})
+## Next sprint (3–5 items, in order; the fix for the weakest fun answer first, unless the product owner asked for something else)
 ## Questions for you (decisions you need from the product owner, if any)`
     this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot-report' })
   }
@@ -976,8 +1006,8 @@ Reply with only these sections, short and concrete:
     const feedback = feedbackText(st.feedback, 'Product owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault)')
     const lune = this.lune(st.projectId)
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
-1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md and Inbox.md, and the mechanic notes involved.
-2. ${SHIP_FIRST} Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
+1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md, Fun Check.md (if there is one) and Inbox.md, and the mechanic notes involved.
+2. ${SHIP_FIRST} ${FUN_FIRST} Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, a playtest that can't run, or work that isn't merged): say so in your plan instead. ${lune ? '' : `${NO_SPECS_RUN} `}${NO_FILLER.replace('say so and stop.', 'reply with the line "Nothing to build." and say what it waits for, with no json block.')}
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
@@ -1000,7 +1030,7 @@ Each brief is all its agent gets: say what to build, which files to read and cha
     const prompt = `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
 1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md. Nothing else is needed yet.
 2. Write, briefly (speed beats polish; they can grow later; at most about 150 words each): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
-3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
+3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish, with feedback a player can see or hear on the core action: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
@@ -1078,7 +1108,7 @@ Brief from the Lead (the acceptance criteria are in it):
 ${item.brief}
 ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 
-1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
+1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. ${MAKE_IT_FELT} Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
 2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}${noSpecs}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
@@ -1127,7 +1157,8 @@ ${done}
 1. Read what landed (git log -n 15 --stat, and the merged files that matter).
 2. Update design-vault/Roadmap.md (mark what's done; anything blocked under "## Blocked", anything not yet played under "## Needs a playtest") and Decisions.md, and the mechanic notes' status. ${ROADMAP_SHORT}
 3. ${SHIP_TICK}
-4. Change nothing else.
+4. ${FUN_RATE}
+5. Change nothing else.
 Finish with a short summary of the sprint.`,
       { origin: 'autopilot' }
     )
