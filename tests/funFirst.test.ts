@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { Autopilot, FUN_FIRST, FUN_QUESTIONS, MAKE_IT_FELT } from '../src/main/autopilot'
+import { Autopilot, FAST_TRACK_MODEL, FUN_FIRST, FUN_QUESTIONS, MAKE_IT_FELT, PUSH_LIMITS, SIMPLE_MODEL, sprintMax } from '../src/main/autopilot'
 import { CostTracker } from '../src/main/costs'
 import { ProjectRegistry } from '../src/main/projects'
 import { ReviewStore } from '../src/main/reviews'
@@ -22,21 +22,23 @@ function setup(config: Record<string, unknown> = {}) {
   registry.update(project.id, { settings: { autonomous: true } })
   const reviews = new ReviewStore(join(tmp('hangar-fun-r-'), 'r.json'))
   const sent: { agent: string; prompt: string }[] = []
+  const sentModels: (string | undefined)[] = []
   const ap = new Autopilot({
     file: join(tmp('hangar-fun-a-'), 'a.json'),
     registry,
     reviews,
     costs: new CostTracker(join(tmp('hangar-fun-c-'), 'c.json')),
     emit: () => {},
-    send: (_p, agent, prompt) => {
+    send: (_p, agent, prompt, opts) => {
       sent.push({ agent, prompt })
+      sentModels.push(opts.model)
     },
     merge: async () => {}
   })
   const done = (prompt: string, agent: string, extra: { text?: string; origin?: 'autopilot' | 'autopilot-report' } = {}) =>
     ap.onTaskDone({ projectId: project.id, agentId: agent, task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: null })
   ap.start(project.id, { config: { sprintTasks: 0, fastStart: false, checkIns: true, ...config } as never })
-  return { project, sent, ap, done }
+  return { project, sent, sentModels, ap, done }
 }
 
 test('fun first: sprint 1 aims at a playable core loop, and its check-in rates the game as a new player', () => {
@@ -86,4 +88,36 @@ test('check-in: the Fun check section is read on its own, and older check-ins ha
   assert.deepEqual(c.next, ['Coin sound'])
   assert.doesNotMatch(c.tryIt, /Goal/)
   assert.equal(parseCheckin('## Built\n- Coins\n## Next sprint\n- More').fun, '')
+})
+
+test('fast track: Fable plans, leads and builds the hard pieces, sprints plan up to 6 pieces, and plans push the limits', () => {
+  const t = setup({ fastTrack: true })
+  // Sprint 1 (one task at a time while the design is set up): the Lead works on Fable.
+  assert.equal(t.sentModels.at(-1), FAST_TRACK_MODEL)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: 'Set up.\nSprint complete.' })
+  t.done(t.sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Setup\n## Next sprint\n- Bots' })
+  t.ap.start(t.project.id)
+  const planPrompt = t.sent.at(-1)!.prompt
+  assert.ok(has(planPrompt, PUSH_LIMITS) && has(planPrompt, 'Pick the next 2–6 most valuable pieces'))
+  assert.equal(t.sentModels.at(-1), FAST_TRACK_MODEL)
+  t.done(planPrompt, 'planner', {
+    text: plan([
+      { agent: 'scripter', title: 'Boss fight', brief: 'A boss.', files: ['src/server/Boss.luau'], size: 'hard' },
+      { agent: 'ui-builder', title: 'Coin colour', brief: 'Gold coins.', files: ['src/client/Hud.luau'], size: 'simple' }
+    ])
+  })
+  const models = Object.fromEntries(t.sent.slice(-2).map((s, i) => [s.agent, t.sentModels.at(-2 + i)]))
+  assert.deepEqual(models, { scripter: FAST_TRACK_MODEL, 'ui-builder': SIMPLE_MODEL })
+})
+
+test('fast track off: the usual limit, the builders\' own models, no push-the-limits rule', () => {
+  assert.equal(sprintMax({ sprintTasks: 0, fastTrack: false }), 4)
+  assert.equal(sprintMax({ sprintTasks: 0, fastTrack: true }), 6)
+  assert.equal(sprintMax({ sprintTasks: 3, fastTrack: true }), 3, 'never more than you set')
+  const t = setup()
+  assert.equal(t.sentModels.at(-1), undefined)
+  t.done(t.sent.at(-1)!.prompt, 'lead', { text: 'Set up.\nSprint complete.' })
+  t.done(t.sent.at(-1)!.prompt, 'lead', { origin: 'autopilot-report', text: '## Built\n- Setup\n## Next sprint\n- Bots' })
+  t.ap.start(t.project.id)
+  assert.ok(!has(t.sent.at(-1)!.prompt, PUSH_LIMITS) && has(t.sent.at(-1)!.prompt, 'Pick the next 2–4'))
 })

@@ -561,6 +561,12 @@ export interface AutopilotConfig {
   fastStart?: boolean
   /** The model the Lead plans sprints with (a fast MVP start uses Fable unless this says otherwise). Missing: the Lead's own. */
   plannerModel?: string | null
+  /**
+   * Fast track (off unless turned on): Fable plans every sprint, leads one-task-at-a-time steps and builds the hard
+   * pieces (simple ones stay on Sonnet), sprints plan up to FAST_TRACK_ITEMS pieces, and the prompts aim for the most
+   * the game can be rather than the minimum. Uses plan limits or budget much faster.
+   */
+  fastTrack?: boolean
 }
 
 /** One piece of a sprint built in parallel: who builds it, the Lead's brief, and how it went. */

@@ -499,8 +499,14 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
       <label className="field">
         <span className="field-label">Planning model</span>
         <ModelSelect value={ap.config.plannerModel ?? ''} onChange={(m) => save({ plannerModel: m || null })} inheritLabel="Same as the Lead" />
-        <span className="field-hint">Plans each sprint's pieces. The builders keep their own models.</span>
+        <span className="field-hint">Plans each sprint's pieces. {ap.config.fastTrack ? 'Fast track plans on Fable unless you pick one here.' : 'The builders keep their own models.'}</span>
       </label>
+      <Toggle
+        checked={ap.config.fastTrack === true}
+        onChange={(v) => save({ fastTrack: v })}
+        label="Fast track with Fable"
+        hint="Improves the game as fast as possible and pushes it to the limit: Fable plans and leads every sprint and builds the hard pieces (small ones stay on Sonnet), sprints plan up to 6 pieces at once, and the plans aim for the most the game can be. Uses your plan's limits or budget much faster."
+      />
       <Toggle
         checked={ap.config.parallel !== false}
         onChange={(v) => save({ parallel: v })}
