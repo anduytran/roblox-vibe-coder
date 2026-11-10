@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { IdeaCategory, IdeaChatMessage } from '@shared/types'
 import { IDEA_CATEGORIES } from '@shared/ideas'
-import { attempt, clearIdeaChatDraft, closeIdeaChat, confirmDialog, useStore } from '../store'
+import { attempt, clearIdeaChatDraft, closeIdeaChat, confirmDialog, openWizard, useStore } from '../store'
 import { IdeaCard } from './ideas'
 import { Button, useEscape } from './ui'
 import { SafeText } from './SafeText'
@@ -93,6 +93,17 @@ export function IdeaChat() {
       })
       .finally(() => setBusy(false))
   }
+  // The whole conversation becomes the design document the agents plan the full game from.
+  const [writing, setWriting] = useState(false)
+  const create = (): void => {
+    if (busy || writing) return
+    setWriting(true)
+    void attempt(() => window.hangar.ideaChat.designDoc())
+      .then((d) => {
+        if (d) openWizard({ name: d.name, genre: d.genre, idea: d.pitch ? `${d.pitch}\n\nThe full design from Brainstorm is in the attached document.` : 'The full design from Brainstorm is in the attached document.', document: d.document })
+      })
+      .finally(() => setWriting(false))
+  }
   const startOver = async (): Promise<void> => {
     const ok = await confirmDialog({ title: 'Start over?', body: 'This conversation is cleared. Starred briefs stay in Saved.', confirmLabel: 'Start over', tone: 'danger' })
     if (ok) void attempt(async () => setMessages(await window.hangar.ideaChat.clear()))
@@ -103,6 +114,11 @@ export function IdeaChat() {
       <header className="chat-panel-head">
         <h3>Brainstorm</h3>
         <span className="spacer" />
+        {messages.some((m) => m.role === 'assistant') && (
+          <Button size="sm" tone="primary" disabled={busy || writing} onClick={create} title="Turns this conversation into a design document for the agents, then opens New game with it attached">
+            {writing ? 'Writing the design doc…' : 'Create this game'}
+          </Button>
+        )}
         {messages.length > 0 && (
           <Button size="sm" tone="ghost" disabled={busy} onClick={() => void startOver()}>
             Start over
@@ -135,7 +151,17 @@ export function IdeaChat() {
         {messages.map((m) => (
           <div key={m.id} className={`chat-msg chat-${m.role}`}>
             {m.role === 'assistant' ? <SafeText className="chat-bubble" text={m.text} /> : <div className="chat-bubble">{m.text}</div>}
-            {m.idea && <IdeaCard idea={m.idea} />}
+            {m.images?.length ? <ChatImages images={m.images} /> : null}
+            {m.searches?.length ? (
+              <div className="chat-searches">
+                {m.searches.map((q) => (
+                  <button key={q} className="chat-starter" title="Opens an image search in your browser" onClick={() => void attempt(() => window.hangar.system.openUrl(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`))}>
+                    Search images: {q}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {m.idea && <IdeaCard idea={m.idea} onCreate={create} />}
           </div>
         ))}
         {busy && (
@@ -165,5 +191,26 @@ export function IdeaChat() {
       </div>
       <p className="small muted chat-panel-foot">Claude sees the current Roblox trends. It can't use tools or touch your projects. Star a brief to save it.</p>
     </aside>
+  )
+}
+
+/** Only pictures Hangar made itself: inline images (an SVG in an <img> can't run scripts or load anything). */
+const SAFE_SRC = /^data:image\/(svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/
+
+function ChatImages({ images }: { images: NonNullable<IdeaChatMessage['images']> }) {
+  const [big, setBig] = useState<string | null>(null)
+  return (
+    <div className="chat-images">
+      {images
+        .filter((i) => SAFE_SRC.test(i.src))
+        .map((i, n) => (
+          <figure key={n} className={`chat-image ${big === i.src ? 'chat-image-big' : ''}`}>
+            <button className="chat-image-btn" onClick={() => setBig(big === i.src ? null : i.src)} title={big === i.src ? 'Smaller' : 'Bigger'}>
+              <img src={i.src} alt={i.caption} />
+            </button>
+            <figcaption className="small muted">{i.kind === 'roblox' ? `Roblox: ${i.caption}` : i.caption}</figcaption>
+          </figure>
+        ))}
+    </div>
   )
 }

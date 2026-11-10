@@ -39,7 +39,7 @@ import { convertMessage, type StreamMessage } from './sdkMessages'
  */
 type ListId = TrendingGame['lists'][number]['list']
 const LISTS: Record<ListId, number> = { 'top-trending': 1, 'up-and-coming': 0.9, 'top-playing-now': 0.6 }
-const HOSTS = new Set(['apis.roblox.com', 'games.roblox.com'])
+const HOSTS = new Set(['apis.roblox.com', 'games.roblox.com', 'thumbnails.roblox.com'])
 const MAX_RESPONSE = 3 * 1024 * 1024
 const DAY = 24 * 3600 * 1000
 
@@ -71,6 +71,78 @@ export const robloxGet: JsonGet = (url) =>
     req.on('error', reject)
     req.end()
   })
+
+/** Where Roblox serves the images its thumbnail API points to. */
+const IMAGE_HOST = /^[a-z0-9-]+\.rbxcdn\.com$/
+const MAX_IMAGE = 400 * 1024
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+export type ImageGet = (url: string) => Promise<string>
+
+/** Download one image from Roblox's image servers (nothing else) as a data: URL. */
+export const robloxImage: ImageGet = (url) =>
+  new Promise((resolveGet, reject) => {
+    const u = new URL(url)
+    if (u.protocol !== 'https:' || !IMAGE_HOST.test(u.hostname)) return reject(new Error('Host not allowed.'))
+    const req = request({ host: u.hostname, path: u.pathname + u.search, method: 'GET', headers: { accept: 'image/*' }, timeout: 15_000 }, (res) => {
+      const type = String(res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase()
+      if ((res.statusCode ?? 0) >= 400 || !IMAGE_TYPES.has(type)) {
+        res.resume()
+        return reject(new Error('Not an image.'))
+      }
+      const chunks: Buffer[] = []
+      let size = 0
+      res.on('data', (c: Buffer) => {
+        size += c.length
+        if (size > MAX_IMAGE) req.destroy(new Error('Image too large.'))
+        else chunks.push(c)
+      })
+      res.on('end', () => resolveGet(`data:${type};base64,${Buffer.concat(chunks).toString('base64')}`))
+    })
+    req.on('timeout', () => req.destroy(new Error('Roblox took too long to answer.')))
+    req.on('error', reject)
+    req.end()
+  })
+
+const MAX_SVG = 24_000
+
+/**
+ * One of Claude's SVG sketches as a data: URL, or null. The window shows it as an <img>, where an SVG can't run
+ * scripts or load anything; it's still cut down to drawing elements here, since it was written with web-sourced
+ * trend text in view.
+ */
+export function sketchImage(svg: string): string | null {
+  let s = svg.trim()
+  if (s.length > MAX_SVG || !/^<svg[\s>]/i.test(s) || !/<\/svg>\s*$/i.test(s)) return null
+  s = s
+    .replace(/<(script|foreignObject|iframe|object|embed|audio|video|image|use|a|style)\b[\s\S]*?(<\/\1>|\/>)/gi, '')
+    .replace(/\s(on\w+|href|xlink:href|src)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, 'none')
+    .replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), '')
+  if (/<(script|foreignObject|iframe|image|use)\b/i.test(s)) return null
+  if (!/xmlns=/.test(s.slice(0, 300))) s = s.replace(/^<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"')
+  return `data:image/svg+xml;base64,${Buffer.from(s, 'utf8').toString('base64')}`
+}
+
+/**
+ * What a Brainstorm reply shows besides its text: ```svg sketches, [roblox: game] screenshots (trending games only)
+ * and [search: words] image searches. Returns the text without them.
+ */
+export function replyPictures(reply: string): { text: string; sketches: { caption: string; svg: string }[]; roblox: string[]; searches: string[] } {
+  const sketches: { caption: string; svg: string }[] = []
+  let out = reply.replace(/```svg[^\n]*\n([\s\S]*?)```/gi, (_m, svg: string) => {
+    const caption = /<title>([^<]{1,80})<\/title>/i.exec(svg)?.[1] ?? 'Sketch'
+    sketches.push({ caption: text(caption, 80), svg })
+    return ''
+  })
+  const roblox: string[] = []
+  const searches: string[] = []
+  out = out.replace(/^[ \t>*-]*\[(roblox|search):\s*([^\]\n]{1,100})\][ \t]*$/gim, (_m, kind: string, what: string) => {
+    ;(kind.toLowerCase() === 'roblox' ? roblox : searches).push(text(what, 100))
+    return ''
+  })
+  return { text: out.replace(/\n{3,}/g, '\n\n').trim(), sketches: sketches.slice(0, 3), roblox: [...new Set(roblox)].slice(0, 3), searches: [...new Set(searches)].slice(0, 4) }
+}
 
 const text = (v: unknown, max: number): string =>
   typeof v === 'string' ? v.replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), (c) => (c === '\n' ? ' ' : '')).replace(/\s+/g, ' ').trim().slice(0, max) : ''
@@ -279,7 +351,12 @@ Focus: ${ideaCategory(category).guide}
 ${RULES}
 - Be brief: under 80 words per reply unless asked for more. Short lists over paragraphs. No headings.
 - Ask what excites them, offer concrete options, and flag crowded spaces or anything Roblox can't run well on phones. Think in complete games, not demos.
-- When the user picks an idea or asks to save or create it, end with a \`\`\`json block holding an array with one brief: [${SHORT_SHAPE}]`
+- When the user picks an idea or asks to save or create it, end with a \`\`\`json block holding an array with one brief: [${SHORT_SHAPE}]
+- You can show pictures when they help (a look, a palette, a layout), at most 3 per reply:
+  - A sketch you draw: a \`\`\`svg block with one <svg viewBox="0 0 480 270"> under 6 KB, starting with a <title>: flat shapes and colours only (palettes, silhouettes, mood and composition, map or HUD layouts). No images, links, scripts or fonts.
+  - A Roblox game's screenshot: [roblox: exact game name] on its own line, only for games in the trending list above.
+  - An image search the user can open in their browser: [search: a few words] on its own line.
+  Never say you can't show images.`
 }
 
 const REFINE_PROMPT = `You develop ONE Roblox game concept as the user asks, and fill in its full details. ${UNTRUSTED}
@@ -287,6 +364,17 @@ const REFINE_PROMPT = `You develop ONE Roblox game concept as the user asks, and
 - ${RULES}
 - Be concise in every field.
 Reply with ONLY a \`\`\`json block holding an array with one object: [${DETAIL_SHAPE}]`
+
+/**
+ * "Create this game" from Brainstorm: the whole conversation becomes the design document the agents plan and build
+ * from, so the decisions made in it (modes, systems, feel, look) aren't lost to a two-line pitch.
+ */
+const DESIGN_DOC_PROMPT = `You turn a brainstorm between a game's owner and an assistant into the design document AI agents will build the whole game from (first the plan to launch, then every feature). ${UNTRUSTED}
+Write Markdown for an AI reader: terse and specific, no fluff, no retelling of the conversation.
+- Keep every decision the owner made as a "Decided:" line, true to their intent; later decisions replace earlier ones. Where the brainstorm left a gap, fill it with a sensible default marked "Assumed:" so the agents can change it. Put real unknowns under "## Open questions".
+- Sections, skipping any that don't apply: # <Game name>; ## Pitch; ## Core loop; ## Modes; ## Progression (what players earn and keep between visits); ## Systems and mechanics (how each works, with numbers where known); ## Combat feel; ## Content at launch (maps, enemies, bosses, items: how many); ## Art direction (style, palette as hex colours, lighting); ## Effects and audio; ## UI and HUD; ## Purchases (nothing pay-to-win); ## Reasons to come back; ## Platforms and performance; ## Not at launch; ## Open questions.
+- Describe the complete game at launch, not an MVP. At most about 2,000 words.
+Reply with only the document.`
 
 const MAX_CHAT_MESSAGES = 40
 const MAX_CHAT_CHARS = 4000
@@ -379,6 +467,8 @@ export class Trends {
     file: string,
     private readonly deps: {
       get?: JsonGet
+      /** Downloads a Roblox image as a data: URL (tests pass a fake). */
+      image?: ImageGet
       loadQuery?: () => Promise<QueryFn>
       getApiKey?: () => string | null
       getSettings?: () => AppSettings
@@ -502,8 +592,56 @@ export class Trends {
   }
 
   /** The idea brainstorm conversation. */
+  /** Screenshots of the named games, only those in the trending list, fetched from Roblox. Missing ones are skipped. */
+  private async robloxShots(names: string[], games: TrendingGame[]): Promise<NonNullable<IdeaChatMessage['images']>> {
+    const out: NonNullable<IdeaChatMessage['images']> = []
+    for (const name of names) {
+      const want = name.toLowerCase()
+      const game = games.find((g) => g.name.toLowerCase() === want) ?? games.find((g) => g.name.toLowerCase().includes(want))
+      if (!game) continue
+      try {
+        const res = (await (this.deps.get ?? robloxGet)(
+          `https://thumbnails.roblox.com/v1/games/multiget/thumbnails?universeIds=${game.universeId}&countPerUniverse=1&defaults=true&size=480x270&format=Jpeg`
+        )) as { data?: { thumbnails?: { state?: unknown; imageUrl?: unknown }[] }[] }
+        const shot = res.data?.[0]?.thumbnails?.find((t) => t.state === 'Completed' && typeof t.imageUrl === 'string')
+        if (!shot) continue
+        out.push({ kind: 'roblox', caption: game.name, src: await (this.deps.image ?? robloxImage)(String(shot.imageUrl)) })
+      } catch {
+        // No picture for this one: the reply still names it.
+      }
+    }
+    return out
+  }
+
   chat(): IdeaChatMessage[] {
     return this.store.get().chat ?? []
+  }
+
+  /**
+   * The Brainstorm conversation as a design document for the agents, written by Fable (or Opus 5.5 when the plan is
+   * low): ready to attach to a new game. The game's name and genre come from the latest brief in the chat, if any.
+   */
+  async designDoc(): Promise<{ name: string; genre: string; title: string; pitch: string; document: { name: string; text: string } }> {
+    const chat = this.chat()
+    if (!chat.some((m) => m.role === 'user')) throw new Error('Brainstorm a game first, then create it.')
+    const idea = [...chat].reverse().find((m) => m.idea)?.idea
+    const transcript = chat
+      .map((m) => `${m.role === 'user' ? 'Owner' : 'Assistant'}: ${m.text}${m.images?.length ? `\n(Pictures shown: ${m.images.map((i) => i.caption).join('; ')})` : ''}`)
+      .join('\n\n')
+    const brief = idea ? `\n\nThe latest brief from the brainstorm: ${idea.title} (${idea.genre}): ${idea.pitch}` : ''
+    const out = await this.askNoTools(DESIGN_DOC_PROMPT, `Brainstorm:\n\n${transcript}${brief}\n\nWrite the design document.`, 'idea-design-doc')
+    // An agent's text: hidden characters removed, kept to a sensible size.
+    const doc = out.replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i, '$1').replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), '').trim().slice(0, 60_000)
+    if (doc.length < 200) throw new Error("Claude didn't write the design document. Try again.")
+    const heading = /^#\s+(.{1,80})$/m.exec(doc)?.[1]?.trim()
+    const title = text(idea?.title ?? heading ?? 'New game', 80)
+    return {
+      name: title,
+      genre: idea?.genre ?? '',
+      title,
+      pitch: idea?.pitch ?? /^## Pitch\s*\n+([^\n#]{1,400})/m.exec(doc)?.[1]?.trim() ?? '',
+      document: { name: `${title} design doc (from Brainstorm).md`, text: doc }
+    }
   }
 
   clearChat(): IdeaChatMessage[] {
@@ -528,13 +666,31 @@ export class Trends {
       const history = [...this.chat(), { id: randomUUID(), role: 'user' as const, text: message, at: now }].slice(-MAX_CHAT_MESSAGES)
       const kind = ideaCategory(category).id
       const ideas = snap.ideas.length ? `\n\nIdeas on the dashboard:\n${snap.ideas.map((x, i) => `${i + 1}. ${x.title}: ${x.pitch}`).join('\n')}` : ''
-      const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n\n')
+      const transcript = history
+        .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}${m.images?.length ? `\n(Pictures shown: ${m.images.map((i) => i.caption).join('; ')})` : ''}`)
+        .join('\n\n')
       const out = await this.askNoTools(chatPrompt(kind), `${trendContext(snap, kind)}${ideas}\n\nConversation:\n\n${transcript}\n\nReply to the user's last message.`, 'idea-chat')
       const idea = parseIdeas(out, snap.games, snap.genres, { category: kind })[0]
+      const pics = replyPictures(out.replace(/```json[\s\S]*?```/g, ''))
+      const images = [
+        ...pics.sketches.flatMap((s) => {
+          const src = sketchImage(s.svg)
+          return src ? [{ kind: 'sketch' as const, caption: s.caption, src }] : []
+        }),
+        ...(await this.robloxShots(pics.roblox, snap.games))
+      ]
       // Hidden characters (direction overrides, zero-width) are removed so a reply reads as what it says.
-      const shown = out.replace(/```json[\s\S]*?```/g, '').replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), '').trim() || (idea ? `Here's the brief for ${idea.title}.` : '')
+      const shown = pics.text.replace(new RegExp(DECEPTIVE_CHARS.source, 'gu'), '').trim() || (idea ? `Here's the brief for ${idea.title}.` : images.length ? 'Here you go.' : '')
       if (!shown) throw new Error("Claude didn't answer. Try again.")
-      const reply: IdeaChatMessage = { id: randomUUID(), role: 'assistant', text: shown.slice(0, 12000), at: this.deps.now?.() ?? Date.now(), ...(idea ? { idea } : {}) }
+      const reply: IdeaChatMessage = {
+        id: randomUUID(),
+        role: 'assistant',
+        text: shown.slice(0, 12000),
+        at: this.deps.now?.() ?? Date.now(),
+        ...(idea ? { idea } : {}),
+        ...(images.length ? { images } : {}),
+        ...(pics.searches.length ? { searches: pics.searches } : {})
+      }
       const chat = [...history, reply].slice(-MAX_CHAT_MESSAGES)
       this.store.update((s) => ({ ...s, chat }))
       return chat

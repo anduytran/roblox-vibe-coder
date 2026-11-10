@@ -42,7 +42,7 @@ export interface StoreState {
   autopilot: Record<string, AutopilotState>
   trends: TrendsSnapshot | null
   /** The "New game" wizard, optionally prefilled (from a trending suggestion). */
-  wizard: { idea?: string; name?: string; genre?: string } | null
+  wizard: { idea?: string; name?: string; genre?: string; document?: { name: string; text: string } } | null
   /** The idea brainstorm chat, if open, with text to start the message box with. */
   ideaChat: { draft: string; category: IdeaCategory } | null
   /** The dashboard idea open on the refine screen. */

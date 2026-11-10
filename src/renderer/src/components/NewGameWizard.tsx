@@ -33,7 +33,7 @@ export function NewGameWizard() {
   const hasKey = useStore((s) => s.key.ready)
   const onPlan = settings?.authMode === 'max'
   const [idea, setIdea] = useState(prefill.idea ?? '')
-  const [doc, setDoc] = useState<{ name: string; text: string } | null>(null)
+  const [doc, setDoc] = useState<{ name: string; text: string } | null>(prefill.document ?? null)
   // Until the user types a name, it follows the idea (or the attached document's title).
   const [typedName, setTypedName] = useState<string | null>(prefill.name ?? null)
   const name = typedName ?? suggestGameName(idea, doc)

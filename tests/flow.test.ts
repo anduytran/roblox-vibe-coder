@@ -14,7 +14,7 @@ import { ReviewPipeline } from '../src/main/reviewPipeline'
 import { ReviewStore } from '../src/main/reviews'
 import { listRoles } from '../src/main/roles'
 import { createGameProject, freeProjectFolder, projectFolderName, sanitizeNewGame } from '../src/main/scaffold'
-import { fetchDiscovery, parseIdeas, robloxGet, scoreGames, scoreGenres, spaceSaturation, Trends, type JsonGet } from '../src/main/trending'
+import { fetchDiscovery, parseIdeas, replyPictures, robloxGet, robloxImage, scoreGames, scoreGenres, sketchImage, spaceSaturation, Trends, type JsonGet } from '../src/main/trending'
 
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms))
@@ -315,6 +315,95 @@ test('ideas: Brainstorm and ideas run on Fable while the plan has room (else Opu
   costs.recordPlan({ rateLimitType: 'seven_day', utilization: 0.65, status: 'allowed', resetsAt: Date.now() + 86_400_000 })
   await trends.sendChat('Something with mail?', 'trend')
   assert.deepEqual(models[1], ['claude-opus-5-5', undefined])
+})
+
+test('brainstorm pictures: sketches are cut down to drawing, and only data: images come out', () => {
+  const svg = '<svg viewBox="0 0 10 10"><title>Palette</title><script>alert(1)</script><rect width="5" height="5" fill="#0ff" onload="x()"/><image href="https://evil.example/a.png"/><a href="https://evil.example"><circle r="2"/></a><rect style="fill:url(https://evil.example/p)"/></svg>'
+  const src = sketchImage(svg)!
+  assert.match(src, /^data:image\/svg\+xml;base64,/)
+  const back = Buffer.from(src.split(',')[1]!, 'base64').toString('utf8')
+  assert.match(back, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/)
+  assert.match(back, /<rect width="5" height="5" fill="#0ff"\/>/)
+  assert.doesNotMatch(back, /script|onload|evil\.example|<image|<a /)
+  assert.equal(sketchImage('<div>no</div>'), null)
+  assert.equal(sketchImage(`<svg>${'x'.repeat(30_000)}</svg>`), null, 'too big')
+
+  const pics = replyPictures('Here is the look.\n```svg\n<svg viewBox="0 0 4 4"><title>Neon glyphs</title></svg>\n```\n[roblox: Cloud Parkour]\n- [search: Hades game screenshot]\n[search: Hades game screenshot]\nWant more?')
+  assert.equal(pics.text, 'Here is the look.\n\nWant more?')
+  assert.deepEqual(pics.sketches.map((s) => s.caption), ['Neon glyphs'])
+  assert.deepEqual(pics.roblox, ['Cloud Parkour'])
+  assert.deepEqual(pics.searches, ['Hades game screenshot'], 'once each')
+})
+
+test('brainstorm pictures: a reply shows its sketch, a trending game\'s screenshot from Roblox, and image searches', async () => {
+  const { get: base } = fakeRoblox()
+  const fetched: string[] = []
+  const get: JsonGet = async (url) => {
+    if (url.startsWith('https://thumbnails.roblox.com/')) {
+      fetched.push(url)
+      return { data: [{ thumbnails: [{ state: 'Completed', imageUrl: 'https://tr.rbxcdn.com/abc/480/270/Image/Jpeg' }] }] }
+    }
+    return base(url)
+  }
+  const reply = 'Two looks.\n```svg\n<svg viewBox="0 0 4 4"><title>Palette</title><rect width="4" height="4" fill="#111"/></svg>\n```\n[roblox: Cloud Parkour]\n[roblox: Not A Trending Game]\n[search: emissive runes concept art]'
+  const query: QueryFn = () =>
+    (async function* () {
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const settings: AppSettings = { defaultModel: 'm', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
+  const images: string[] = []
+  const trends = new Trends(join(tmp('hangar-pics-'), 't.json'), {
+    get,
+    image: async (url) => (images.push(url), 'data:image/jpeg;base64,AAAA'),
+    loadQuery: async () => query,
+    getApiKey: () => 'k',
+    getSettings: () => settings,
+    engineAuth: async () => ({ env: {}, release: () => {} })
+  })
+  const chat = await trends.sendChat('Show me the look', 'trend')
+  const last = chat.at(-1)!
+  assert.equal(last.text, 'Two looks.')
+  assert.deepEqual(last.images?.map((i) => [i.kind, i.caption]), [['sketch', 'Palette'], ['roblox', 'Cloud Parkour']], 'a game not in the trending list gets no picture')
+  assert.match(fetched[0]!, /universeIds=10&/)
+  assert.deepEqual(images, ['https://tr.rbxcdn.com/abc/480/270/Image/Jpeg'])
+  assert.deepEqual(last.searches, ['emissive runes concept art'])
+  // Hangar only downloads pictures from Roblox's image servers.
+  await assert.rejects(robloxImage('https://evil.example/a.png'), /Host not allowed/)
+  await assert.rejects(robloxImage('http://tr.rbxcdn.com/a.png'), /Host not allowed/)
+  await assert.rejects(robloxImage('https://tr.rbxcdn.com.evil.example/a.png'), /Host not allowed/)
+})
+
+test('brainstorm → create: the conversation becomes a design doc for the agents, written on Fable, ready to attach', async () => {
+  const { get } = fakeRoblox()
+  const calls: { system: string; prompt: string; model: unknown }[] = []
+  let reply = 'Locked: Story Endless + Domains.\n```json\n[{"title":"Glyphfall","pitch":"Co-op elemental horde runs","genre":"Action","scope":"large","inspiredBy":[]}]\n```'
+  const query: QueryFn = ({ prompt, options }) =>
+    (async function* () {
+      calls.push({ system: String(options.systemPrompt), prompt, model: options.model })
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const settings: AppSettings = { defaultModel: 'claude-sonnet-5-5', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'apiKey', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
+  const trends = new Trends(join(tmp('hangar-doc-'), 't.json'), { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async () => ({ env: {}, release: () => {} }) })
+  await assert.rejects(trends.designDoc(), /Brainstorm a game first/)
+  await trends.sendChat('Main progression is the endless story mode; domains are a separate grind for builds. Parry must feel great.', 'trend')
+  reply = '```markdown\n# Glyphfall\n## Pitch\nCo-op elemental horde runs through living ruins.\n## Modes\n- Decided: Story Endless is the main mode.\n- Decided: Domains are a separate build grind.\n## Combat feel\n- Decided: parry and dodge feel rewarding.\n- Assumed: parry window 0.2 s.\n## Open questions\n- How many elements at launch?‮\n```'
+  const d = await trends.designDoc()
+  const last = calls.at(-1)!
+  assert.equal(last.model, 'claude-fable-5-1')
+  assert.match(last.system, /"Decided:"/)
+  assert.match(last.system, /complete game at launch, not an MVP/)
+  assert.match(last.prompt, /Owner: Main progression is the endless story mode/)
+  assert.match(last.prompt, /latest brief from the brainstorm: Glyphfall/)
+  assert.equal(d.name, 'Glyphfall')
+  assert.equal(d.genre, 'Action')
+  assert.equal(d.pitch, 'Co-op elemental horde runs')
+  assert.match(d.document.name, /^Glyphfall design doc/)
+  assert.match(d.document.text, /^# Glyphfall\n/, 'the code fence is unwrapped')
+  assert.doesNotMatch(d.document.text, /‮/, 'hidden characters removed')
+  reply = 'Sorry.'
+  await assert.rejects(trends.designDoc(), /didn't write the design document/)
 })
 
 test('ideas: kinds steer the prompt, ideas start short, details come on request, and saved ideas stay', async () => {

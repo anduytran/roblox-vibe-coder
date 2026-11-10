@@ -201,3 +201,6 @@ These can't be tested without the real Agent SDK and are worth checking once:
 ## Reporting
 
 This is a personal project. If you find a problem, open an issue in the repository.
+
+## Brainstorm pictures
+- Brainstorm replies can include pictures, shown only as `data:` images (the window's CSP allows no web images). Claude's SVG sketches are cut down to drawing elements (no scripts, links, external images, `url()` or event handlers) and shown in an `<img>`, where an SVG can't run code or load anything. Roblox screenshots are fetched by Hangar, only for games in the trending list, from `thumbnails.roblox.com` and `*.rbxcdn.com` (https, image types only, 400 KB max). Suggested image searches open in the browser only after Hangar asks.

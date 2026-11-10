@@ -47,6 +47,7 @@ test('build out: the first plan covers the whole game to launch, on Fable, and e
   const first = t.sent.at(-1)!
   assert.match(first.prompt, /^Autopilot: plan sprint 1 \(full game start\)/)
   assert.ok(first.prompt.includes(LAUNCH_PLAN) && first.prompt.includes(BUILD_OUT))
+  assert.match(LAUNCH_PLAN, /it's your source: keep every "Decided:" item/, 'a Brainstorm design doc leads the plan')
   assert.doesNotMatch(first.prompt, /fast MVP|playable MVP as fast/)
   assert.equal(first.model, BUILD_OUT_MODEL)
   t.done(first.prompt, first.agent, {

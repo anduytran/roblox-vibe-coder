@@ -90,7 +90,7 @@ export function SaveStar({ idea }: { idea: GameIdea }) {
 }
 
 /** A short idea card. Ideas in the list or in Saved open the refine screen when clicked (or are picked, in Compare). */
-export function IdeaCard({ idea, rank, select }: { idea: GameIdea; rank?: number; select?: { selected: boolean; onToggle: () => void } }) {
+export function IdeaCard({ idea, rank, select, onCreate }: { idea: GameIdea; rank?: number; select?: { selected: boolean; onToggle: () => void }; onCreate?: () => void }) {
   const known = useStore((s) => !!(s.trends?.ideas.some((x) => x.id === idea.id) || s.trends?.saved.some((x) => x.id === idea.id)))
   // In Compare mode a click picks the card instead of opening it.
   const open = (): void => (select ? select.onToggle() : openIdeaRefine(idea.id))
@@ -140,7 +140,7 @@ export function IdeaCard({ idea, rank, select }: { idea: GameIdea; rank?: number
           {idea.detailed ? ' · detailed' : ''}
         </span>
         <span className="row gap-xs" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-          <Button size="sm" onClick={() => openWizard(ideaBrief(idea))}>
+          <Button size="sm" onClick={() => (onCreate ? onCreate() : openWizard(ideaBrief(idea)))}>
             Create this game
           </Button>
         </span>

@@ -1017,6 +1017,7 @@ app.whenReady().then(() => {
   handle(IPC.ideaChatGet, () => trends.chat())
   handle(IPC.ideaChatSend, (text: unknown, category: unknown) => trends.sendChat(str(text, 'message'), ideaCategory(typeof category === 'string' ? category : undefined).id))
   handle(IPC.ideaChatClear, () => trends.clearChat())
+  handle(IPC.ideaChatDesignDoc, () => trends.designDoc())
 
   // Phone remote
   handle(IPC.remoteStatus, () => remote!.status())

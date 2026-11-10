@@ -56,7 +56,8 @@ const api: HangarApi = {
   ideaChat: {
     get: () => invoke(IPC.ideaChatGet),
     send: (text, category) => invoke(IPC.ideaChatSend, text, category),
-    clear: () => invoke(IPC.ideaChatClear)
+    clear: () => invoke(IPC.ideaChatClear),
+    designDoc: () => invoke(IPC.ideaChatDesignDoc)
   },
   roles: {
     list: (id) => invoke(IPC.rolesList, id),

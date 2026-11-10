@@ -141,6 +141,7 @@ export const IPC = {
   ideaChatGet: 'ideaChat:get',
   ideaChatSend: 'ideaChat:send',
   ideaChatClear: 'ideaChat:clear',
+  ideaChatDesignDoc: 'ideaChat:designDoc',
   agentEvent: 'agent:event'
 } as const
 
@@ -230,6 +231,8 @@ export interface HangarApi {
     /** Resolves with the whole conversation, including Claude's reply. */
     send(text: string, category?: IdeaCategory): Promise<IdeaChatMessage[]>
     clear(): Promise<IdeaChatMessage[]>
+    /** The conversation as a design document for the agents (Fable, or Opus 5.5), to create the game from. */
+    designDoc(): Promise<{ name: string; genre: string; title: string; pitch: string; document: { name: string; text: string } }>
   }
   roles: {
     list(projectId: string): Promise<Role[]>

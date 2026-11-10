@@ -268,7 +268,7 @@ export const BUILD_OUT_FALLBACK = 'claude-opus-5-5'
 export const BUILD_OUT = `You're building out the full game: everything in design-vault/Roadmap.md up to a complete game players can keep coming back to and that can launch publicly, not an MVP or a demo. Work through the milestones in order and plan the full set of pieces each sprint. Build each feature properly (real content, sound, effects, UI and saving where they belong), not as a placeholder to fill in later, and keep what already works working.`
 
 /** A new game's first plan when building out: the whole way to launch, then the first sprint. */
-export const LAUNCH_PLAN = `Plan the whole game up to launch, not an MVP:
+export const LAUNCH_PLAN = `Plan the whole game up to launch, not an MVP. If Brief.md has an attached design document (for example one written from the owner's brainstorm), it's your source: keep every "Decided:" item, use the "Assumed:" ones unless they clash with the rest, and carry its open questions into Roadmap.md as items to decide.
 - design-vault/Game Overview.md: pitch, core loop, progression (what players earn and keep), the full content list (maps, modes, enemies, items, as the game needs), what's for sale, and why players come back. At most about 400 words.
 - design-vault/Roadmap.md: the milestones from here to a complete, launchable game, in build order (for example: core loop playable; content and progression with saving; feel and polish with sound, effects, animation and onboarding; purchases and retention; launch readiness on phones). Under each, the features it needs, one line each with how you'll know it's done. At most about 80 lines.
 - Make design-vault/Ship Checklist.md match: add any item the launch needs that it's missing.`

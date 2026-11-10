@@ -745,6 +745,13 @@ export interface IdeaChatMessage {
   at: number
   /** A game brief Claude proposed in this reply, ready for the New game wizard. */
   idea?: GameIdea
+  /**
+   * Pictures in this reply, as data: URLs (the window loads no images from the web): Claude's own SVG sketches, and
+   * screenshots of Roblox games from the trending list, fetched by Hangar from Roblox.
+   */
+  images?: { kind: 'sketch' | 'roblox'; caption: string; src: string }[]
+  /** Image searches Claude suggested; each opens in your browser after Hangar asks. */
+  searches?: string[]
 }
 
 export interface TrendsSnapshot {

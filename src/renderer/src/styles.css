@@ -2416,6 +2416,50 @@ button.file-item {
   background: var(--hover);
   color: var(--text);
 }
+/* Pictures in a Brainstorm reply: sketches and Roblox screenshots, click to enlarge */
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.chat-image {
+  margin: 0;
+  width: calc(50% - 4px);
+  min-width: 160px;
+}
+.chat-image-big {
+  width: 100%;
+}
+.chat-image-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--raised);
+  cursor: zoom-in;
+}
+.chat-image-big .chat-image-btn {
+  cursor: zoom-out;
+}
+.chat-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+.chat-image figcaption {
+  margin-top: 2px;
+}
+.chat-searches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
 .chat-msg {
   display: flex;
   flex-direction: column;
