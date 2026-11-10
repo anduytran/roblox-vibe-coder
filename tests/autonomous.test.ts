@@ -218,9 +218,10 @@ test('autonomous policy: edits and Studio playtest tools run freely; risky Studi
   for (const t of ['start_stop_play', 'character_navigation', 'user_keyboard_input', 'run_script_in_play_mode', 'get_console_output', 'screen_capture']) {
     assert.equal(ev(`mcp__Roblox_Studio__${t}`).action, 'allow', t)
   }
-  for (const t of ['execute_luau', 'insert_asset', 'http_get', 'multi_edit', 'generate_mesh', 'upload_image']) {
+  for (const t of ['insert_asset', 'http_get', 'multi_edit', 'generate_mesh', 'upload_image']) {
     assert.equal(ev(`mcp__Roblox_Studio__${t}`).action, 'ask', t)
   }
+  assert.equal(ev('mcp__Roblox_Studio__execute_luau', { code: 'print(workspace.Name)' }).action, 'allow')
   assert.equal(ev('Write', { file_path: '.mcp.json' }).action, 'ask')
   assert.equal(ev('Write', { file_path: '../outside.txt' }).action, 'ask')
   assert.equal(ev('WebFetch', { url: 'https://x.example' }).action, 'ask')

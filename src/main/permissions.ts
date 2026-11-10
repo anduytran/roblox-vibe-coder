@@ -39,10 +39,10 @@ const STUDIO_READ_TOOLS = new Set([
 
 /**
  * Studio tools an autonomous agent may use without asking: playtesting, running test scripts in play
- * mode (changes are thrown away when play stops) and simulated player input. Still asking: running
- * Luau in edit mode (execute_luau can rewrite scripts, insert assets or use the network outside git
- * review), inserting Toolbox assets (common source of backdoor scripts), AI generation, uploads,
- * Studio's own web fetch, and direct script edits.
+ * mode (changes are thrown away when play stops) and simulated player input. Edit-mode Luau
+ * (execute_luau) runs without asking in every mode unless it reaches outside the place (see
+ * STUDIO_REACHES_OUT). Still asking: inserting Toolbox assets (common source of backdoor scripts), AI
+ * generation, uploads, Studio's own web fetch, and direct script edits.
  */
 const STUDIO_AUTONOMOUS_TOOLS = new Set([
   'start_stop_play',
@@ -52,6 +52,16 @@ const STUDIO_AUTONOMOUS_TOOLS = new Set([
   'user_keyboard_input',
   'user_mouse_input'
 ])
+
+/**
+ * Edit-mode Luau runs without asking (your choice: Studio work shouldn't wait on clicks), unless the code reaches
+ * outside the place: live data stores and messaging (real players' data once Studio API access is on), the network,
+ * publishing or saving, assets loaded by ID (a common way in for backdoors), or code built from strings, which hides
+ * what it does. A text check, not a sandbox: Studio runs outside Hangar's sandbox, and changes to the place still
+ * reach git only through Rojo-synced files and review.
+ */
+export const STUDIO_REACHES_OUT =
+  /\b(DataStoreService|MemoryStoreService|MessagingService|HttpService|HttpRbxApiService|OpenCloudService|InsertService|AssetService|MarketplaceService|TeleportService|BadgeService|GroupService|PublishService|LoadAsset\w*|SavePlace|PublishAsync|loadstring|getfenv|setfenv)\b|\brequire\s*\(\s*\d|GetService\s*\(\s*[^"'\s)]|:\s*GetService\s*\(\s*["'][^"']*["']\s*\.\./
 
 // ---------- shell commands ----------
 
@@ -209,6 +219,12 @@ export function evaluateToolUse(args: {
     const tool = toolName.slice(studioPrefix.length)
     if (STUDIO_READ_TOOLS.has(tool)) return { action: 'allow' }
     if (settings.autonomous && STUDIO_AUTONOMOUS_TOOLS.has(tool)) return { action: 'allow' }
+    if (tool === 'execute_luau') {
+      if (allStrings(input).some((s) => STUDIO_REACHES_OUT.test(s))) {
+        return ask('Runs Luau in Studio that reaches outside the place (data stores, the network, publishing, assets by ID, or code built from strings). Read it before allowing.', true)
+      }
+      return { action: 'allow' }
+    }
   }
 
   const blenderPrefix = `mcp__${BLENDER_MCP_NAME}__`

