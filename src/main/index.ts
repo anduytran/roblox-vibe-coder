@@ -513,7 +513,7 @@ app.whenReady().then(() => {
     merge: (id) => reviewActions.merge(id),
     fixClash: (id) => reviewActions.fixClash(id),
     usesPlan: () => settings.get().authMode === 'max',
-    fableOk: () => fableHeadroom(costs.planUsage(), planLimitsFor(settings.get()))
+    fableOk: (ifUnknown) => fableHeadroom(costs.planUsage(), planLimitsFor(settings.get()), ifUnknown)
   })
   // Nothing is running yet, so actions set aside before Hangar closed belong to tasks that are over.
   autopilot.clearSetAside()

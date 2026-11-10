@@ -570,10 +570,12 @@ export interface AutopilotConfig {
   /**
    * Build out the full game (on for new games): the first plan covers everything up to a complete, launchable game
    * (not an MVP), and sprints work through it, up to FAST_TRACK_ITEMS pieces each, until only the owner's launch
-   * tasks are left; then it turns itself off. Planning, leading and every piece run on Fable while the plan's usage
-   * allows, otherwise on Opus 5.5.
+   * tasks are left; then it turns itself off. Planning and leading run on Fable while the plan's usage allows,
+   * otherwise on Opus 5.5; pieces are built on Opus 5.5 (see buildOnFable).
    */
   buildOut?: boolean
+  /** Building out: build the pieces on Fable too (off: Opus 5.5), while the plan's usage is known to have room. */
+  buildOnFable?: boolean
 }
 
 /** One piece of a sprint built in parallel: who builds it, the Lead's brief, and how it went. */

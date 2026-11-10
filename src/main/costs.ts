@@ -26,22 +26,30 @@ export interface RateLimitInfo {
 
 export const DEFAULT_PLAN_LIMITS: AppSettings['planLimits'] = { fiveHourPct: 90, weeklyPct: 80 }
 
+/** A usage reading older than this says nothing about now. */
+const USAGE_FRESH_MS = 6 * 3600 * 1000
+
 /**
- * Whether the plan leaves room for Fable, which uses it about twice as fast as Opus: a margin under your own limits
- * (and at most 70% of the 5-hour and 60% of the weekly window), so the rest of the build still fits on Opus.
- * Null limits (an API key): yes, the dollar budgets apply instead.
+ * Whether the plan leaves room for Fable, which uses it about 2.5 times as fast as Opus: a margin under your own
+ * limits (and at most 70% of the 5-hour and 60% of the weekly window), so the rest of the build still fits on Opus.
+ * When Hangar can't tell (some sign-ins never report percentages, and a reading goes stale), the answer is
+ * `ifUnknown`: assuming room there sent every piece of a build to Fable. Null limits (an API key): yes, the dollar
+ * budgets apply instead.
  */
-export function fableHeadroom(usage: PlanUsage | null, limits: AppSettings['planLimits'] | null): boolean {
-  if (!limits || !usage) return true
-  if (usage.blocked) return false
-  if (usage.fiveHour && usage.fiveHour.usedPct >= Math.min(limits.fiveHourPct - 20, 70)) return false
-  if (usage.weekly && usage.weekly.usedPct >= Math.min(limits.weeklyPct - 20, 60)) return false
-  return true
+export function fableHeadroom(usage: PlanUsage | null, limits: AppSettings['planLimits'] | null, ifUnknown = false, now = Date.now()): boolean {
+  if (!limits) return true
+  if (usage?.blocked) return false
+  const fresh = (w: PlanUsage['fiveHour']): w is NonNullable<PlanUsage['fiveHour']> => !!w && now - w.at < USAGE_FRESH_MS
+  const five = fresh(usage?.fiveHour ?? null) ? usage!.fiveHour : null
+  const week = fresh(usage?.weekly ?? null) ? usage!.weekly : null
+  if (five && five.usedPct >= Math.min(limits.fiveHourPct - 20, 70)) return false
+  if (week && week.usedPct >= Math.min(limits.weeklyPct - 20, 60)) return false
+  return five || week ? true : ifUnknown
 }
 
-/** Fable while the plan has room for it (see fableHeadroom), otherwise Opus 5.5. */
+/** Fable while the plan has room for it (see fableHeadroom; unknown counts as room, for a single reply), else Opus 5.5. */
 export function fableOrOpus(usage: PlanUsage | null, limits: AppSettings['planLimits'] | null): string {
-  return fableHeadroom(usage, limits) ? 'claude-fable-5-1' : 'claude-opus-5-5'
+  return fableHeadroom(usage, limits, true) ? 'claude-fable-5-1' : 'claude-opus-5-5'
 }
 
 /** The plan limits to enforce, or null when the dollar limits apply (API key). */

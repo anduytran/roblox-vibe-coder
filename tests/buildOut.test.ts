@@ -17,7 +17,7 @@ import { sanitizeNewGame } from '../src/main/scaffold'
 const tmp = (p: string): string => mkdtempSync(join(tmpdir(), p))
 const plan = (items: unknown[]): string => `Plan.\n\`\`\`json\n${JSON.stringify({ items })}\n\`\`\``
 
-function setup(fable: { ok: boolean }) {
+function setup(fable: { ok: boolean | 'unknown' }) {
   const dir = tmp('hangar-bo-')
   installTemplates(dir)
   mkdirSync(join(dir, 'design-vault'), { recursive: true })
@@ -33,14 +33,14 @@ function setup(fable: { ok: boolean }) {
     emit: () => {},
     send: (_p, agent, prompt, opts) => void sent.push({ agent, prompt, model: opts.model }),
     merge: async () => {},
-    fableOk: () => fable.ok
+    fableOk: (ifUnknown) => (fable.ok === 'unknown' ? ifUnknown : fable.ok)
   })
   const done = (prompt: string, agent: string, extra: { text?: string; origin?: 'autopilot' | 'autopilot-report' } = {}) =>
     ap.onTaskDone({ projectId: project.id, agentId: agent, task: { id: `t${sent.length}`, prompt, createdAt: 1, origin: extra.origin ?? 'autopilot' }, ok: true, stopped: false, text: extra.text ?? 'Built it.', error: null, reviewId: null })
   return { dir, project, sent, ap, done }
 }
 
-test('build out: the first plan covers the whole game to launch, on Fable, and every piece is built on Fable', () => {
+test('build out: the first plan covers the whole game to launch on Fable; pieces are built on Opus 5.5 unless you choose Fable', () => {
   const fable = { ok: true }
   const t = setup(fable)
   t.ap.start(t.project.id, { config: { sprintTasks: 0, buildOut: true, fastStart: true, checkIns: true } as never })
@@ -57,8 +57,18 @@ test('build out: the first plan covers the whole game to launch, on Fable, and e
     ])
   })
   const items = t.sent.slice(-2)
-  assert.deepEqual(items.map((i) => i.model), [BUILD_OUT_MODEL, BUILD_OUT_MODEL], 'simple pieces too: no Sonnet while building out')
+  assert.deepEqual(items.map((i) => i.model), [BUILD_OUT_FALLBACK, BUILD_OUT_FALLBACK], 'Opus 5.5 builds, simple pieces too: no Sonnet while building out')
   assert.ok(items.every((i) => !/fast MVP/.test(i.prompt)), 'pieces get the full QA pass, not the quick MVP check')
+})
+
+test('build out: with "Build the pieces on Fable" on, pieces go to Fable only while the plan is known to have room', () => {
+  for (const [ok, want] of [[true, BUILD_OUT_MODEL], ['unknown', BUILD_OUT_FALLBACK]] as const) {
+    const t = setup({ ok })
+    t.ap.start(t.project.id, { config: { sprintTasks: 0, buildOut: true, buildOnFable: true, fastStart: true, checkIns: true } as never })
+    assert.equal(t.sent.at(-1)!.model, BUILD_OUT_MODEL, 'planning stays on Fable when the usage is unknown')
+    t.done(t.sent.at(-1)!.prompt, t.sent.at(-1)!.agent, { text: plan([{ agent: 'scripter', title: 'Core', brief: 'b', files: ['src/server/A.luau'], size: 'hard' }]) })
+    assert.equal(t.sent.at(-1)!.model, want, String(ok))
+  }
 })
 
 test('build out: without room on the plan for Fable, planning and building run on Opus 5.5', () => {
@@ -92,13 +102,17 @@ test('build out: sprints plan up to 6 pieces, and the mode turns itself off once
 
 test('Fable headroom: a margin under your plan limits; API keys use budgets instead', () => {
   const limits = { fiveHourPct: 90, weeklyPct: 80 }
-  const usage = (five: number, week: number) => ({ fiveHour: { usedPct: five, resetsAt: null, at: 1 }, weekly: { usedPct: week, resetsAt: null, at: 1 }, blocked: null })
-  assert.equal(fableHeadroom(usage(20, 30), limits), true)
-  assert.equal(fableHeadroom(usage(70, 30), limits), false, '5-hour window: at most 70%')
-  assert.equal(fableHeadroom(usage(20, 60), limits), false, 'weekly window: at most 60%')
-  assert.equal(fableHeadroom(usage(50, 30), { fiveHourPct: 60, weeklyPct: 80 }), false, '20 points under your own limit')
+  const now = Date.now()
+  const usage = (five: number, week: number, at = now) => ({ fiveHour: { usedPct: five, resetsAt: null, at }, weekly: { usedPct: week, resetsAt: null, at }, blocked: null })
+  assert.equal(fableHeadroom(usage(20, 30), limits, false, now), true)
+  assert.equal(fableHeadroom(usage(70, 30), limits, false, now), false, '5-hour window: at most 70%')
+  assert.equal(fableHeadroom(usage(20, 60), limits, false, now), false, 'weekly window: at most 60%')
+  assert.equal(fableHeadroom(usage(50, 30), { fiveHourPct: 60, weeklyPct: 80 }, false, now), false, '20 points under your own limit')
   assert.equal(fableHeadroom({ fiveHour: null, weekly: null, blocked: { window: 'weekly', until: null } }, limits), false)
-  assert.equal(fableHeadroom(null, limits), true, 'no report yet')
+  assert.equal(fableHeadroom(null, limits), false, "can't read the usage: no room is assumed")
+  assert.equal(fableHeadroom(null, limits, true), true, '…unless the caller says unknown is fine (planning, one reply)')
+  assert.equal(fableHeadroom(usage(10, 10, now - 7 * 3600 * 1000), limits, false, now), false, 'a reading 7 hours old is unknown')
+  assert.equal(fableHeadroom({ fiveHour: null, weekly: null, blocked: null }, limits, false, now), false)
   assert.equal(fableHeadroom(usage(99, 99), null), true, 'API key')
 })
 

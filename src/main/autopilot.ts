@@ -62,8 +62,11 @@ export interface AutopilotDeps {
   usesPlan?: () => boolean
   /** Hand a merge clash to the agent that made the change (used while you're away). */
   fixClash?: (reviewId: string) => unknown
-  /** Whether the plan's usage leaves room for Fable (building out the full game falls back to Opus 5.5 when not). */
-  fableOk?: () => boolean
+  /**
+   * Whether the plan's usage leaves room for Fable (building out the full game falls back to Opus 5.5 when not).
+   * `ifUnknown` is the answer when Hangar can't read the usage: yes for planning and leading, no for building pieces.
+   */
+  fableOk?: (ifUnknown: boolean) => boolean
 }
 
 /**
@@ -241,7 +244,8 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   checkIns: typeof c.checkIns === 'boolean' ? c.checkIns : (base.checkIns ?? false),
   plannerModel: c.plannerModel === null ? null : (normalizeModel(c.plannerModel) ?? base.plannerModel ?? null),
   fastTrack: typeof c.fastTrack === 'boolean' ? c.fastTrack : (base.fastTrack ?? false),
-  buildOut: typeof c.buildOut === 'boolean' ? c.buildOut : (base.buildOut ?? false)
+  buildOut: typeof c.buildOut === 'boolean' ? c.buildOut : (base.buildOut ?? false),
+  buildOnFable: typeof c.buildOnFable === 'boolean' ? c.buildOnFable : (base.buildOnFable ?? false)
 })
 
 /** Pieces a fast MVP start may plan (built at the same time, as many as "agents at once" allows). */
@@ -1037,10 +1041,15 @@ Reply with only these sections, short and concrete:
     }
   }
 
-  /** Building out the full game: Fable while the plan's usage allows it, otherwise Opus 5.5. Null when not building out. */
-  private buildModel(st: AutopilotState): string | null {
+  /**
+   * Building out the full game: Fable plans and leads while the plan's usage allows it; pieces are built on Opus 5.5,
+   * unless "Build pieces on Fable" is on and the usage is known to have room (writing code on Fable cost 2.5 times
+   * as much, and was most of a build). Null when not building out.
+   */
+  private buildModel(st: AutopilotState, piece = false): string | null {
     if (!st.config.buildOut) return null
-    return (this.deps.fableOk?.() ?? true) ? BUILD_OUT_MODEL : BUILD_OUT_FALLBACK
+    if (piece) return st.config.buildOnFable && (this.deps.fableOk?.(false) ?? true) ? BUILD_OUT_MODEL : BUILD_OUT_FALLBACK
+    return (this.deps.fableOk?.(true) ?? true) ? BUILD_OUT_MODEL : BUILD_OUT_FALLBACK
   }
 
   /** Building out ends once the launch checklist has only the owner's items left: the game is built. */
@@ -1182,8 +1191,8 @@ ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
       const lane = laneFor.get(item.id) ?? item.agentId
-      // Building out the full game, every piece is built on Fable (or Opus 5.5); otherwise simple ones go to Sonnet.
-      const model = this.buildModel(st) ?? (item.size === 'simple' ? SIMPLE_MODEL : st.config.fastTrack ? FAST_TRACK_MODEL : null)
+      // Building out the full game, every piece is built on Opus 5.5 (or Fable, if chosen); otherwise simple ones go to Sonnet.
+      const model = this.buildModel(st, true) ?? (item.size === 'simple' ? SIMPLE_MODEL : st.config.fastTrack ? FAST_TRACK_MODEL : null)
       this.deps.send(st.projectId, lane, prompt, { origin: 'autopilot', ...(model ? { model } : {}) })
       items = items.map((i) => (i.id === item.id ? { ...i, sent: true, lane } : i))
     }

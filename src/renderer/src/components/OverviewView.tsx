@@ -511,8 +511,16 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         checked={ap.config.buildOut === true}
         onChange={(v) => save({ buildOut: v })}
         label="Build out the full game"
-        hint="Sprints work through the roadmap to a complete game you can launch, up to 6 pieces each, until only your launch tasks are left (then this turns itself off). Planning, leading and every piece run on Fable while your plan's usage allows, otherwise on Opus 5.5."
+        hint="Sprints work through the roadmap to a complete game you can launch, up to 6 pieces each, until only your launch tasks are left (then this turns itself off). Fable plans and leads while your plan's usage allows (otherwise Opus 5.5); the pieces are built on Opus 5.5."
       />
+      {ap.config.buildOut === true && (
+        <Toggle
+          checked={ap.config.buildOnFable === true}
+          onChange={(v) => save({ buildOnFable: v })}
+          label="Build the pieces on Fable too"
+          hint="Writing the code is most of a build, and on Fable it costs about 2.5 times as much as on Opus 5.5. Used only while Hangar can see your plan has room; otherwise the pieces stay on Opus 5.5."
+        />
+      )}
       <Toggle
         checked={ap.config.parallel !== false}
         onChange={(v) => save({ parallel: v })}

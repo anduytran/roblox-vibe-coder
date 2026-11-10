@@ -125,7 +125,7 @@ export function NewGameWizard() {
     ...(onPlan ? ['pauses at your Max plan limits'] : []),
     autoMerge ? 'approved work merges itself' : 'you merge everything',
     buildOut
-      ? 'builds out the full game to launch (Fable while usage allows, else Opus 5.5)'
+      ? 'builds out the full game to launch (Fable plans, Opus 5.5 builds)'
       : fastStart
         ? `fast MVP start (${plannerModel ? modelShort(plannerModel) : 'the Lead'} plans, the team builds at once)`
         : 'the Lead sets up the design first'
@@ -282,7 +282,7 @@ export function NewGameWizard() {
             checked={buildOut}
             onChange={setBuildOut}
             label="Build out the full game"
-            hint="The first plan covers everything up to a complete game you can launch (content, saving, sound and effects, menus, purchases, reasons to come back), not an MVP, and sprints keep building it until only your launch tasks are left. Planning and building run on Fable while your plan's usage allows, otherwise on Opus 5.5. Uses usage or budget much faster."
+            hint="The first plan covers everything up to a complete game you can launch (content, saving, sound and effects, menus, purchases, reasons to come back), not an MVP, and sprints keep building it until only your launch tasks are left. Fable plans and leads while your plan's usage allows (otherwise Opus 5.5), and the pieces are built on Opus 5.5. You can build the pieces on Fable too, in the game's sprint settings."
           />
           {!buildOut && (
             <>
