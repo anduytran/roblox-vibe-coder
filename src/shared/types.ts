@@ -704,10 +704,10 @@ export interface GameIdea {
   whyNow: string
   /** What kind of idea was asked for (absent on ideas from before categories). */
   category?: IdeaCategory
-  /** True once the full details (loop, why now, features, first version) have been generated. */
+  /** True once the full details (loop, why now, features, launch version) have been generated. */
   detailed?: boolean
   features?: string[]
-  /** What to build first: the smallest playable version. */
+  /** What the launch version includes (older ideas: the smallest version to build first). */
   firstVersion?: string
   genre: string
   scope: 'small' | 'medium' | 'large'

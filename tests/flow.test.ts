@@ -293,6 +293,30 @@ test('refine: an idea is rewritten in place as asked, with no tools, and can be 
   await assert.rejects(trends.refineIdea(target.id, 'x'), /expected format/)
 })
 
+test('ideas: Brainstorm and ideas run on Fable while the plan has room (else Opus 5.5) and describe complete games', async () => {
+  const { get } = fakeRoblox()
+  const models: unknown[] = []
+  const prompts: string[] = []
+  const query: QueryFn = ({ options }) =>
+    (async function* () {
+      models.push([options.model, options.fallbackModel])
+      prompts.push(String(options.systemPrompt))
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: '```json\n[{"title":"Sky Post","pitch":"Deliver mail","genre":"Obby","scope":"large","inspiredBy":[]}]\n```' }] } }
+      yield { type: 'result', subtype: 'success', total_cost_usd: 0.01 }
+    })()
+  const settings: AppSettings = { defaultModel: 'claude-sonnet-5-5', maxConcurrentRuns: 1, perRunBudgetUsd: 1, globalDailyBudgetUsd: null, studioMcpCommand: '', studioMcpArgs: [], hideKeyFromAgents: false, rojoCommand: 'rojo', authMode: 'max', planLimits: { fiveHourPct: 90, weeklyPct: 80 } }
+  const costs = new CostTracker(join(tmp('hangar-ideas-fable-c-'), 'c.json'))
+  const trends = new Trends(join(tmp('hangar-ideas-fable-'), 't.json'), { get, loadQuery: async () => query, getApiKey: () => 'k', getSettings: () => settings, engineAuth: async () => ({ env: {}, release: () => {} }), costs })
+  await trends.generateIdeas('trend')
+  assert.deepEqual(models[0], ['claude-fable-5-1', 'claude-opus-5-5'], 'Fable, falling back to Opus 5.5')
+  assert.match(prompts[0]!, /complete game players keep coming back to/)
+  assert.doesNotMatch(prompts[0]!, /first version in a few weeks/)
+  // The weekly window is past 60%: Fable would eat the rest of the build's room.
+  costs.recordPlan({ rateLimitType: 'seven_day', utilization: 0.65, status: 'allowed', resetsAt: Date.now() + 86_400_000 })
+  await trends.sendChat('Something with mail?', 'trend')
+  assert.deepEqual(models[1], ['claude-opus-5-5', undefined])
+})
+
 test('ideas: kinds steer the prompt, ideas start short, details come on request, and saved ideas stay', async () => {
   const { get } = fakeRoblox()
   const short = '```json\n' + JSON.stringify([

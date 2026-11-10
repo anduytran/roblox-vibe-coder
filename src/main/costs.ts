@@ -39,6 +39,11 @@ export function fableHeadroom(usage: PlanUsage | null, limits: AppSettings['plan
   return true
 }
 
+/** Fable while the plan has room for it (see fableHeadroom), otherwise Opus 5.5. */
+export function fableOrOpus(usage: PlanUsage | null, limits: AppSettings['planLimits'] | null): string {
+  return fableHeadroom(usage, limits) ? 'claude-fable-5-1' : 'claude-opus-5-5'
+}
+
 /** The plan limits to enforce, or null when the dollar limits apply (API key). */
 export function planLimitsFor(settings: AppSettings): AppSettings['planLimits'] | null {
   return settings.authMode === 'max' ? (settings.planLimits ?? DEFAULT_PLAN_LIMITS) : null

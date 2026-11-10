@@ -67,7 +67,7 @@ export function ideaBrief(idea: GameIdea): { name: string; genre: string; idea: 
     idea.pitch,
     idea.coreLoop && `Core loop: ${idea.coreLoop}`,
     idea.features?.length ? `Key features:\n${idea.features.map((f) => `- ${f}`).join('\n')}` : '',
-    idea.firstVersion && `Build first: ${idea.firstVersion}`,
+    idea.firstVersion && `At launch: ${idea.firstVersion}`,
     idea.whyNow && `Why now: ${idea.whyNow}`,
     idea.inspiredBy.length ? `Space it plays in (be original, don't copy): ${idea.inspiredBy.join(', ')}` : ''
   ]

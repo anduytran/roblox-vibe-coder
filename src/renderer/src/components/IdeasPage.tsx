@@ -253,7 +253,7 @@ function CompareIdeas({ ideas, onClose, onDone }: { ideas: GameIdea[]; onClose: 
     ['Score', (i) => <ScoreBar value={i.score} />],
     ['Core loop', (i) => i.coreLoop || <span className="muted">Open it to generate details</span>],
     ['Key features', (i) => (i.features?.length ? i.features.join(' · ') : <span className="muted">—</span>)],
-    ['Build first', (i) => i.firstVersion || <span className="muted">—</span>],
+    ['At launch', (i) => i.firstVersion || <span className="muted">—</span>],
     ['Why now', (i) => i.whyNow || <span className="muted">—</span>],
     ['Plays in', (i) => (i.inspiredBy.length ? i.inspiredBy.join(', ') : <span className="muted">An original space</span>)]
   ]

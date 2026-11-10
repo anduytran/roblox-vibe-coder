@@ -457,7 +457,7 @@ function ideaCard(idea, saved) {
       if (idea.coreLoop) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Core loop'), h('div', { class: 'small' }, idea.coreLoop)))
       if (idea.whyNow) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Why now'), h('div', { class: 'small' }, idea.whyNow)))
       if (idea.features.length) more.push(h('div', { class: 'sect' }, h('h3', {}, 'Features'), h('ul', { class: 'small' }, idea.features.map((f) => h('li', {}, f)))))
-      if (idea.firstVersion) more.push(h('div', { class: 'sect' }, h('h3', {}, 'First version'), h('div', { class: 'small' }, idea.firstVersion)))
+      if (idea.firstVersion) more.push(h('div', { class: 'sect' }, h('h3', {}, 'At launch'), h('div', { class: 'small' }, idea.firstVersion)))
     } else more.push(h('div', { class: 'small muted' }, 'Open it on your computer to work out the details and refine it.'))
     if (idea.inspiredBy.length) more.push(h('div', { class: 'small muted' }, 'Inspired by ' + idea.inspiredBy.join(', ')))
   }

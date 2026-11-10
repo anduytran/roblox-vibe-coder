@@ -4,7 +4,7 @@ import { ideaBrief, SaveStar } from './ideas'
 import { ideaCategory } from '@shared/ideas'
 import { Button, Modal } from './ui'
 
-const SUGGESTIONS = ['Make it co-op', 'Smaller first version', 'Make it more original', 'Add progression', 'More social']
+const SUGGESTIONS = ['Make it co-op', 'More content at launch', 'Make it more original', 'Add progression', 'More social']
 
 /** One dashboard idea in full, with a box to tell Claude how to change it. Stays open to keep refining. */
 export function IdeaRefine() {
@@ -83,7 +83,7 @@ export function IdeaRefine() {
             )}
             {idea.firstVersion && (
               <>
-                <dt>Build first</dt>
+                <dt>At launch</dt>
                 <dd>{idea.firstVersion}</dd>
               </>
             )}
@@ -102,7 +102,7 @@ export function IdeaRefine() {
           </dl>
         ) : (
           <div className="refine-expand">
-            <p className="small muted">This is the short version. Generate the core loop, key features and what to build first, or ask for a change below and the details come with it.</p>
+            <p className="small muted">This is the short version. Generate the core loop, key features and what the launch version includes, or ask for a change below and the details come with it.</p>
             <Button tone="primary" disabled={busy} onClick={() => refine('Fill in the full details. Keep the concept as it is.')}>
               {busy ? 'Generating…' : 'Generate details'}
             </Button>
