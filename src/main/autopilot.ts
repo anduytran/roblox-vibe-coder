@@ -9,6 +9,7 @@ import { JsonStore } from './jsonStore'
 import type { ProjectRegistry } from './projects'
 import type { ReviewStore } from './reviews'
 import { listRoles } from './roles'
+import { shipStatus } from './ship'
 import { isProtectedPath } from './pathScope'
 import { runsAsCode } from './checks'
 import { ALREADY_FAILING, cleanLuauTests, LUNE_CHECK_NAME } from './luauTests'
@@ -61,6 +62,8 @@ export interface AutopilotDeps {
   usesPlan?: () => boolean
   /** Hand a merge clash to the agent that made the change (used while you're away). */
   fixClash?: (reviewId: string) => unknown
+  /** Whether the plan's usage leaves room for Fable (building out the full game falls back to Opus 5.5 when not). */
+  fableOk?: () => boolean
 }
 
 /**
@@ -237,7 +240,8 @@ const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): Autopi
   fastStart: typeof c.fastStart === 'boolean' ? c.fastStart : (base.fastStart ?? true),
   checkIns: typeof c.checkIns === 'boolean' ? c.checkIns : (base.checkIns ?? false),
   plannerModel: c.plannerModel === null ? null : (normalizeModel(c.plannerModel) ?? base.plannerModel ?? null),
-  fastTrack: typeof c.fastTrack === 'boolean' ? c.fastTrack : (base.fastTrack ?? false)
+  fastTrack: typeof c.fastTrack === 'boolean' ? c.fastTrack : (base.fastTrack ?? false),
+  buildOut: typeof c.buildOut === 'boolean' ? c.buildOut : (base.buildOut ?? false)
 })
 
 /** Pieces a fast MVP start may plan (built at the same time, as many as "agents at once" allows). */
@@ -256,10 +260,23 @@ export const FAST_TRACK_ITEMS = 6
 /** Fast track: the plan aims for the most the game can be, while keeping it working. */
 export const PUSH_LIMITS = `Fast track is on: improve the game as fast as possible and push it to the limit of what Roblox can do, not the minimum that works. Each sprint, plan the full set of pieces and take the biggest jump in what a player sees and feels: richer effects, sound and animation, more content and variety, smarter opponents, bigger moments, slicker UI. Be ambitious in scope, but keep each piece buildable and testable in one go, keep what already works working, and keep it running smoothly on a phone (a bigger game that breaks or lags is not better).`
 
+/** Building out the full game: the model when the plan's usage allows Fable, and the one used otherwise. */
+export const BUILD_OUT_MODEL = 'claude-fable-5-1'
+export const BUILD_OUT_FALLBACK = 'claude-opus-5-5'
+
+/** Building out: what every sprint aims at until the game can launch. */
+export const BUILD_OUT = `You're building out the full game: everything in design-vault/Roadmap.md up to a complete game players can keep coming back to and that can launch publicly, not an MVP or a demo. Work through the milestones in order and plan the full set of pieces each sprint. Build each feature properly (real content, sound, effects, UI and saving where they belong), not as a placeholder to fill in later, and keep what already works working.`
+
+/** A new game's first plan when building out: the whole way to launch, then the first sprint. */
+export const LAUNCH_PLAN = `Plan the whole game up to launch, not an MVP:
+- design-vault/Game Overview.md: pitch, core loop, progression (what players earn and keep), the full content list (maps, modes, enemies, items, as the game needs), what's for sale, and why players come back. At most about 400 words.
+- design-vault/Roadmap.md: the milestones from here to a complete, launchable game, in build order (for example: core loop playable; content and progression with saving; feel and polish with sound, effects, animation and onboarding; purchases and retention; launch readiness on phones). Under each, the features it needs, one line each with how you'll know it's done. At most about 80 lines.
+- Make design-vault/Ship Checklist.md match: add any item the launch needs that it's missing.`
+
 /** Most pieces a sprint may plan: a fast MVP's, fast track's, or the usual limit (and never more than you set). */
-export function sprintMax(config: Pick<AutopilotConfig, 'sprintTasks' | 'fastTrack'>, mvp = false): number {
+export function sprintMax(config: Pick<AutopilotConfig, 'sprintTasks' | 'fastTrack' | 'buildOut'>, mvp = false): number {
   if (mvp) return MVP_ITEMS
-  const max = config.fastTrack ? FAST_TRACK_ITEMS : MAX_SPRINT_ITEMS
+  const max = config.fastTrack || config.buildOut ? FAST_TRACK_ITEMS : MAX_SPRINT_ITEMS
   return config.sprintTasks ? Math.min(max, config.sprintTasks) : max
 }
 
@@ -692,14 +709,14 @@ export class Autopilot {
       ? `Autopilot, sprint 1, ${which}. This is a new game and the user is the product owner.
 1. Read design-vault/Brief.md (the product owner's idea) and CLAUDE.md.
 2. Fill in design-vault/Game Overview.md (pitch, core loop, pillars, players and platforms).
-3. Write design-vault/Roadmap.md as milestones. Milestone 1 is "Ship v1": the smallest version worth publishing (fun for ten minutes, a goal players can see, two or three things to buy), following design-vault/Ship Checklist.md. Later milestones add depth after launch.
+3. ${st.config.buildOut ? `${LAUNCH_PLAN} ${BUILD_OUT}` : 'Write design-vault/Roadmap.md as milestones. Milestone 1 is "Ship v1": the smallest version worth publishing (fun for ten minutes, a goal players can see, two or three things to buy), following design-vault/Ship Checklist.md. Later milestones add depth after launch.'}
 4. Write mechanic notes (copy Mechanics/_Template.md) with acceptance criteria for milestone 1.
 5. Then build the first, most foundational piece of milestone 1 (toward a core loop a player can play from start to finish) and playtest it. ${MAKE_IT_FELT}${team ? `\n   ${team.build}\n   ${team.test}` : ''}
 ${keep}
 Finish with: what you set up and built, how you tested it, and what comes next.${ending}${feedback}`
       : `Autopilot, sprint ${st.sprint}, ${which}. The user is the product owner; you lead the build.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md, Fun Check.md (if there is one) and Inbox.md (and research/ if relevant).
-2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST} ${FUN_FIRST}${st.config.fastTrack ? ` ${PUSH_LIMITS.replace('plan the full set of pieces and ', '')}` : ''}
+2. Pick the single most valuable next step toward the current milestone — one feature or fix, small enough to review on its own. ${SHIP_FIRST} ${FUN_FIRST}${st.config.fastTrack ? ` ${PUSH_LIMITS.replace('plan the full set of pieces and ', '')}` : ''}${st.config.buildOut ? ` ${BUILD_OUT.replace(' and plan the full set of pieces each sprint', '')}` : ''}
 3. Write or update its mechanic note with acceptance criteria. ${team ? `${team.build} ${team.test}` : 'Build it (delegate to the specialist agents as needed), playtest it, and check the criteria.'} ${MAKE_IT_FELT}
 4. Update Roadmap.md (mark what's done) and Decisions.md. ${ROADMAP_SHORT} ${SHIP_TICK}
 ${keep}
@@ -707,7 +724,8 @@ Finish with: what you built, how you tested it, and what's next.${ending}${feedb
     // Feedback is handed over once, and remembered until that task finishes (see removedFromQueue).
     const cur = this.get(st.projectId)
     this.put({ ...cur, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
-    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', ...(st.config.fastTrack ? { model: FAST_TRACK_MODEL } : {}) })
+    const leadModel = this.buildModel(st) ?? (st.config.fastTrack ? FAST_TRACK_MODEL : null)
+    this.deps.send(st.projectId, this.leadOf(st.projectId), prompt, { origin: 'autopilot', ...(leadModel ? { model: leadModel } : {}) })
   }
 
   private queueReport(st: AutopilotState): void {
@@ -785,6 +803,11 @@ Reply with only these sections, short and concrete:
       }
       const report: SprintReport = { sprint: st.sprint, at: Date.now(), text: o.text.slice(0, 20_000), tasks: st.sprintTasks, spentUsd: Math.round((this.spent(o.projectId) - st.spentAtSprintStart) * 100) / 100 }
       this.put({ ...st, status: 'checkin', reason: null, reports: [...st.reports, report].slice(-30) })
+      // The full game is built (only your launch tasks are left): sprints go back to their usual size and models.
+      if (st.config.buildOut && this.buildOutDone(o.projectId)) {
+        const cur = this.get(o.projectId)
+        this.put({ ...cur, config: { ...cur.config, buildOut: false } })
+      }
       // Going on by itself, but stuck: two sprints in a row built nothing new (each waiting on something only you can
       // do, or only fixing the reviewer's notes). Starting more would only repeat that, so it stops here and says why.
       const recent = [...st.reports, report].slice(-STUCK_SPRINTS)
@@ -1014,6 +1037,23 @@ Reply with only these sections, short and concrete:
     }
   }
 
+  /** Building out the full game: Fable while the plan's usage allows it, otherwise Opus 5.5. Null when not building out. */
+  private buildModel(st: AutopilotState): string | null {
+    if (!st.config.buildOut) return null
+    return (this.deps.fableOk?.() ?? true) ? BUILD_OUT_MODEL : BUILD_OUT_FALLBACK
+  }
+
+  /** Building out ends once the launch checklist has only the owner's items left: the game is built. */
+  private buildOutDone(projectId: string): boolean {
+    try {
+      const s = shipStatus(this.deps.registry.get(projectId).path)
+      const ours = s.items.filter((i) => !i.you)
+      return s.hasChecklist && ours.length > 0 && ours.every((i) => i.done)
+    } catch {
+      return false
+    }
+  }
+
   /** The Lead plans the sprint as pieces that can be built at the same time, without changing files itself. */
   private queuePlan(st: AutopilotState, mvp = false): void {
     const builders = this.builders(st.projectId)
@@ -1023,7 +1063,7 @@ Reply with only these sections, short and concrete:
     const lune = this.lune(st.projectId)
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md, Fun Check.md (if there is one) and Inbox.md, and the mechanic notes involved.
-2. ${SHIP_FIRST} ${FUN_FIRST} ${st.config.fastTrack ? `${PUSH_LIMITS} ` : ''}Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
+2. ${SHIP_FIRST} ${FUN_FIRST} ${st.config.fastTrack ? `${PUSH_LIMITS} ` : ''}${st.config.buildOut ? `${BUILD_OUT} ` : ''}Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, a playtest that can't run, or work that isn't merged): say so in your plan instead. ${lune ? '' : `${NO_SPECS_RUN} `}${NO_FILLER.replace('say so and stop.', 'reply with the line "Nothing to build." and say what it waits for, with no json block.')}
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
@@ -1034,7 +1074,7 @@ Reply with the plan in at most 5 short lines, then one \`\`\`json block like thi
 Each brief is all its agent gets: say what to build, which files to read and change, and the acceptance criteria, in at most 120 words. ${SIZE_RULE} ${KEEP_SHORT}${feedback}`
     const cur = this.get(st.projectId)
     this.put({ ...cur, parallel: { phase: 'planning', items: [] }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
-    const model = st.config.plannerModel ?? (st.config.fastTrack ? FAST_TRACK_MODEL : null)
+    const model = st.config.plannerModel ?? this.buildModel(st) ?? (st.config.fastTrack ? FAST_TRACK_MODEL : null)
     this.deps.send(st.projectId, this.plannerOf(st.projectId), prompt, { origin: 'autopilot', ...(model ? { model } : {}) })
   }
 
@@ -1044,7 +1084,19 @@ Each brief is all its agent gets: say what to build, which files to read and cha
    */
   private queueMvpPlan(st: AutopilotState, builders: { id: string; description: string }[], max: number): void {
     const feedback = st.feedback.length ? `\n\nProduct owner notes to act on:\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
-    const prompt = `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
+    const prompt = st.config.buildOut
+      ? `${PLAN_PREFIX}${st.sprint} (full game start). This is a new game and the user is the product owner. Goal: the complete game, ready to launch, built by your team sprint after sprint; this first sprint lays its foundation.
+1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md.
+2. ${LAUNCH_PLAN}
+3. Split the first milestone into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish with real feedback a player can see and hear: for example the map, the core mechanic (server), the HUD and menus, the goal and progression with saving, and the first purchase (with src/shared/Products.luau). ${BUILD_OUT}
+Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
+${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
+Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
+\`\`\`json
+{"items":[{"agent":"scripter","title":"Core loop: collect and deliver","brief":"What to build, the acceptance criteria to meet, and how to test it.","files":["src/server/DeliveryService.luau"],"size":"hard"}]}
+\`\`\`
+Each brief is all its agent gets: what to build, which files to create or change, and 2–4 acceptance criteria, in at most 120 words. ${KEEP_SHORT}${feedback}`
+      : `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
 1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md. Nothing else is needed yet.
 2. Write, briefly (speed beats polish; they can grow later; at most about 150 words each): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
 3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish, with feedback a player can see or hear on the core action: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
@@ -1059,7 +1111,7 @@ Each brief is all its agent gets: what to build, which files to create or change
     this.put({ ...cur, parallel: { phase: 'planning', items: [], mvp: true }, feedback: [], handedFeedback: [...(cur.handedFeedback ?? []), ...cur.feedback].slice(-20) })
     // The Planner runs on its own model (Fable); without one, the Lead plans this step on Fable.
     const planner = this.plannerOf(st.projectId)
-    const model = st.config.plannerModel ?? (planner === 'planner' ? undefined : MVP_PLANNER)
+    const model = st.config.plannerModel ?? this.buildModel(st) ?? (planner === 'planner' ? undefined : MVP_PLANNER)
     this.deps.send(st.projectId, planner, prompt, { origin: 'autopilot', ...(model ? { model } : {}) })
   }
 
@@ -1126,11 +1178,12 @@ ${item.brief}
 ${item.files.length ? `\nFiles to work in: ${item.files.join(', ')}` : ''}
 
 1. Read the files above and the design notes the brief names. Build it, staying within those files unless you truly need more. ${MAKE_IT_FELT} Don't edit design-vault/Roadmap.md or Decisions.md: the Lead updates those after the sprint.
-2. ${st.parallel.mvp ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}${noSpecs}
+2. ${st.parallel.mvp && !st.config.buildOut ? (qa ? 'This is a fast MVP: speed matters. Hand "qa-tester" one quick check with the Agent tool (Luau tests for the acceptance criteria, or a short playtest when Studio tools are available). Fix everything that breaks the acceptance criteria in one go; no second round unless the fix was big.' : 'This is a fast MVP: check the acceptance criteria quickly (Luau tests, or a short playtest when Studio tools are available) and move on.') : qa ? 'Hand "qa-tester" a playtest with the Agent tool: write or update Luau tests (*.spec.luau) for the acceptance criteria, and play it in Studio when Studio tools are available. Fix everything it finds in one go, then have it test again (at most twice).' : 'Test it against the acceptance criteria: Luau tests (*.spec.luau) and a playtest when Studio tools are available.'}${noSpecs}
 3. If it's blocked (it needs the product owner, or work that isn't merged), say so and stop.
 Finish with: what you built, how it was tested (and what QA found), and anything left to do.`
       const lane = laneFor.get(item.id) ?? item.agentId
-      const model = item.size === 'simple' ? SIMPLE_MODEL : st.config.fastTrack ? FAST_TRACK_MODEL : null
+      // Building out the full game, every piece is built on Fable (or Opus 5.5); otherwise simple ones go to Sonnet.
+      const model = this.buildModel(st) ?? (item.size === 'simple' ? SIMPLE_MODEL : st.config.fastTrack ? FAST_TRACK_MODEL : null)
       this.deps.send(st.projectId, lane, prompt, { origin: 'autopilot', ...(model ? { model } : {}) })
       items = items.map((i) => (i.id === item.id ? { ...i, sent: true, lane } : i))
     }

@@ -48,6 +48,7 @@ export function NewGameWizard() {
   const [sprintBudget, setSprintBudget] = useState('10')
   const [autoMerge, setAutoMerge] = useState(true)
   const [fastStart, setFastStart] = useState(true)
+  const [buildOut, setBuildOut] = useState(true)
   const [plannerModel, setPlannerModel] = useState('claude-fable-5-1')
   const [startNow, setStartNow] = useState(true)
   const [tools, setTools] = useState<Tools | null>(null)
@@ -93,7 +94,15 @@ export function NewGameWizard() {
         model,
         dailyBudgetUsd: Number.isFinite(d) && d > 0 ? d : null,
         studioTools: studio,
-        autopilot: { sprintTasks, sprintBudgetUsd: parseFloat(sprintBudget) || 10, autoMerge, fastStart, plannerModel: plannerModel || null },
+        autopilot: {
+          sprintTasks,
+          sprintBudgetUsd: parseFloat(sprintBudget) || 10,
+          autoMerge,
+          // Building out plans and builds on Fable while usage allows, else Opus 5.5: no fixed planning model.
+          fastStart: buildOut || fastStart,
+          buildOut,
+          plannerModel: buildOut ? null : plannerModel || null
+        },
         startNow
       })
       await addCreatedProject(res.project)
@@ -115,7 +124,11 @@ export function NewGameWizard() {
     sprintTasks ? `${sprintTasks} tasks per sprint` : 'the Lead decides when a sprint is done',
     ...(onPlan ? ['pauses at your Max plan limits'] : []),
     autoMerge ? 'approved work merges itself' : 'you merge everything',
-    fastStart ? `fast MVP start (${plannerModel ? modelShort(plannerModel) : 'the Lead'} plans, the team builds at once)` : 'the Lead sets up the design first'
+    buildOut
+      ? 'builds out the full game to launch (Fable while usage allows, else Opus 5.5)'
+      : fastStart
+        ? `fast MVP start (${plannerModel ? modelShort(plannerModel) : 'the Lead'} plans, the team builds at once)`
+        : 'the Lead sets up the design first'
   ].join(' · ')
 
   return (
@@ -266,14 +279,24 @@ export function NewGameWizard() {
             )}
           </div>
           <Toggle
-            checked={fastStart}
-            onChange={setFastStart}
-            label="Fast MVP start"
-            hint="The planning model splits a playable MVP into pieces, and the Scripter, UI Builder and modelers build them at the same time, each with one quick QA check. Off: the Lead writes the full design first and builds one piece at a time."
+            checked={buildOut}
+            onChange={setBuildOut}
+            label="Build out the full game"
+            hint="The first plan covers everything up to a complete game you can launch (content, saving, sound and effects, menus, purchases, reasons to come back), not an MVP, and sprints keep building it until only your launch tasks are left. Planning and building run on Fable while your plan's usage allows, otherwise on Opus 5.5. Uses usage or budget much faster."
           />
-          <Field label="Planning model" hint="Plans the sprints. Fable is quick at turning an idea into a plan; the builders keep their own models.">
-            <ModelSelect value={plannerModel} onChange={setPlannerModel} inheritLabel="Same as the Lead" />
-          </Field>
+          {!buildOut && (
+            <>
+              <Toggle
+                checked={fastStart}
+                onChange={setFastStart}
+                label="Fast MVP start"
+                hint="The planning model splits a playable MVP into pieces, and the Scripter, UI Builder and modelers build them at the same time, each with one quick QA check. Off: the Lead writes the full design first and builds one piece at a time."
+              />
+              <Field label="Planning model" hint="Plans the sprints. Fable is quick at turning an idea into a plan; the builders keep their own models.">
+                <ModelSelect value={plannerModel} onChange={setPlannerModel} inheritLabel="Same as the Lead" />
+              </Field>
+            </>
+          )}
           <Toggle
             checked={autoMerge}
             onChange={setAutoMerge}

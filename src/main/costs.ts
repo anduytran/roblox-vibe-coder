@@ -26,6 +26,19 @@ export interface RateLimitInfo {
 
 export const DEFAULT_PLAN_LIMITS: AppSettings['planLimits'] = { fiveHourPct: 90, weeklyPct: 80 }
 
+/**
+ * Whether the plan leaves room for Fable, which uses it about twice as fast as Opus: a margin under your own limits
+ * (and at most 70% of the 5-hour and 60% of the weekly window), so the rest of the build still fits on Opus.
+ * Null limits (an API key): yes, the dollar budgets apply instead.
+ */
+export function fableHeadroom(usage: PlanUsage | null, limits: AppSettings['planLimits'] | null): boolean {
+  if (!limits || !usage) return true
+  if (usage.blocked) return false
+  if (usage.fiveHour && usage.fiveHour.usedPct >= Math.min(limits.fiveHourPct - 20, 70)) return false
+  if (usage.weekly && usage.weekly.usedPct >= Math.min(limits.weeklyPct - 20, 60)) return false
+  return true
+}
+
 /** The plan limits to enforce, or null when the dollar limits apply (API key). */
 export function planLimitsFor(settings: AppSettings): AppSettings['planLimits'] | null {
   return settings.authMode === 'max' ? (settings.planLimits ?? DEFAULT_PLAN_LIMITS) : null

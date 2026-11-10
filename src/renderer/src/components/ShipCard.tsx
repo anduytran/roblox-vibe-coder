@@ -79,7 +79,7 @@ export function ShipCard({ project, watch }: { project: Project; watch: string }
       {!ready ? (
         <>
           <p className="small muted">
-            Add a ship checklist (the smallest version worth publishing: fun for ten minutes, a goal, two or three things to buy) and purchase templates
+            Add a launch checklist (what a complete game needs: content, saving, polish, reasons to come back, three to five things to buy) and purchase templates
             (game passes and developer products, granted safely on the server). The Lead works through the checklist before anything else.
           </p>
           <div>

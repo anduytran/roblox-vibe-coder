@@ -18,7 +18,7 @@ tags: [design, ship]
 ---
 # Ship checklist
 
-The smallest version worth publishing: fun for ten minutes, with a goal and two or three things to buy. This is milestone 1 ("Ship v1"); depth comes after launch. The Lead ticks items as they're done. Items marked (you) need the product owner. Hangar shows the progress on the game's Overview.
+Everything the game needs to launch as a complete game players come back to, not a demo. The Lead works through it milestone by milestone (see Roadmap.md) and ticks items as they're done. Items marked (you) need the product owner. Hangar shows the progress on the game's Overview.
 
 ## Game
 - [ ] The core loop works from start to finish: what a new player does in their first five minutes
@@ -27,8 +27,23 @@ The smallest version worth publishing: fun for ten minutes, with a goal and two 
 - [ ] Two players at once in Studio (Test → Clients and Servers, 2 players) with no errors
 - [ ] A 10-minute play with no errors in the Output window
 
+## Content and progression
+- [ ] All the content Game Overview.md lists (maps, modes, enemies, items) is built and reachable in play: enough for hours, not minutes
+- [ ] Progress players keep between visits (levels, unlocks, currency), saved with DataStoreService: retried on failure, and saved when a server shuts down
+- [ ] New players learn by playing: a short first-time tutorial or guided first round
+
+## Feel and polish
+- [ ] Sound on every core action, music, and visual effects on hits, pickups and wins
+- [ ] Animations for characters and key objects
+- [ ] A lobby or main menu, settings (at least sound volume), and a HUD that fits phone screens
+- [ ] Runs smoothly on a phone, and a 30-minute play has no errors in the Output window
+
+## Reasons to come back
+- [ ] Daily rewards, quests or streaks
+- [ ] A leaderboard, and badges for milestones
+
 ## Purchases
-- [ ] Two or three things to buy, listed in \`src/shared/Products.luau\`: cosmetics, convenience or a VIP perk. Nothing that makes paying players stronger in a fair fight
+- [ ] Three to five things to buy, listed in \`src/shared/Products.luau\`: cosmetics, convenience or a VIP perk. Nothing that makes paying players stronger in a fair fight
 - [ ] Each one is granted in code (\`Monetization.onPass\` / \`Monetization.onProduct\` in \`src/server/Monetization.luau\`), and a Shop button opens it (\`src/client/Shop.luau\`)
 - [ ] (you) Each one created in the Creator Hub (your game → Monetization → Passes / Developer Products) and its ID pasted into \`Products.luau\`
 - [ ] Each one bought in a Studio test and granted correctly (Studio test purchases are free; turn on Game Settings → Security → "Enable Studio Access to API Services" first)

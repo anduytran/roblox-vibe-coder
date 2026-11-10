@@ -918,6 +918,8 @@ export class AgentRunner {
       const options: Record<string, unknown> = {
         cwd: work.path,
         model: runModel,
+        // Fable unavailable (overloaded, or its usage used up): the run carries on with Opus 5.5.
+        ...(/fable/i.test(runModel) ? { fallbackModel: 'claude-opus-5-5' } : {}),
         abortController: controller,
         // No settings files are loaded at all: not the user's global ones, and not the project's
         // .claude/settings.json, whose hooks and allow-rules a repository could use to run commands

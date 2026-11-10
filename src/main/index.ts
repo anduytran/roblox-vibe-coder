@@ -10,7 +10,7 @@ import { installedClaude, probePlanUsage } from './planUsageProbe'
 import { Notifier } from './notifier'
 import { safeExternalUrl } from '@shared/text'
 import { ideaCategory } from '@shared/ideas'
-import { CostTracker, DEFAULT_PLAN_LIMITS } from './costs'
+import { CostTracker, DEFAULT_PLAN_LIMITS, fableHeadroom, planLimitsFor } from './costs'
 import { cloneGitHub, commitFiles, gitCommit, gitDiff, gitInit, githubLink, gitRevertFile, gitStatus, linkGitHub, parseGitHubRepo, pullFromGitHub, pushToGitHub, setNoHooksBase, unlinkGitHub } from './git'
 import { scrubProcessEnv } from './env'
 import { JsonStore } from './jsonStore'
@@ -512,7 +512,8 @@ app.whenReady().then(() => {
     send: (projectId, agentId, prompt, opts) => runner.send(projectId, agentId, prompt, opts),
     merge: (id) => reviewActions.merge(id),
     fixClash: (id) => reviewActions.fixClash(id),
-    usesPlan: () => settings.get().authMode === 'max'
+    usesPlan: () => settings.get().authMode === 'max',
+    fableOk: () => fableHeadroom(costs.planUsage(), planLimitsFor(settings.get()))
   })
   // Nothing is running yet, so actions set aside before Hangar closed belong to tasks that are over.
   autopilot.clearSetAside()

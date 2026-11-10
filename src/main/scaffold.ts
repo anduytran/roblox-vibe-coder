@@ -78,7 +78,7 @@ A Roblox game built with Rojo. Code in \`src/\` syncs into Roblox Studio with \`
 - The game design lives in \`design-vault/\`: start with \`Brief.md\` (the product owner's idea), then \`Game Overview.md\`, \`Roadmap.md\` and the mechanic notes.
 - The UI spec lives in \`ui-vault/\`.
 - Approved web research lives in \`research/\`.
-- Milestone 1 is shipping: \`design-vault/Ship Checklist.md\` lists what the first public version needs.
+- \`design-vault/Ship Checklist.md\` lists what the game needs to launch as a complete game.
 
 ## Purchases
 - Everything sold for Robux is listed in \`src/shared/Products.luau\` (IDs come from the Creator Hub; 0 = not created yet).
@@ -222,6 +222,7 @@ export function sanitizeNewGame(raw: unknown): NewGameInput {
       sprintBudgetUsd: n(ap.sprintBudgetUsd, 0.5, 500, 10),
       autoMerge: ap.autoMerge !== false,
       fastStart: ap.fastStart !== false,
+      buildOut: ap.buildOut !== false,
       plannerModel: typeof ap.plannerModel === 'string' && /^[a-z0-9.-]{3,60}$/i.test(ap.plannerModel) ? ap.plannerModel : null
     },
     startNow: r.startNow !== false

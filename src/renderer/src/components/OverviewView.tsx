@@ -508,6 +508,12 @@ function ConfigCard({ project, ap }: { project: Project; ap: AutopilotState }) {
         hint="Improves the game as fast as possible and pushes it to the limit: Fable plans and leads every sprint and builds the hard pieces (small ones stay on Sonnet), sprints plan up to 6 pieces at once, and the plans aim for the most the game can be. Uses your plan's limits or budget much faster."
       />
       <Toggle
+        checked={ap.config.buildOut === true}
+        onChange={(v) => save({ buildOut: v })}
+        label="Build out the full game"
+        hint="Sprints work through the roadmap to a complete game you can launch, up to 6 pieces each, until only your launch tasks are left (then this turns itself off). Planning, leading and every piece run on Fable while your plan's usage allows, otherwise on Opus 5.5."
+      />
+      <Toggle
         checked={ap.config.parallel !== false}
         onChange={(v) => save({ parallel: v })}
         label="Build the sprint's pieces at the same time"
