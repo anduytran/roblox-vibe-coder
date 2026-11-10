@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { AppSettings } from '../src/shared/types'
-import { AgentRunner, CONTINUE_PROMPT, type QueryFn } from '../src/main/agentRunner'
+import { AgentRunner, CONTINUE_PROMPT, usageLimitReply, type QueryFn } from '../src/main/agentRunner'
 import { CostTracker } from '../src/main/costs'
 import { ProjectRegistry } from '../src/main/projects'
 import { ReviewStore } from '../src/main/reviews'
@@ -40,14 +40,18 @@ function setup(opts: { persistFile?: string; dir?: string; costs?: CostTracker }
   const reviews = new ReviewStore(join(tmp('hangar-up-rv-'), 'reviews.json'))
   const costs = opts.costs ?? new CostTracker(join(tmp('hangar-up-c-'), 'costs.json'))
   const calls: { prompt: string; resume: unknown }[] = []
-  const state = { outOfUsage: true }
+  const state: { outOfUsage: boolean | 'reply' } = { outOfUsage: true }
   const query: QueryFn = ({ prompt, options }) => {
     calls.push({ prompt, resume: options.resume })
     const n = calls.length
     return (async function* () {
       yield { type: 'system', subtype: 'init', session_id: options.resume ? String(options.resume) : `s${n}`, mcp_servers: [] }
       writeFileSync(join(options.cwd as string, 'Gun.luau'), `return { step = ${n} }\n`)
-      if (state.outOfUsage) {
+      if (state.outOfUsage === 'reply') {
+        // The engine's other way of saying it: an ordinary last reply.
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: "You've hit your session limit · resets 2:30pm (America/New_York)" }] } }
+        yield { type: 'result', subtype: 'success', total_cost_usd: 0.5 }
+      } else if (state.outOfUsage) {
         yield { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ["You've hit your usage limit. Resets at 6pm."], total_cost_usd: 0.5 }
       } else {
         yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Gun done.' }] } }
@@ -108,6 +112,21 @@ test('usage pause: a run stopped by the plan is held with its work, then continu
   assert.equal(done.reviewId, o.reviewId, 'the same change')
   assert.equal(t.reviews.get(o.reviewId!).incomplete, null, 'no longer stopped early')
   assert.equal(t.main().paused ?? null, null)
+})
+
+test('usage pause: "You\'ve hit your session limit" as a last reply holds the task too, never a finished change', async () => {
+  const t = setup()
+  t.state.outOfUsage = 'reply'
+  t.runner.send(t.project.id, 'main', 'Autopilot item x1, sprint 1: build the gun', { origin: 'autopilot' })
+  await until(() => t.outcomes.length === 1)
+  const o = t.outcomes[0]!
+  assert.equal(o.paused, true, 'held for the reset, not done')
+  assert.equal(o.ok, false)
+  const review = t.reviews.get(o.reviewId!)
+  assert.match(review.incomplete ?? '', /session limit/, 'marked stopped early, so it never merges itself')
+  assert.equal(t.main().queue[0]!.prompt, 'Autopilot item x1, sprint 1: build the gun')
+  assert.ok(usageLimitReply("You've hit your session limit · resets 2:30pm (America/New_York)"))
+  assert.ok(!usageLimitReply('I added the session limit setting to the lobby and fixed the rate limiter, as the brief asked. ' + 'x'.repeat(400)), 'a long report that mentions limits is a normal reply')
 })
 
 test('usage pause: a task that would start while the plan is used up waits instead of failing, and survives a restart', async () => {

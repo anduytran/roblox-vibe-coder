@@ -10,6 +10,7 @@ import type { ProjectRegistry } from './projects'
 import type { ReviewStore } from './reviews'
 import { listRoles } from './roles'
 import { shipStatus } from './ship'
+import { USAGE_STOP } from './agentRunner'
 import { isProtectedPath } from './pathScope'
 import { runsAsCode } from './checks'
 import { ALREADY_FAILING, cleanLuauTests, LUNE_CHECK_NAME } from './luauTests'
@@ -851,7 +852,7 @@ Reply with only these sections, short and concrete:
       this.evaluate(o.reviewId)
       return
     }
-    if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+    if (!o.ok && USAGE_STOP.test(o.error ?? '')) {
       // A spending or plan limit: retrying can't help until it resets, so pause at once and say why.
       this.record(o.projectId, title, 'failed')
       this.pause(o.projectId, `${o.error} Resume once there's room again.`)
@@ -1145,7 +1146,7 @@ Each brief is all its agent gets: what to build, which files to create or change
     if (!planned.length) {
       // No usable plan: this sprint goes one task at a time, as before.
       st = this.put({ ...this.giveBack(st), parallel: { phase: 'single', items: [] } })
-      if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+      if (!o.ok && USAGE_STOP.test(o.error ?? '')) {
         this.pause(o.projectId, `${o.error} Resume once there's room again.`)
         if (this.isAway(o.projectId)) this.retryLater(o.projectId)
         return
@@ -1214,7 +1215,7 @@ Finish with: what you built, how it was tested (and what QA found), and anything
     const outcome = o.ok ? 'no-changes' : 'failed'
     const after = this.record(o.projectId, title, outcome)
     const next = this.put({ ...after, parallel: { ...after.parallel!, items: after.parallel!.items.map((i) => (i.id === item.id ? { ...i, status: 'done', outcome } : i)) } })
-    if (!o.ok && /limit (is )?reached/i.test(o.error ?? '')) {
+    if (!o.ok && USAGE_STOP.test(o.error ?? '')) {
       this.pause(o.projectId, `${o.error} Resume once there's room again.`)
       if (this.isAway(o.projectId)) this.retryLater(o.projectId)
       return

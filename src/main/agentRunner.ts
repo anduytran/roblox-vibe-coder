@@ -1126,6 +1126,11 @@ export class AgentRunner {
       proxyGrant?.release()
       this.controllers.delete(key)
       this.denyPendingFor(s.projectId, s.agentId, 'Run ended')
+      if (finished && !s.lastError && !controller.signal.aborted && usageLimitReply(lastText)) {
+        s.lastError = friendlyError(lastText.trim())
+        s.status = 'error'
+        this.log(s, { kind: 'error', text: s.lastError })
+      }
       box.ok = finished && !s.lastError && !controller.signal.aborted
       box.stopped = controller.signal.aborted
       box.text = lastText
@@ -1891,7 +1896,17 @@ interface RunBox {
 }
 
 /** An engine error that means the plan's usage ran out (not some other failure). */
-export const USAGE_STOP = /usage limit|rate[ -]?limit|limit (is |was )?(reached|hit)|hit your (usage )?limit|out of (extra )?usage|(5-hour|five[- ]hour|weekly) limit|plan limit/i
+export const USAGE_STOP = /usage limit|rate[ -]?limit|limit (is |was )?(reached|hit)|hit your (usage |session |weekly )?limit|session limit|out of (extra )?usage|(5-hour|five[- ]hour|weekly) limit|plan limit/i
+
+/**
+ * The engine can report the plan's usage running out as an ordinary last reply ("You've hit your session limit ·
+ * resets 2:30pm"), not an error. Taken as a finished task, three became reviews named after that message, and two
+ * of them merged half done.
+ */
+export function usageLimitReply(text: string): boolean {
+  const t = text.trim()
+  return t.length > 0 && t.length < 400 && USAGE_STOP.test(t)
+}
 
 /** What the engine is told when a task picks up after the plan's usage reset. */
 export const CONTINUE_PROMPT = `Your Claude plan's usage ran out partway through this task, and it has reset now. Continue where you left off: finish the task as it was given, without redoing work that's already done. Your earlier changes are still in the files.`
