@@ -4,6 +4,7 @@ import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
 import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
+import { imageFiles, MAX_IMAGES, prepareImage } from '../attachImages'
 import { laneOf, roleOf } from '@shared/lanes'
 import { BriefCard } from './BriefCard'
 import { MainAgentEditor, RoleEditor } from './RoleEditor'
@@ -133,6 +134,18 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
   const approvals = useMemo(() => allApprovals.filter((a) => a.projectId === project.id && a.agentId === role.id), [allApprovals, project.id, role.id])
   const [draft, setDraft] = useState('')
   const [record, setRecord] = useState(false)
+  // Images attached to the next message (data URLs, already scaled down).
+  const [images, setImages] = useState<string[]>([])
+  const [dragging, setDragging] = useState(false)
+  const pickRef = useRef<HTMLInputElement>(null)
+  const addImages = (files: File[]): void => {
+    if (!files.length) return
+    const room = MAX_IMAGES - images.length
+    if (room <= 0 || files.length > room) toast(`Attach at most ${MAX_IMAGES} images to one message.`)
+    void Promise.all(files.slice(0, Math.max(0, room)).map((f) => prepareImage(f).catch((e: Error) => (toast(e.message), null)))).then((urls) =>
+      setImages((prev) => [...prev, ...urls.filter((u): u is string => !!u)].slice(0, MAX_IMAGES))
+    )
+  }
   // Grouped by default; the raw log shows every entry exactly as it was recorded.
   const [raw, setRaw] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
@@ -161,9 +174,11 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
 
   const send = (): void => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && !images.length) return
+    const sent = images
     setDraft('')
-    void attempt(() => window.hangar.agents.send(project.id, role.id, text, { record }))
+    setImages([])
+    void attempt(() => window.hangar.agents.send(project.id, role.id, text, { record, ...(sent.length ? { images: sent } : {}) }))
   }
   // Taking autopilot's own step out of the queue pauses autopilot, so it never waits on a task that won't run.
   const confirmAutopilot = (tasks: QueuedTask[]): Promise<boolean> =>
@@ -307,13 +322,48 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
         </div>
       )}
 
-      <div className="composer">
+      <div
+        className={`composer${dragging ? ' dragging' : ''}`}
+        onDragOver={(e) => {
+          if (role.mode === 'research' || !Array.from(e.dataTransfer.types).includes('Files')) return
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          setDragging(false)
+          if (role.mode === 'research') return
+          const files = imageFiles(e.dataTransfer.files)
+          if (!files.length) return
+          e.preventDefault()
+          addImages(files)
+        }}
+      >
+        {images.length > 0 && (
+          <div className="composer-images">
+            {images.map((src, i) => (
+              <span className="composer-image" key={i}>
+                <img src={src} alt={`Attached image ${i + 1}`} />
+                <button type="button" aria-label={`Remove image ${i + 1}`} onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           value={draft}
           placeholder={busy ? `Queue another task for ${role.name}…` : `Message ${role.name}…`}
           // While an approval is pinned above, the box shrinks to one line so the card's buttons stay in view.
           rows={approvals.length ? 1 : 3}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            if (role.mode === 'research') return
+            const files = imageFiles(e.clipboardData.items)
+            if (!files.length) return
+            e.preventDefault()
+            addImages(files)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
@@ -337,7 +387,25 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
               <input type="checkbox" checked={record} onChange={(e) => setRecord(e.target.checked)} /> Record playtest
             </label>
           )}
-          <Button tone="primary" disabled={!draft.trim()} onClick={send}>
+          {role.mode !== 'research' && (
+            <>
+              <input
+                ref={pickRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                hidden
+                onChange={(e) => {
+                  addImages(imageFiles(e.target.files))
+                  e.target.value = ''
+                }}
+              />
+              <Button size="sm" tone="ghost" title="Attach images (or paste or drop them in)" disabled={images.length >= MAX_IMAGES} onClick={() => pickRef.current?.click()}>
+                Attach image
+              </Button>
+            </>
+          )}
+          <Button tone="primary" disabled={!draft.trim() && !images.length} onClick={send}>
             {busy ? 'Queue' : 'Send'}
           </Button>
         </div>

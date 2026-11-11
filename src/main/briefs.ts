@@ -221,7 +221,7 @@ export class Briefer {
           persistSession: false,
           maxTurns: 1,
           ...(settings.authMode === 'max' ? {} : { maxBudgetUsd: Math.min(0.2, settings.perRunBudgetUsd) }),
-          env: buildAgentEnv(auth.env)
+          env: buildAgentEnv(auth.env, process.env, { shortCache: true })
         }
       })) {
         const c = convertMessage(raw as StreamMessage)

@@ -68,6 +68,8 @@ export interface AutopilotDeps {
    * `ifUnknown` is the answer when Hangar can't read the usage: yes for planning and leading, no for building pieces.
    */
   fableOk?: (ifUnknown: boolean) => boolean
+  /** The "agents at once" setting: a sprint plans at least that many pieces, so every agent has one. */
+  maxRuns?: () => number
 }
 
 /**
@@ -278,11 +280,26 @@ export const LAUNCH_PLAN = `Plan the whole game up to launch, not an MVP. If Bri
 - design-vault/Roadmap.md: the milestones from here to a complete, launchable game, in build order (for example: core loop playable; content and progression with saving; feel and polish with sound, effects, animation and onboarding; purchases and retention; launch readiness on phones). Under each, the features it needs, one line each with how you'll know it's done. At most about 80 lines.
 - Make design-vault/Ship Checklist.md match: add any item the launch needs that it's missing.`
 
-/** Most pieces a sprint may plan: a fast MVP's, fast track's, or the usual limit (and never more than you set). */
-export function sprintMax(config: Pick<AutopilotConfig, 'sprintTasks' | 'fastTrack' | 'buildOut'>, mvp = false): number {
-  if (mvp) return MVP_ITEMS
-  const max = config.fastTrack || config.buildOut ? FAST_TRACK_ITEMS : MAX_SPRINT_ITEMS
+/**
+ * Most pieces a sprint may plan: a fast MVP's, fast track's, or the usual limit, raised to the agents that can run at
+ * once (`slots`) so none sits idle, and never more than you set.
+ */
+export function sprintMax(config: Pick<AutopilotConfig, 'sprintTasks' | 'fastTrack' | 'buildOut'>, mvp = false, slots = 0): number {
+  const base = mvp ? MVP_ITEMS : config.fastTrack || config.buildOut ? FAST_TRACK_ITEMS : MAX_SPRINT_ITEMS
+  const max = Math.max(base, slots)
   return config.sprintTasks ? Math.min(max, config.sprintTasks) : max
+}
+
+/** Fewest pieces a sprint should plan: one for every agent that can run at once (within the most it may plan). */
+export function sprintMin(max: number, slots: number): number {
+  return Math.max(1, Math.min(max, slots))
+}
+
+/** How many pieces the Lead is asked for, and why: enough for every agent that can run at once. */
+export function piecesWanted(min: number, max: number): string {
+  const range = min >= max ? `${max}` : `${min}–${max}`
+  if (min <= 1) return max > 1 ? `2–${max}` : '1'
+  return `${range} (at least ${min}: Hangar runs ${min} agents at once, and every one should have a piece; split big features by file into smaller pieces to get there, rather than leaving an agent idle)`
 }
 
 const PLAN_PREFIX = 'Autopilot: plan sprint '
@@ -1021,6 +1038,12 @@ Reply with only these sections, short and concrete:
     }
   }
 
+  /** Agents that can build at the same time: the "agents at once" setting, within what the builders' lanes allow. */
+  private slots(projectId: string): number {
+    const runs = this.deps.maxRuns?.() ?? 0
+    return Math.max(0, Math.min(runs, this.builders(projectId).length * MAX_LANES))
+  }
+
   private parallelOn(st: AutopilotState): boolean {
     return st.config.parallel !== false && this.leadOf(st.projectId) === 'lead' && this.builders(st.projectId).length > 0
   }
@@ -1067,13 +1090,15 @@ Reply with only these sections, short and concrete:
   /** The Lead plans the sprint as pieces that can be built at the same time, without changing files itself. */
   private queuePlan(st: AutopilotState, mvp = false): void {
     const builders = this.builders(st.projectId)
-    const max = sprintMax(st.config, mvp)
-    if (mvp) return this.queueMvpPlan(st, builders, max)
+    const slots = this.slots(st.projectId)
+    const max = sprintMax(st.config, mvp, slots)
+    const pieces = piecesWanted(sprintMin(max, slots), max)
+    if (mvp) return this.queueMvpPlan(st, builders, pieces)
     const feedback = feedbackText(st.feedback, 'Product owner feedback to act on first (put it into the briefs; the wrap-up records it in design-vault)')
     const lune = this.lune(st.projectId)
     const prompt = `${PLAN_PREFIX}${st.sprint}. The user is the product owner; you lead the build. This sprint your team builds its pieces at the same time, each agent in its own copy of the game.
 1. Read design-vault/Home.md, Brief.md, Game Overview.md, Roadmap.md, Fun Check.md (if there is one) and Inbox.md, and the mechanic notes involved.
-2. ${SHIP_FIRST} ${FUN_FIRST} ${st.config.fastTrack ? `${PUSH_LIMITS} ` : ''}${st.config.buildOut ? `${BUILD_OUT} ` : ''}Pick the next ${max > 1 ? `2–${max}` : '1'} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
+2. ${SHIP_FIRST} ${FUN_FIRST} ${st.config.fastTrack ? `${PUSH_LIMITS} ` : ''}${st.config.buildOut ? `${BUILD_OUT} ` : ''}Pick the next ${pieces} most valuable pieces toward the current milestone (the "Next sprint" items agreed at the last check-in first) that can be built at the same time: no two pieces may change the same files.
 3. Don't change any files in this step. Skip anything blocked (it needs the product owner, a playtest that can't run, or work that isn't merged): say so in your plan instead. ${lune ? '' : `${NO_SPECS_RUN} `}${NO_FILLER.replace('say so and stop.', 'reply with the line "Nothing to build." and say what it waits for, with no json block.')}
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time, so give pieces to whoever fits them best):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
@@ -1092,13 +1117,13 @@ Each brief is all its agent gets: say what to build, which files to read and cha
    * A new game's first sprint, as fast as possible: the planner (Fable unless you chose another) writes a short
    * overview and roadmap, then splits a playable MVP into pieces the team builds at the same time.
    */
-  private queueMvpPlan(st: AutopilotState, builders: { id: string; description: string }[], max: number): void {
+  private queueMvpPlan(st: AutopilotState, builders: { id: string; description: string }[], pieces: string): void {
     const feedback = st.feedback.length ? `\n\nProduct owner notes to act on:\n${st.feedback.map((f) => `- ${f}`).join('\n')}` : ''
     const prompt = st.config.buildOut
       ? `${PLAN_PREFIX}${st.sprint} (full game start). This is a new game and the user is the product owner. Goal: the complete game, ready to launch, built by your team sprint after sprint; this first sprint lays its foundation.
 1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md.
 2. ${LAUNCH_PLAN}
-3. Split the first milestone into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish with real feedback a player can see and hear: for example the map, the core mechanic (server), the HUD and menus, the goal and progression with saving, and the first purchase (with src/shared/Products.luau). ${BUILD_OUT}
+3. Split the first milestone into ${pieces} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish with real feedback a player can see and hear: for example the map, the core mechanic (server), the HUD and menus, the goal and progression with saving, and the first purchase (with src/shared/Products.luau). ${BUILD_OUT}
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
@@ -1109,7 +1134,7 @@ Each brief is all its agent gets: what to build, which files to create or change
       : `${PLAN_PREFIX}${st.sprint} (fast MVP start). This is a new game and the user is the product owner. Goal: a playable MVP as fast as possible, built by your team at the same time.
 1. Read design-vault/Brief.md (the idea), design-vault/Ship Checklist.md and CLAUDE.md. Nothing else is needed yet.
 2. Write, briefly (speed beats polish; they can grow later; at most about 150 words each): design-vault/Game Overview.md (pitch, core loop, 3 pillars) and design-vault/Roadmap.md (milestone 1 is "Ship v1" from the checklist; list later milestones in one line each). Don't write mechanic notes now: the acceptance criteria go in the briefs.
-3. Split the MVP into ${max > 1 ? `2–${max}` : '1'} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish, with feedback a player can see or hear on the core action: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
+3. Split the MVP into ${pieces} pieces that can be built at the same time, with no two pieces changing the same files, that together make the core loop playable from start to finish, with feedback a player can see or hear on the core action: for example the map (greybox is fine), the core mechanic (server), the HUD and menus, the goal or progression, and the first purchase (with src/shared/Products.luau). Prefer more, smaller pieces.
 Agents you can give pieces to (each can build up to ${MAX_LANES} pieces at the same time):
 ${builders.map((b) => `- "${b.id}": ${b.description}`).join('\n')}
 Reply with the plan in at most 5 short lines, then one \`\`\`json block like this, and nothing after it:
@@ -1136,7 +1161,7 @@ Each brief is all its agent gets: what to build, which files to create or change
       return
     }
     const mvp = st.parallel?.mvp === true
-    const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), sprintMax(st.config, mvp)) : []
+    const planned = o.ok ? parseSprintPlan(o.text, this.builders(o.projectId).map((b) => b.id), sprintMax(st.config, mvp, this.slots(o.projectId))) : []
     if (!planned.length && o.ok && !o.reviewId && NOTHING_TO_BUILD.test(o.text)) {
       // Nothing is worth building until you've done something (open Studio, answer a question): straight to the
       // check-in instead of a task that would only find filler. Unattended, two of these in a row end the run.

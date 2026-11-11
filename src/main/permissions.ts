@@ -24,44 +24,11 @@ export const STUDIO_MCP_NAME = 'Roblox_Studio'
 export const BLENDER_MCP_NAME = 'Hangar_Blender'
 /** Blender tools that only look at the scene. Everything else asks; running code asks in red. */
 const BLENDER_READ_TOOLS = new Set(['get_scene_info', 'get_object_info', 'get_viewport_screenshot'])
-/** Read-only Roblox Studio MCP tools: inspecting the game and playtest output is safe to allow. */
-const STUDIO_READ_TOOLS = new Set([
-  'script_read',
-  'script_search',
-  'script_grep',
-  'search_game_tree',
-  'inspect_instance',
-  'get_studio_state',
-  'get_console_output',
-  'screen_capture',
-  'list_roblox_studios'
-])
-
 /**
- * Studio tools an autonomous agent may use without asking: playtesting, running test scripts in play
- * mode (changes are thrown away when play stops) and simulated player input. Edit-mode Luau
- * (execute_luau) runs without asking in every mode unless it reaches outside the place (see
- * STUDIO_REACHES_OUT). Still asking: inserting Toolbox assets (common source of backdoor scripts), AI
- * generation, uploads, Studio's own web fetch, and direct script edits.
+ * Every Roblox Studio tool runs without asking (your choice, 2026-11-11: Studio work runs on its own), through
+ * Hangar's own Studio connection only, before the file-path rules (a Studio "path" is a place in the game, not a file).
+ * Only hidden or direction-changing characters still ask. Accepted risks are in SECURITY.md.
  */
-const STUDIO_AUTONOMOUS_TOOLS = new Set([
-  'start_stop_play',
-  'get_studio_mode',
-  'run_script_in_play_mode',
-  'character_navigation',
-  'user_keyboard_input',
-  'user_mouse_input'
-])
-
-/**
- * Edit-mode Luau runs without asking (your choice: Studio work shouldn't wait on clicks), unless the code reaches
- * outside the place: live data stores and messaging (real players' data once Studio API access is on), the network,
- * publishing or saving, assets loaded by ID (a common way in for backdoors), or code built from strings, which hides
- * what it does. A text check, not a sandbox: Studio runs outside Hangar's sandbox, and changes to the place still
- * reach git only through Rojo-synced files and review.
- */
-export const STUDIO_REACHES_OUT =
-  /\b(DataStoreService|MemoryStoreService|MessagingService|HttpService|HttpRbxApiService|OpenCloudService|InsertService|AssetService|MarketplaceService|TeleportService|BadgeService|GroupService|PublishService|LoadAsset\w*|SavePlace|PublishAsync|loadstring|getfenv|setfenv)\b|\brequire\s*\(\s*\d|GetService\s*\(\s*[^"'\s)]|:\s*GetService\s*\(\s*["'][^"']*["']\s*\.\./
 
 // ---------- shell commands ----------
 
@@ -144,13 +111,50 @@ export function alwaysRuleFor(command: string): string | null {
   return words.join(' ')
 }
 
-/** Commands that could print environment variables (the API key lives there). */
+/**
+ * Commands that could print environment variables (the API key lives there). The shell commands that print them
+ * (`env`, `set`, `export`…) are looked for only in the part the shell runs, not in text it hands to another program
+ * (a heredoc for Python, a quoted string): an agent writing "height set by its content" into a note isn't running
+ * `set`. Anything run as shell code again (sh, bash, eval, source…) is checked whole. Names of secret variables and
+ * the ways programs read the environment (os.environ, process.env…) are looked for everywhere.
+ */
 export function mayRevealSecrets(command: string): boolean {
   return (
-    /ANTHROPIC|API_KEY|_TOKEN|SECRET|GIT_CONFIG_/i.test(command) ||
-    /(^|[\s;&|(])(env|printenv|set|export|declare|compgen)(\s|$)/.test(command) ||
-    /env:|\/proc\/[^\s]*\/environ|process\.env|os\.environ|getenv|ENV\[|Environment\]::|GetEnvironmentVariable/i.test(command)
+    /ANTHROPIC|API_KEY|_TOKEN\b|SECRET|GIT_CONFIG_|oauth_token/.test(command) ||
+    /anthropic|claude-max-token/i.test(command) ||
+    PRINTS_ENV.test(shellCode(command)) ||
+    /\/proc\/[^\s]*\/environ|process\.env|os\.environ|getenv|environ\b|%ENV|\$ENV\{|ENV\[|Environment\]::|GetEnvironmentVariable|Get-ChildItem\s+env:|\$env:|\bgci\s+env:|\bls\s+env:|\bdir\s+env:/i.test(command)
   )
+}
+
+/** Shell commands that print variables: `env`, `printenv`, `set` or `export` on their own, `declare`/`typeset`/`compgen`. */
+const PRINTS_ENV =
+  /(^|[\s;&|(`{'"])(env|printenv|declare|typeset|compgen)(?=[\s;&|)`}'"]|$)|(^|[\s;&|(`{'"])(set|export)(?=\s*(?:$|[;&|)`}'"])|\s+-p\b)/m
+
+/** Runs text as shell code again: then nothing in it is data. */
+const RUNS_SHELL = /(^|[\s;&|(`{/])(sh|bash|zsh|dash|ksh|fish|eval|source|exec|xargs|parallel|watch|script|su|sudo|doas|nohup|timeout|nice|command|builtin)(?=[\s;&|)`}]|$)|(^|[\s;&|(`{])\.\s/
+
+/**
+ * The part of a command the shell itself runs: heredoc bodies and quoted strings removed (they're text for another
+ * program), unless the command runs text as shell code again. Double-quoted strings with a substitution in them stay.
+ */
+export function shellCode(command: string): string {
+  if (RUNS_SHELL.test(command)) return command
+  const lines = command.split('\n')
+  const kept: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    kept.push(line)
+    const open = /<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/.exec(line)
+    if (!open) continue
+    const dash = open[1] === '-'
+    while (i + 1 < lines.length && (dash ? lines[i + 1]!.replace(/^\t+/, '') : lines[i + 1]) !== open[3]) i++
+    i++
+  }
+  return kept
+    .join('\n')
+    .replace(/'[^']*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, (m) => (/\$\(|`/.test(m) ? m : '""'))
 }
 
 // Shared with the window, which strips the same characters from agent-written text it renders.
@@ -197,6 +201,9 @@ export function evaluateToolUse(args: {
     return ask('Contains hidden or direction-changing characters — check the details carefully', true)
   }
 
+  const studioPrefix = `mcp__${STUDIO_MCP_NAME}__`
+  if (settings.robloxStudioMcp && toolName.startsWith(studioPrefix)) return { action: 'allow' }
+
   // A skill is text the agent reads; it never adds tools. Only the agent's own chosen skills load.
   if (toolName === 'Skill') {
     const id = requestedSkill(input)
@@ -214,18 +221,6 @@ export function evaluateToolUse(args: {
 
   if (READ_TOOLS.has(toolName)) return { action: 'allow' }
 
-  const studioPrefix = `mcp__${STUDIO_MCP_NAME}__`
-  if (settings.robloxStudioMcp && toolName.startsWith(studioPrefix)) {
-    const tool = toolName.slice(studioPrefix.length)
-    if (STUDIO_READ_TOOLS.has(tool)) return { action: 'allow' }
-    if (settings.autonomous && STUDIO_AUTONOMOUS_TOOLS.has(tool)) return { action: 'allow' }
-    if (tool === 'execute_luau') {
-      if (allStrings(input).some((s) => STUDIO_REACHES_OUT.test(s))) {
-        return ask('Runs Luau in Studio that reaches outside the place (data stores, the network, publishing, assets by ID, or code built from strings). Read it before allowing.', true)
-      }
-      return { action: 'allow' }
-    }
-  }
 
   const blenderPrefix = `mcp__${BLENDER_MCP_NAME}__`
   if (toolName.startsWith(blenderPrefix)) {

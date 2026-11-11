@@ -257,7 +257,7 @@ export interface HangarApi {
   }
   agents: {
     snapshot(projectId: string): Promise<AgentState[]>
-    send(projectId: string, agentId: string, prompt: string, opts?: { record?: boolean }): Promise<void>
+    send(projectId: string, agentId: string, prompt: string, opts?: { record?: boolean; images?: string[] }): Promise<void>
     stop(projectId: string, agentId: string): Promise<void>
     stopAll(): Promise<void>
     clearQueue(projectId: string, agentId: string): Promise<void>

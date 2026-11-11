@@ -642,7 +642,7 @@ export class ApprovalExplainer {
           persistSession: false,
           maxTurns: 2,
           maxBudgetUsd: budget,
-          env: buildAgentEnv(auth.env)
+          env: buildAgentEnv(auth.env, process.env, { shortCache: true })
         }
       })) {
         const c = convertMessage(raw as StreamMessage)

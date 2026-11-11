@@ -513,7 +513,8 @@ app.whenReady().then(() => {
     merge: (id) => reviewActions.merge(id),
     fixClash: (id) => reviewActions.fixClash(id),
     usesPlan: () => settings.get().authMode === 'max',
-    fableOk: (ifUnknown) => fableHeadroom(costs.planUsage(), planLimitsFor(settings.get()), ifUnknown)
+    fableOk: (ifUnknown) => fableHeadroom(costs.planUsage(), planLimitsFor(settings.get()), ifUnknown),
+    maxRuns: () => settings.get().maxConcurrentRuns
   })
   // Nothing is running yet, so actions set aside before Hangar closed belong to tasks that are over.
   autopilot.clearSetAside()
@@ -693,8 +694,8 @@ app.whenReady().then(() => {
 
   // Agents
   handle(IPC.agentsSnapshot, (id: unknown) => runner.snapshot(str(id, 'project')))
-  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown, opts?: { record?: unknown }) =>
-    runner.send(str(id, 'project'), str(agentId, 'agent'), str(prompt, 'prompt'), { record: opts?.record === true })
+  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown, opts?: { record?: unknown; images?: unknown }) =>
+    runner.send(str(id, 'project'), str(agentId, 'agent'), typeof prompt === 'string' ? prompt : '', { record: opts?.record === true, images: opts?.images })
   )
   handle(IPC.agentsStop, (id: unknown, agentId: unknown) => runner.stop(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsStopAll, () => {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -54,7 +54,7 @@ function setup(opts: { max?: number; key?: string | null; daily?: number | null;
       maxActive = Math.max(maxActive, active)
       try {
         yield { type: 'system', subtype: 'init', session_id: `s-${n}`, model: 'm', mcp_servers: [] }
-        if (prompt.includes('edit')) {
+        if (typeof prompt === 'string' && prompt.includes('edit')) {
           const canUseTool = options.canUseTool as CanUseTool
           const ac = options.abortController as AbortController
           const r = await canUseTool('Edit', { file_path: 'src/x.luau' }, { signal: ac.signal })
@@ -455,4 +455,20 @@ test('skills: only the agent\'s chosen skills load, as cleaned copies outside th
   assert.ok((plain.calls[0]!.options.disallowedTools as string[]).includes('Skill'))
   plain.calls[0]!.release()
   await until(() => plain.status('main') === 'idle')
+})
+
+test('images attached to a message reach the agent with it, and are removed once the task has run', async () => {
+  const appDataDir = mkdtempSync(join(tmpdir(), 'hangar-run-att-'))
+  const { runner, project, calls, status } = setup({ autoRelease: true, appDataDir })
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16, 3)]).toString('base64')
+  runner.send(project.id, 'ui-builder', '', { images: [`data:image/png;base64,${png}`] })
+  await until(() => calls.length === 1 && status('ui-builder') === 'idle')
+  const prompt = calls[0]!.prompt as unknown as AsyncIterable<{ message: { content: { type: string; text?: string }[] } }>
+  assert.notEqual(typeof prompt, 'string')
+  const msgs = []
+  for await (const m of prompt) msgs.push(m)
+  assert.deepEqual(msgs[0]!.message.content.map((c) => c.type), ['image', 'text'])
+  assert.equal(msgs[0]!.message.content[1]!.text, 'See the attached image(s).')
+  assert.deepEqual(existsSync(join(appDataDir, 'attachments')) ? readdirSync(join(appDataDir, 'attachments')) : [], [])
+  assert.throws(() => runner.send(project.id, 'ui-builder', 'x', { images: ['PHN2Zz4='] }), /Only PNG/)
 })

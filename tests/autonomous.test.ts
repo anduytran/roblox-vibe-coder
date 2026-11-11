@@ -210,7 +210,7 @@ test('autonomous: prompt tells the agent how to work unattended; recorded tasks 
   assert.equal(existsSync(r.clip!.files[0]!), false, 'clip deleted with the review')
 })
 
-test('autonomous policy: edits and Studio playtest tools run freely; risky Studio tools and protected files still ask', () => {
+test('autonomous policy: edits and every Studio tool run freely; protected files still ask', () => {
   const s = { ...DEFAULT_PROJECT_SETTINGS, autonomous: true }
   const root = tmp('hangar-auto-pol-')
   const ev = (toolName: string, input: Record<string, unknown> = {}) => evaluateToolUse({ toolName, input, projectRoot: root, settings: s })
@@ -218,14 +218,14 @@ test('autonomous policy: edits and Studio playtest tools run freely; risky Studi
   for (const t of ['start_stop_play', 'character_navigation', 'user_keyboard_input', 'run_script_in_play_mode', 'get_console_output', 'screen_capture']) {
     assert.equal(ev(`mcp__Roblox_Studio__${t}`).action, 'allow', t)
   }
-  for (const t of ['insert_asset', 'http_get', 'multi_edit', 'generate_mesh', 'upload_image']) {
-    assert.equal(ev(`mcp__Roblox_Studio__${t}`).action, 'ask', t)
+  for (const t of ['insert_asset', 'multi_edit', 'generate_mesh', 'upload_image']) {
+    assert.equal(ev(`mcp__Roblox_Studio__${t}`).action, 'allow', t)
   }
   assert.equal(ev('mcp__Roblox_Studio__execute_luau', { code: 'print(workspace.Name)' }).action, 'allow')
   assert.equal(ev('Write', { file_path: '.mcp.json' }).action, 'ask')
   assert.equal(ev('Write', { file_path: '../outside.txt' }).action, 'ask')
   assert.equal(ev('WebFetch', { url: 'https://x.example' }).action, 'ask')
-  assert.equal(evaluateToolUse({ toolName: 'mcp__Roblox_Studio__start_stop_play', input: {}, projectRoot: root, settings: { ...DEFAULT_PROJECT_SETTINGS } }).action, 'ask', 'not without autonomous mode')
+  assert.equal(evaluateToolUse({ toolName: 'mcp__Roblox_Studio__start_stop_play', input: {}, projectRoot: root, settings: { ...DEFAULT_PROJECT_SETTINGS } }).action, 'allow', 'in every mode')
   assert.equal(ev('Write', { file_path: 'src/.gitignore' }).action, 'ask', '.gitignore is protected')
 })
 

@@ -1186,6 +1186,42 @@ select:focus-visible {
   background: var(--surface);
   box-shadow: var(--shadow-btn);
 }
+.composer.dragging textarea {
+  outline: 2px dashed var(--accent);
+}
+.composer-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.composer-image {
+  position: relative;
+  display: inline-block;
+}
+.composer-image img {
+  display: block;
+  height: 64px;
+  max-width: 120px;
+  object-fit: cover;
+  border-radius: var(--r-md, 6px);
+  box-shadow: var(--shadow-btn);
+}
+.composer-image button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-btn);
+  cursor: pointer;
+  line-height: 18px;
+  padding: 0;
+}
 .composer-foot {
   display: flex;
   justify-content: space-between;

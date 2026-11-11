@@ -145,7 +145,7 @@ export class TaskReviewer {
           disallowedTools: NOT_ALLOWED,
           ...(settings.authMode === 'max' ? {} : { maxBudgetUsd: budget }),
           maxTurns: 30,
-          env: buildAgentEnv(auth.env),
+          env: buildAgentEnv(auth.env, process.env, { shortCache: true }),
           canUseTool
         }
       })) {

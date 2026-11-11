@@ -205,6 +205,8 @@ export interface QueuedTask {
    * what it did) and its change in Reviews (its branch, to keep adding to). The task's own prompt is unchanged.
    */
   continueFrom?: { sessionId: string | null; reviewId: string | null; costSoFar?: number }
+  /** Images you attached, saved by Hangar (their file names in its attachments folder). */
+  images?: string[]
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'
