@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { APPROVED } from './approvingReviewer'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -228,7 +229,7 @@ test('Luau tests: test place check builds the branch with Rojo, keeps the key in
   const res = good!.results.find((r) => r.name === CLOUD_CHECK_NAME)!
   assert.equal(res.status, 'passed', res.output)
   assert.deepEqual(seen[0], { key: 'roblox-open-cloud-key-123456', place: '1/2' })
-  assert.equal(autoMergeBlocker({ ...t.review, checks: good } as Review), null, 'passing Luau tests let autopilot merge')
+  assert.equal(autoMergeBlocker({ ...t.review, checks: good, aiReview: APPROVED } as Review), null, 'passing Luau tests (and the reviewer) let autopilot merge')
 
   const bad = await runChecks(t.project, t.review, { ...opts, cloud: cloud(false) })
   assert.equal(bad!.results[0]!.status, 'failed')

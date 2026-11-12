@@ -22,5 +22,6 @@ export function mergeWarnings(review: Review): string[] {
   if (review.aiReview?.status === 'running') out.push('The reviewer agent is still reading it.')
   else if (review.aiReview?.status === 'done' && review.aiReview.verdict === 'block') out.push('The reviewer agent says not to merge this as is.')
   else if (review.aiReview?.status === 'error') out.push(`The reviewer agent didn't finish (${review.aiReview.error ?? 'unknown error'}).`)
+  else if (!review.aiReview) out.push('No reviewer agent has looked at it yet. Run the reviewer first.')
   return out
 }

@@ -31,7 +31,7 @@ export class ReviewPipeline {
     }
   }
 
-  /** Queue checks and the AI review for a review. Returns when this one is done (tests await it). */
+  /** Queue checks and the reviewer agent for a review. Returns when this one is done (tests await it). */
   start(review: Review, opts: { reviewer?: boolean } = {}): Promise<void> {
     if (review.kind === 'research') return Promise.resolve()
     let project: Project
@@ -41,7 +41,10 @@ export class ReviewPipeline {
       return Promise.resolve()
     }
     const wantChecks = hasChecks(project.settings)
-    const wantReviewer = (opts.reviewer ?? true) && project.settings.reviewer && this.deps.reviewer !== null
+    // Every change gets the reviewer agent before it can merge. A re-run of only the checks (`reviewer: false`) still
+    // asks it when it hasn't finished a review of this change.
+    const reviewed = review.aiReview?.status === 'done'
+    const wantReviewer = this.deps.reviewer !== null && (opts.reviewer !== false || !reviewed)
     if (!wantChecks && !wantReviewer) return Promise.resolve()
     this.patch(review.id, {
       ...(wantChecks ? { checks: { status: 'running', reason: null, results: [] } } : {}),

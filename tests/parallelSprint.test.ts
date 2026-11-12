@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { APPROVED } from './approvingReviewer'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,7 +89,7 @@ test('parallel sprint: the Lead plans, pieces go to their agents at once, change
   t.done(items.find((s) => s.agent === 'ui-builder')!.prompt, 'ui-builder', { text: 'Blocked: needs the product owner.' })
   assert.equal(t.ap.get(t.project.id).parallel?.phase, 'building', 'still waiting for the other piece')
   const r = t.reviews.add({ projectId: t.project.id, agentId: 'scripter', title: 'Bots melee', branch: 'hangar/scripter-bots-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Bots melee', files: ['src/server/Bots.luau'], incomplete: null, note: null, clip: null })
-  t.reviews.update(r.id, { checks: { status: 'done', reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed', output: '', ms: 1 }] } })
+  t.reviews.update(r.id, { checks: { status: 'done', reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed', output: '', ms: 1 }] }, aiReview: APPROVED })
   t.done(items.find((s) => s.agent === 'scripter')!.prompt, 'scripter', { reviewId: r.id })
   return new Promise<void>((resolve) =>
     setTimeout(() => {

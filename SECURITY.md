@@ -122,7 +122,7 @@ These can't be tested without the real Agent SDK and are worth checking once:
 
 ## New game, autopilot and trends (2026-10-20)
 
-- **Auto-merge** only applies work that passed every gate: checks (if configured), the reviewer agent's approval, no merge warnings, no notes (quarantined ignored files, edited `.gitignore`, history problems), and no changes to protected or tool-config files (`package.json`, CI/editor config, JS tool configs, scripts, `node_modules`, `.mcp.json`…). Everything else waits for you. Turn auto-merge off to review every task.
+- **Auto-merge** only applies work that passed every gate: checks (if configured), a finished review by the separate reviewer agent (always on since 2026-11-12; it can't be switched off, and passing checks alone no longer merge anything), no merge warnings, no notes (quarantined ignored files, edited `.gitignore`, history problems), and no changes to protected or tool-config files (`package.json`, CI/editor config, JS tool configs, scripts, `node_modules`, `.mcp.json`…). Everything else waits for you. Turn auto-merge off to review every task.
 - **Trends** come from two fixed Roblox hosts (`apis.roblox.com`, `games.roblox.com`), read-only, no credentials, responses size-limited; names and descriptions are cleaned of hidden characters and treated as untrusted text.
 - **Idea generation** runs Claude with no tools, no project, behind the key-hiding proxy; its output is shown to you and only becomes a brief if you click "Create this game" (you see it in the wizard first).
 - **New projects** are created only inside a folder you choose, never into a non-empty folder; the game name is sanitised before it's written into code.

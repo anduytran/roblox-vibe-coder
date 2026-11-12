@@ -1208,6 +1208,21 @@ export class AgentRunner {
   }
 
   /** In-flight records, one per running task (several can run at once in a project). */
+  /**
+   * A new or updated change: its checks and the reviewer agent are started (marked running) first, then it's shown.
+   * The other way round, autopilot could look at it before the reviewer was even asked and decide without it.
+   */
+  private announce(review: Review): void {
+    this.deps.onReview?.(review)
+    let now = review
+    try {
+      now = this.deps.reviews.get(review.id)
+    } catch {
+      // removed meanwhile: show what we had
+    }
+    this.deps.emit({ type: 'review', review: now })
+  }
+
   private setInflight(projectId: string, taskId: string, rec: InFlight | null): void {
     const key = `${projectId}::${taskId}`
     this.inflight.update((f) => {
@@ -1351,9 +1366,8 @@ export class AgentRunner {
           note: notes.length ? notes.join(' ') : null,
           clip: null
         })
-        this.deps.emit({ type: 'review', review })
         // Checks and the reviewer run on it like on any finished task.
-        this.deps.onReview?.(review)
+        this.announce(review)
         this.log(s, { kind: 'system', text: `${INTERRUPTED} Its work on ${rec.branch} is in Reviews, marked as stopped early.` })
       })
       this.setInflight(projectId, rec.taskId, null)
@@ -1441,8 +1455,7 @@ export class AgentRunner {
           ...(earlier.chat && !task.origin && !task.fresh && s.sessionId ? { sessionId: s.sessionId } : {}),
           clip: clipResult ?? earlier.clip
         })
-        this.deps.emit({ type: 'review', review: updated })
-        this.deps.onReview?.(updated)
+        this.announce(updated)
         this.log(s, { kind: 'system', text: `Added to “${earlier.title}”: ${files.length} file${files.length === 1 ? '' : 's'} changed in total (“${said}”). Back on ${branch.from.base}.` })
         if (note) this.log(s, { kind: 'error', text: note })
         return updated.id
@@ -1464,8 +1477,7 @@ export class AgentRunner {
         note,
         clip: clipResult
       })
-      this.deps.emit({ type: 'review', review })
-      this.deps.onReview?.(review)
+      this.announce(review)
       this.log(s, { kind: 'system', text: `Ready for review: ${files.length} file${files.length === 1 ? '' : 's'} changed on ${branch.name}. Back on ${branch.from.base}.` })
       if (note) this.log(s, { kind: 'error', text: note })
       return review.id

@@ -582,7 +582,10 @@ test('autopilot: what can merge on its own', () => {
   assert.match(autoMergeBlocker({ ...base, ...green, incomplete: 'stopped' })!, /stopped/)
   assert.match(autoMergeBlocker({ ...base, ...green, checks: { ...green.checks, status: 'skipped', reason: 'rokit.toml changed' } })!, /Checks didn't run/)
   assert.match(autoMergeBlocker({ ...base, ...green, aiReview: { ...green.aiReview, verdict: 'block' } })!, /reviewer/)
-  assert.match(autoMergeBlocker(base)!, /nothing to approve it/)
+  assert.match(autoMergeBlocker(base)!, /No reviewer agent/)
+  // Passing checks alone aren't enough: a reviewer agent has to have read it.
+  assert.match(autoMergeBlocker({ ...base, checks: green.checks })!, /No reviewer agent/)
+  assert.match(autoMergeBlocker({ ...base, ...green, aiReview: { ...green.aiReview, status: 'error', verdict: null } })!, /reviewer/)
   assert.match(autoMergeBlocker({ ...base, kind: 'research' })!, /Research/)
   for (const f of ['package.json', '.github/workflows/x.yml', 'eslint.config.js', 'tools/run.ps1', '.mcp.json', 'node_modules/x/index.js']) {
     assert.match(autoMergeBlocker({ ...base, ...green, files: ['src/a.luau', f] }) ?? '', /control how code or tools run/, f)

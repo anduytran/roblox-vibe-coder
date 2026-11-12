@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { APPROVED } from './approvingReviewer'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -99,6 +100,8 @@ function setup(opts: { clips?: ClipRecorder; images?: boolean; during?: (cwd: st
     appDataDir: '/fake/appdata',
     platform: 'linux',
     reviews,
+    // The reviewer agent reads every change; here it approves straight away.
+    onReview: (r) => void reviews.update(r.id, { aiReview: APPROVED }),
     ...(opts.clips ? { clips: opts.clips } : {})
   })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null })

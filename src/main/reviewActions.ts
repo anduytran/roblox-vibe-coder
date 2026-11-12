@@ -327,7 +327,8 @@ export class ReviewActions {
         if (review.status === 'pending' && review.mergeQueued) this.changed(this.deps.reviews.update(review.id, { mergeQueued: false }))
       } else if (!review.clash && (review.checks || review.aiReview) && review.checks?.status !== 'running' && review.aiReview?.status !== 'running') {
         this.mergeWhenFixed.delete(review.id)
-        if (checksFailed(review.checks) || (review.aiReview?.status === 'done' && review.aiReview.verdict === 'block')) {
+        // It only goes in once a reviewer agent has read the fixed version and doesn't say no.
+        if (checksFailed(review.checks) || review.aiReview?.status !== 'done' || review.aiReview.verdict === 'block') {
           this.changed(this.deps.reviews.update(review.id, { mergeQueued: false }))
         } else {
           let q = this.queues.get(review.projectId)

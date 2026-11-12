@@ -30,12 +30,14 @@ export function ChecksCard({ project, update }: { project: Project; update: (pat
       <p className="small muted">
         Every finished autonomous task is checked before it reaches you. Results appear on the review, and Merge asks you to confirm when something failed.
       </p>
-      <Toggle
-        checked={s.reviewer}
-        onChange={(v) => update({ settings: { reviewer: v } }, v ? 'Reviewer agent on.' : 'Reviewer agent off.')}
-        label="Reviewer agent"
-        hint="A separate, read-only Claude session reads each change and reports problems: client trust, backdoors, DataStore risks, performance, scope. Costs up to $1 per task (usually far less). It's advice — it can be fooled by the code it reads."
-      />
+      <p className="small">
+        <strong>Reviewer agent: always on.</strong>{' '}
+        <span className="muted">
+          A separate, read-only Claude session reads every change before it merges and reports problems: client trust, backdoors, DataStore risks,
+          performance, scope. Nothing merges by itself without its OK. Costs up to $1 per task (usually far less). It's advice — it can be fooled by
+          the code it reads.
+        </span>
+      </p>
       <span className="field-label">Luau tests (no Studio needed)</span>
       <Toggle
         checked={luau.lune}

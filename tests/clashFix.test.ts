@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { APPROVED } from './approvingReviewer'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -68,7 +69,9 @@ function setup(resolve: (text: string) => string, hold: Promise<void> = Promise.
     trustFile: join(tmp('hangar-cf-t-'), 'trust.json'),
     appDataDir: tmp('hangar-cf-app-'),
     platform: 'linux',
-    reviews
+    reviews,
+    // The reviewer agent reads every change; here it approves straight away.
+    onReview: (r) => void reviews.update(r.id, { aiReview: APPROVED })
   })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null })
   const idle = () => runner.snapshot(project.id).every((a) => a.status !== 'working' && a.status !== 'queued')
@@ -164,7 +167,7 @@ test('autopilot: while you are away a clash is handed to the agent, at most twic
   ap.start(project.id, { config: { sprintTasks: 1 } as never })
   ap.configure(project.id, { unattended: true, unattendedUntil: Date.now() + 3600_000, unattendedBudgetUsd: 20 })
   const r = reviews.add({ projectId: project.id, agentId: 'lead', title: 'Gun', branch: 'hangar/lead-gun-abc123', base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Gun', files: ['Gun.luau'], incomplete: null, note: null, clip: null })
-  reviews.update(r.id, { checks: passed })
+  reviews.update(r.id, { checks: passed, aiReview: APPROVED })
   ap.onTaskDone({ projectId: project.id, agentId: 'lead', task: { id: 't1', prompt: sent[0]!, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: 'Built it.', error: null, reviewId: r.id })
   await until(() => fixes.length === 1)
   assert.equal(ap.get(project.id).awaitingReviewId, r.id, 'waits for the fix')
@@ -356,8 +359,9 @@ test('autopilot: without check-ins it keeps going: each check-in answers itself,
   assert.ok(sent.at(-1)!.includes(CARRY_ON_FEEDBACK))
 })
 
-test('autopilot: on the Claude plan with no end time, an unattended run stops after its most sprints', async () => {
-  const { Autopilot, MAX_AWAY_SPRINTS } = await import('../src/main/autopilot')
+test('autopilot: on the Claude plan with no end time, an unattended run has no sprint cap', async () => {
+  const { Autopilot } = await import('../src/main/autopilot')
+  const SPRINTS = 15
   const registry = new ProjectRegistry(join(tmp('hangar-cap-'), 'p.json'))
   const project = registry.add(tmp('hangar-cap-proj-'))
   registry.update(project.id, { settings: { autonomous: true } })
@@ -377,17 +381,17 @@ test('autopilot: on the Claude plan with no end time, an unattended run stops af
   ap.start(project.id, { config: { sprintTasks: 1 } as never })
   ap.configure(project.id, { unattended: true, unattendedUntil: null })
   const passed = { status: 'done' as const, reason: null, results: [{ name: 'Lint', command: 'selene src', status: 'passed' as const, output: '', ms: 1 }] }
-  for (let n = 0; n < MAX_AWAY_SPRINTS + 3 && ap.isAway(project.id); n++) {
+  for (let n = 0; n < SPRINTS && ap.isAway(project.id); n++) {
     const r = reviews.add({ projectId: project.id, agentId: 'main', title: `Feature ${n}`, branch: `hangar/main-f${n}-abc123`, base: 'main', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), summary: 'Built', files: [`src/f${n}.luau`], incomplete: null, note: null, clip: null })
-    reviews.update(r.id, { checks: passed })
+    reviews.update(r.id, { checks: passed, aiReview: APPROVED })
     ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: `t${n}`, prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot' }, ok: true, stopped: false, text: 'Built it.', error: null, reviewId: r.id })
     await new Promise((resolve) => setTimeout(resolve, 10))
     ap.onTaskDone({ projectId: project.id, agentId: 'main', task: { id: `r${n}`, prompt: sent.at(-1)!, createdAt: 1, origin: 'autopilot-report' }, ok: true, stopped: false, text: '## Built\n- A feature', error: null, reviewId: null })
   }
   const st = ap.get(project.id)
-  assert.equal(st.status, 'checkin')
-  assert.equal(st.sprint, MAX_AWAY_SPRINTS + 1, 'the sprint it was on when unattended began, plus its most')
-  assert.match(st.away!.endReason ?? '', new RegExp(`ran ${MAX_AWAY_SPRINTS} sprints`))
+  assert.equal(st.status, 'running', 'still going')
+  assert.equal(st.sprint, SPRINTS + 1)
+  assert.ok(ap.isAway(project.id))
 })
 
 test('autopilot: "Do it now" on a set-aside action runs in a fresh conversation', async () => {

@@ -111,7 +111,8 @@ function sanitizeSettings(s: ProjectSettings): ProjectSettings {
     sandboxAllowedDomains: strings(s.sandboxAllowedDomains).filter((d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d)),
     checks: sanitizeChecks(s.checks),
     luauTests: cleanLuauTests(s.luauTests),
-    reviewer: s.reviewer !== false,
+    // Always on: every change is read by a separate reviewer agent before it merges.
+    reviewer: true,
     safetyChecker: s.safetyChecker === true,
     livePlace:
       s.livePlace && /^\d{1,20}$/.test(String(s.livePlace.universeId)) && /^\d{1,20}$/.test(String(s.livePlace.placeId))

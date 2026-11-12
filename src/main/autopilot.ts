@@ -194,12 +194,6 @@ export const MAX_CLASH_FIXES = 2
 /** Sprints in a row that built nothing before an unattended run stops instead of starting another. */
 export const STUCK_SPRINTS = 2
 
-/**
- * Most sprints an unattended run on the Claude plan takes when you set no end time: there's no budget to stop it, and
- * one ran 66 sprints of refactors.
- */
-export const MAX_AWAY_SPRINTS = 12
-
 /** True when a sprint built something new: not just notes, review fixes, or pieces that changed nothing. */
 export function sprintBuilt(report: Pick<SprintReport, 'tasks'>): boolean {
   return report.tasks.some((t) => !t.wrapup && !REVIEW_FIX.test(t.title) && t.outcome !== 'no-changes' && t.outcome !== 'failed')
@@ -230,7 +224,8 @@ export function autoMergeBlocker(review: Review): string | null {
     }
     return "The reviewer agent didn't approve it."
   }
-  return checksOk ? null : 'No checks or reviewer agent ran, so there is nothing to approve it automatically.'
+  // Nothing merges by itself unless a separate reviewer agent has read it.
+  return 'No reviewer agent has looked at it.'
 }
 
 const clampConfig = (c: Partial<AutopilotConfig>, base: AutopilotConfig): AutopilotConfig => ({
@@ -840,14 +835,14 @@ Reply with only these sections, short and concrete:
         this.put({ ...this.get(o.projectId), reason: `Stopped at this check-in: ${why}.` })
         return
       }
-      // Its time or budget ran out during this sprint, or (on the plan, with no end time) it has run its most
-      // sprints: the run ends here, at the check-in.
+      // Its time or budget ran out during this sprint: the run ends here, at the check-in. (There's no cap on the
+      // number of sprints: a run that stops building anything new is stopped by the check above.)
       const now = this.get(o.projectId)
       const away = now.config.unattended && now.away && !now.away.endedAt ? now.away : null
-      const capped = !!away && !!this.deps.usesPlan?.() && !now.config.unattendedUntil && away.sprints >= MAX_AWAY_SPRINTS
-      const over = away ? (this.awayOver(now) ?? (capped ? `it ran ${MAX_AWAY_SPRINTS} sprints (the most without an end time set)` : null)) : null
+      const over = away ? this.awayOver(now) : null
       if (over) {
         this.endAway(o.projectId, over)
+        this.put({ ...this.get(o.projectId), reason: `The unattended run ended at this check-in: ${over}.` })
         return
       }
       // Unattended, or not set to wait for you: the check-in answers itself and the next sprint starts on the Lead's

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { approvingReviewer } from './approvingReviewer'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { connect as netConnect } from 'node:net'
@@ -101,7 +102,7 @@ function setup(opts: { autonomous?: boolean; appDataDir?: string; script?: (prom
   t0Sandbox(registry, project.id)
   const checkEnv: NodeJS.ProcessEnv = { ...process.env }
   const checkOpts: { platform?: NodeJS.Platform } = {}
-  pipeline = new ReviewPipeline({ registry, reviews, emit: (e) => events.push(e), runChecks: (p, r) => runChecks(p, r, { workDir, appDataDir, env: checkEnv, platform: checkOpts.platform }), reviewer: null })
+  pipeline = new ReviewPipeline({ registry, reviews, emit: (e) => events.push(e), runChecks: (p, r) => runChecks(p, r, { workDir, appDataDir, env: checkEnv, platform: checkOpts.platform }), reviewer: approvingReviewer })
   const actions = new ReviewActions({ registry, reviews, runner, emit: (e) => events.push(e), publisher: null, pipeline })
   const status = (agentId: string) => runner.snapshot(project.id).find((a) => a.agentId === agentId)!.status
   return { dir, g, registry, project, runner, reviews, actions, events, calls, auth, status, workDir, checkEnv, checkOpts, setPipeline: (p: ReviewPipeline) => (pipeline = p) }
