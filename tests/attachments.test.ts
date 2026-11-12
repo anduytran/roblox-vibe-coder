@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { imageBlocks, MAX_IMAGES, removeImages, saveImages, sniffImage, sweepImages, withImages } from '../src/main/attachments'
+import { cleanPreviews, imageBlocks, MAX_IMAGES, MAX_PREVIEW_BYTES, removeImages, saveImages, sniffImage, sweepImages, withImages } from '../src/main/attachments'
 
 // Images you attach to a message for an agent: checked to be real images, kept under random names, sent with the message.
 
@@ -54,4 +54,18 @@ test('attachments: a file swapped for something else is left out; old leftovers 
   sweepImages(dir)
   assert.equal(existsSync(old), false)
   assert.equal(existsSync(join(dir, name!)), true)
+})
+
+test('attachments: chat previews are small PNGs or JPEGs, checked by their bytes, never anything else', () => {
+  const png = `data:image/png;base64,${PNG.toString('base64')}`
+  const jpeg = `data:image/jpeg;base64,${JPEG.toString('base64')}`
+  assert.deepEqual(cleanPreviews([png, jpeg]), [png, jpeg])
+  const svg = `data:image/svg+xml;base64,${Buffer.from('<svg onload="x()"/>').toString('base64')}`
+  const lying = `data:image/png;base64,${Buffer.from('<svg/>').toString('base64')}`
+  const relabelled = `data:image/png;base64,${JPEG.toString('base64')}`
+  const big = `data:image/png;base64,${Buffer.concat([PNG, Buffer.alloc(MAX_PREVIEW_BYTES)]).toString('base64')}`
+  assert.deepEqual(cleanPreviews([svg, lying, big, 'https://example.com/a.png', 7, null]), [])
+  assert.deepEqual(cleanPreviews([relabelled]), [jpeg], 'labelled by what it is')
+  assert.equal(cleanPreviews(Array(MAX_IMAGES + 3).fill(png)).length, MAX_IMAGES)
+  assert.deepEqual(cleanPreviews('nope'), [])
 })

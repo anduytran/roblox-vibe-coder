@@ -30,6 +30,31 @@ export async function prepareImage(file: File): Promise<string> {
   return png && png.length * 0.75 <= MAX_BYTES ? png : canvas.toDataURL('image/jpeg', 0.88)
 }
 
+const PREVIEW_SIDE = 480
+
+/** A small JPEG of an attached image, kept with your message in the chat (the full image is removed once it's sent). */
+export async function previewOf(dataUrl: string): Promise<string> {
+  // Loaded as an <img> (the window's rules allow data: images, not fetching them).
+  const img = new Image()
+  img.src = dataUrl
+  await img.decode()
+  const bitmap = await createImageBitmap(img)
+  const scale = Math.min(1, PREVIEW_SIDE / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+  const ctx = canvas.getContext('2d')!
+  // JPEG has no transparency: a see-through PNG goes on white instead of black.
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+  return canvas.toDataURL('image/jpeg', 0.75)
+}
+
+/** Only previews Hangar made are shown: small PNG or JPEG data URLs. */
+export const isPreview = (src: unknown): src is string => typeof src === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(src)
+
 /** The image files among pasted or dropped items. */
 export function imageFiles(list: FileList | DataTransferItemList | null | undefined): File[] {
   if (!list) return []

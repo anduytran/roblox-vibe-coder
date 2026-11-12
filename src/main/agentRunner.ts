@@ -34,7 +34,7 @@ import { normalizeModel } from '@shared/models'
 import { laneOf, MAX_LANES, roleOf } from '@shared/lanes'
 import type { ProjectRegistry } from './projects'
 import { listRoles } from './roles'
-import { imageBlocks, removeImages, saveImages, sweepImages, withImages } from './attachments'
+import { cleanPreviews, imageBlocks, removeImages, saveImages, sweepImages, withImages } from './attachments'
 import { convertMessage, type StreamMessage } from './sdkMessages'
 import { firstLine, revealHidden, stripHidden } from '@shared/text'
 
@@ -431,7 +431,7 @@ export class AgentRunner {
     }
   }
 
-  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean; model?: string; continueFrom?: QueuedTask['continueFrom']; images?: unknown } = {}): void {
+  send(projectId: string, agentId: string, prompt: string, opts: { record?: boolean; origin?: QueuedTask['origin']; fixClash?: string; fresh?: boolean; model?: string; continueFrom?: QueuedTask['continueFrom']; images?: unknown; previews?: unknown } = {}): void {
     const hasImages = Array.isArray(opts.images) && opts.images.length > 0
     const text = prompt.trim() || (hasImages ? 'See the attached image(s).' : '')
     if (!text) return
@@ -439,6 +439,7 @@ export class AgentRunner {
     if (!this.isAgentId(project, agentId)) throw new Error('Unknown agent.')
     const s = this.state(projectId, agentId)
     const images = saveImages(this.attachDir, opts.images)
+    const previews = images.length ? cleanPreviews(opts.previews) : []
     const task: QueuedTask = {
       id: randomUUID(),
       prompt: text.slice(0, 20000),
@@ -449,7 +450,8 @@ export class AgentRunner {
       ...(opts.fresh ? { fresh: true } : {}),
       ...(normalizeModel(opts.model) ? { model: normalizeModel(opts.model)! } : {}),
       ...(opts.continueFrom ? { continueFrom: opts.continueFrom } : {}),
-      ...(images.length ? { images } : {})
+      ...(images.length ? { images } : {}),
+      ...(previews.length ? { previews } : {})
     }
     this.order.set(task, ++this.seq)
     s.queue.push(task)
@@ -724,7 +726,13 @@ export class AgentRunner {
     const key = keyOf(s.projectId, s.agentId)
     // When the agent last did anything: a conversation idle past IDLE_FRESH_MS starts fresh (see below).
     const lastActive = s.log.at(-1)?.ts ?? 0
-    this.log(s, { kind: 'user', text: task.images?.length ? `${prompt}\n[${task.images.length} image${task.images.length === 1 ? '' : 's'} attached]` : prompt })
+    const shown = task.previews?.length ?? 0
+    const unshown = (task.images?.length ?? 0) - shown
+    this.log(s, {
+      kind: 'user',
+      text: unshown > 0 ? `${prompt}\n[${unshown} image${unshown === 1 ? '' : 's'} attached]` : prompt,
+      ...(shown ? { images: task.previews } : {})
+    })
     let project: Project
     try {
       project = this.deps.registry.get(s.projectId)

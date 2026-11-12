@@ -4518,3 +4518,19 @@ kbd {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
+
+/* Images you sent, shown with your message in the chat. */
+.entry-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.entry-images img {
+  display: block;
+  max-height: 180px;
+  max-width: min(320px, 100%);
+  object-fit: contain;
+  border-radius: var(--r-md, 6px);
+  box-shadow: var(--shadow-btn);
+}

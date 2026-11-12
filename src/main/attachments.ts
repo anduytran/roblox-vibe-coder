@@ -51,6 +51,28 @@ export function saveImages(dir: string, input: unknown): string[] {
   })
 }
 
+/** A preview of an attached image, kept in the chat after the image itself is gone: small, so the saved feed stays small. */
+export const MAX_PREVIEW_BYTES = 200_000
+
+/**
+ * The previews sent with a message, as data URLs to show in the chat. Anything that isn't a small PNG or JPEG (by its
+ * first bytes, not its label) is left out; previews are only ever shown, never given to an agent.
+ */
+export function cleanPreviews(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const out: string[] = []
+  for (const x of input.slice(0, MAX_IMAGES)) {
+    if (typeof x !== 'string' || x.length > MAX_PREVIEW_BYTES * 1.4) continue
+    const m = /^data:image\/(?:png|jpeg);base64,([A-Za-z0-9+/]*={0,2})$/.exec(x)
+    if (!m) continue
+    const buf = Buffer.from(m[1]!, 'base64')
+    const type = sniffImage(buf)
+    if ((type !== 'image/png' && type !== 'image/jpeg') || buf.length > MAX_PREVIEW_BYTES) continue
+    out.push(`data:${type};base64,${buf.toString('base64')}`)
+  }
+  return out
+}
+
 export interface ImageBlock {
   type: 'image'
   source: { type: 'base64'; media_type: ImageType; data: string }

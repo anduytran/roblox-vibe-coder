@@ -694,8 +694,8 @@ app.whenReady().then(() => {
 
   // Agents
   handle(IPC.agentsSnapshot, (id: unknown) => runner.snapshot(str(id, 'project')))
-  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown, opts?: { record?: unknown; images?: unknown }) =>
-    runner.send(str(id, 'project'), str(agentId, 'agent'), typeof prompt === 'string' ? prompt : '', { record: opts?.record === true, images: opts?.images })
+  handle(IPC.agentsSend, (id: unknown, agentId: unknown, prompt: unknown, opts?: { record?: unknown; images?: unknown; previews?: unknown }) =>
+    runner.send(str(id, 'project'), str(agentId, 'agent'), typeof prompt === 'string' ? prompt : '', { record: opts?.record === true, images: opts?.images, previews: opts?.previews })
   )
   handle(IPC.agentsStop, (id: unknown, agentId: unknown) => runner.stop(str(id, 'project'), str(agentId, 'agent')))
   handle(IPC.agentsStopAll, () => {

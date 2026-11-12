@@ -461,8 +461,13 @@ test('images attached to a message reach the agent with it, and are removed once
   const appDataDir = mkdtempSync(join(tmpdir(), 'hangar-run-att-'))
   const { runner, project, calls, status } = setup({ autoRelease: true, appDataDir })
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16, 3)]).toString('base64')
-  runner.send(project.id, 'ui-builder', '', { images: [`data:image/png;base64,${png}`] })
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16, 4)]).toString('base64')
+  runner.send(project.id, 'ui-builder', '', { images: [`data:image/png;base64,${png}`], previews: [`data:image/jpeg;base64,${jpeg}`] })
   await until(() => calls.length === 1 && status('ui-builder') === 'idle')
+  // Your message in the chat keeps a small preview of the image, after the image itself is removed.
+  const mine = runner.snapshot(project.id).find((a) => a.agentId === 'ui-builder')!.log.find((e) => e.kind === 'user')!
+  assert.deepEqual(mine.images, [`data:image/jpeg;base64,${jpeg}`])
+  assert.doesNotMatch(mine.text, /attached\]/)
   const prompt = calls[0]!.prompt as unknown as AsyncIterable<{ message: { content: { type: string; text?: string }[] } }>
   assert.notEqual(typeof prompt, 'string')
   const msgs = []

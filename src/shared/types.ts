@@ -184,6 +184,8 @@ export interface LogEntry {
   toolUseId?: string
   /** A tool result's full size in bytes; its text may be clipped. */
   bytes?: number
+  /** Your message's attached images, as small previews (data URLs). */
+  images?: string[]
 }
 
 export interface QueuedTask {
@@ -207,6 +209,8 @@ export interface QueuedTask {
   continueFrom?: { sessionId: string | null; reviewId: string | null; costSoFar?: number }
   /** Images you attached, saved by Hangar (their file names in its attachments folder). */
   images?: string[]
+  /** Small previews of those images, shown with your message in the chat. */
+  previews?: string[]
 }
 
 export type ReviewStatus = 'pending' | 'merged' | 'discarded'

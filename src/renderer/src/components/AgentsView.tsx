@@ -4,7 +4,7 @@ import { groupFeed, runSummary, sizeLabel, type FeedItem, type ToolCall } from '
 import { firstLine, revealCodeHidden, revealHidden } from '@shared/text'
 import { attempt, confirmDialog, openUncommitted, EMPTY_AGENTS, EMPTY_ROLES, getState, refreshProjects, setRoles, toast, useStore } from '../store'
 import { ApprovalCard } from './ApprovalCard'
-import { imageFiles, MAX_IMAGES, prepareImage } from '../attachImages'
+import { imageFiles, isPreview, MAX_IMAGES, prepareImage, previewOf } from '../attachImages'
 import { laneOf, roleOf } from '@shared/lanes'
 import { BriefCard } from './BriefCard'
 import { MainAgentEditor, RoleEditor } from './RoleEditor'
@@ -178,7 +178,11 @@ export function AgentPanel(props: { project: Project; role: Role; state: AgentSt
     const sent = images
     setDraft('')
     setImages([])
-    void attempt(() => window.hangar.agents.send(project.id, role.id, text, { record, ...(sent.length ? { images: sent } : {}) }))
+    void attempt(async () => {
+      // Small copies stay in the chat with your message; a preview that can't be made just isn't shown.
+      const previews = sent.length ? (await Promise.all(sent.map((src) => previewOf(src).catch(() => null)))).filter((p): p is string => !!p) : []
+      await window.hangar.agents.send(project.id, role.id, text, { record, ...(sent.length ? { images: sent, previews } : {}) })
+    })
   }
   // Taking autopilot's own step out of the queue pauses autopilot, so it never waits on a task that won't run.
   const confirmAutopilot = (tasks: QueuedTask[]): Promise<boolean> =>
@@ -527,6 +531,13 @@ function FeedEntry({ entry }: { entry: LogEntry }) {
       {entry.kind === 'user' && <span className="entry-tag">You · {timeAgo(entry.ts)}</span>}
       {/* Characters that make text read differently from what it is (bidi controls, invisible ones) are shown as ⟦U+…⟧. */}
       <div className="entry-text">{revealCodeHidden(text)}</div>
+      {entry.kind === 'user' && entry.images?.some(isPreview) && (
+        <div className="entry-images">
+          {entry.images.filter(isPreview).map((src, i) => (
+            <img key={i} src={src} alt={`Image you attached (${i + 1})`} />
+          ))}
+        </div>
+      )}
       {long && (
         <button className="link small" onClick={() => setOpen(!open)}>
           {open ? 'Show less' : 'Show more'}
